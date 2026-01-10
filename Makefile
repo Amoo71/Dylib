@@ -1,13 +1,12 @@
 ARCHS = arm64 arm64e
-TARGET = iphone:clang:latest:26.0
-THEOS_PLATFORM_DEB_COMPRESSION_TYPE = gzip
+TARGET = iphone:clang:latest:15.0
 
 include $(THEOS)/makefiles/common.mk
 
 LIBRARY_NAME = ChromeCookieStealer
-ChromeCookieStealer_FILES = Tweak.xm
+ChromeCookieStealer_FILES = Hook.mm
 ChromeCookieStealer_FRAMEWORKS = UIKit WebKit Foundation
-ChromeCookieStealer_INSTALL_PATH = /usr/lib
 ChromeCookieStealer_CFLAGS = -fobjc-arc
+ChromeCookieStealer_INSTALL_PATH = /usr/lib
 
 include $(THEOS)/makefiles/library.mk
