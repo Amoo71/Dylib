@@ -134,9 +134,9 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = A100001C /* Build configuration list for PBXNativeTarget "Extension" */;
 			buildPhases = (
-				A1000009 /* Sources */,
+				A100000B /* Sources */,
 				A100000A /* Frameworks */,
-				A100000B /* Resources */,
+				A100000D /* Resources */,
 			);
 			buildRules = (
 			);
@@ -193,7 +193,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		A100000B /* Resources */ = {
+		A100000D /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -213,7 +213,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		A1000009 /* Sources */ = {
+		A100000B /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
