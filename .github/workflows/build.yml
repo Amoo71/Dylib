@@ -24,8 +24,28 @@ jobs:
     - name: Show Xcode version
       run: xcodebuild -version
     
+    - name: List directory structure
+      run: |
+        echo "Current directory:"
+        pwd
+        echo "Directory contents:"
+        ls -la
+        echo "Looking for Xcode project..."
+        find . -name "*.xcodeproj" -maxdepth 3
+    
     - name: Build Safari Extension
       run: |
+        # Find the Xcode project
+        PROJECT_DIR=$(find . -name "SafariCookieInjector.xcodeproj" -maxdepth 3 | head -1 | xargs dirname)
+        
+        if [ -z "$PROJECT_DIR" ]; then
+          echo "ERROR: Cannot find SafariCookieInjector.xcodeproj"
+          exit 1
+        fi
+        
+        echo "Found project in: $PROJECT_DIR"
+        cd "$PROJECT_DIR"
+        
         xcodebuild -version
         xcodebuild clean build \
           -project SafariCookieInjector.xcodeproj \
@@ -36,11 +56,11 @@ jobs:
           CODE_SIGNING_REQUIRED=NO \
           CODE_SIGNING_ALLOWED=NO \
           -allowProvisioningUpdates
-      working-directory: main
     
     - name: Create IPA (unsigned)
       run: |
         # Find the built app
+        echo "Searching for built app..."
         APP_PATH=$(find ~/Library/Developer/Xcode/DerivedData -name "SafariCookieInjector.app" -type d | head -1)
         
         if [ -z "$APP_PATH" ]; then
@@ -50,12 +70,15 @@ jobs:
         
         if [ -z "$APP_PATH" ]; then
           echo "ERROR: Cannot find SafariCookieInjector.app"
+          echo "Searching entire workspace..."
+          find . -name "*.app" -type d
           exit 1
         fi
         
         echo "Found app at: $APP_PATH"
         
-        # Create Payload directory
+        # Create Payload directory in workspace root
+        cd "$GITHUB_WORKSPACE"
         mkdir -p Payload
         cp -r "$APP_PATH" Payload/
         
@@ -68,19 +91,18 @@ jobs:
         
         echo "IPA created successfully!"
         ls -lh artifacts/
-      working-directory: main
     
     - name: Upload IPA
       uses: actions/upload-artifact@v4
       with:
         name: SafariCookieInjector-iOS
-        path: main/artifacts/SafariCookieInjector-unsigned.ipa
+        path: artifacts/SafariCookieInjector-unsigned.ipa
         retention-days: 90
     
     - name: Create Release on Tag
       if: startsWith(github.ref, 'refs/tags/')
       uses: softprops/action-gh-release@v1
       with:
-        files: main/artifacts/SafariCookieInjector-unsigned.ipa
+        files: artifacts/SafariCookieInjector-unsigned.ipa
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
