@@ -7,32 +7,32 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		A1000001 /* SafariCookieInjectorApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000 /* SafariCookieInjectorApp.swift */; };
-		A1000003 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000002 /* ContentView.swift */; };
-		A1000005 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A1000004 /* Assets.xcassets */; };
-		A1000010 /* SafariWebExtensionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000F /* SafariWebExtensionHandler.swift */; };
-		A1000013 /* Resources in Resources */ = {isa = PBXBuildFile; fileRef = A1000012 /* Resources */; };
-		A1000014 /* Extension.appex in Embed Extensions */ = {isa = PBXBuildFile; fileRef = A100000D /* Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		AA001001 /* SafariCookieInjectorApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA001000 /* SafariCookieInjectorApp.swift */; };
+		AA001003 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA001002 /* ContentView.swift */; };
+		AA001005 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AA001004 /* Assets.xcassets */; };
+		AA002001 /* SafariWebExtensionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA002000 /* SafariWebExtensionHandler.swift */; };
+		AA002003 /* Resources in Resources */ = {isa = PBXBuildFile; fileRef = AA002002 /* Resources */; };
+		AA002004 /* Extension.appex in Embed Extensions */ = {isa = PBXBuildFile; fileRef = AA00200D /* Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
-		A1000015 /* PBXContainerItemProxy */ = {
+		AA002005 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
-			containerPortal = A0999995 /* Project object */;
+			containerPortal = AA000995 /* Project object */;
 			proxyType = 1;
-			remoteGlobalIDString = A100000C;
+			remoteGlobalIDString = AA00200C;
 			remoteInfo = Extension;
 		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
-		A1000019 /* Embed Extensions */ = {
+		AA002009 /* Embed Extensions */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
 			dstPath = "";
 			dstSubfolderSpec = 13;
 			files = (
-				A1000014 /* Extension.appex in Embed Extensions */,
+				AA002004 /* Extension.appex in Embed Extensions */,
 			);
 			name = "Embed Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -40,26 +40,28 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		A0999999 /* SafariCookieInjector.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SafariCookieInjector.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		A1000000 /* SafariCookieInjectorApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafariCookieInjectorApp.swift; sourceTree = "<group>"; };
-		A1000002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
-		A1000004 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		A1000009 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		A100000D /* Extension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = Extension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
-		A100000F /* SafariWebExtensionHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafariWebExtensionHandler.swift; sourceTree = "<group>"; };
-		A1000011 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		A1000012 /* Resources */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Resources; sourceTree = "<group>"; };
+		AA000999 /* SafariCookieInjector.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SafariCookieInjector.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AA001000 /* SafariCookieInjectorApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafariCookieInjectorApp.swift; sourceTree = "<group>"; };
+		AA001002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		AA001004 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		AA001009 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		AA00100A /* SafariCookieInjector.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = SafariCookieInjector.entitlements; sourceTree = "<group>"; };
+		AA00200D /* Extension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = Extension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		AA002000 /* SafariWebExtensionHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafariWebExtensionHandler.swift; sourceTree = "<group>"; };
+		AA002001 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		AA002002 /* Resources */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Resources; sourceTree = "<group>"; };
+		AA002010 /* Extension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Extension.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
-		A0999996 /* Frameworks */ = {
+		AA000996 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		A100000A /* Frameworks */ = {
+		AA00200A /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -69,41 +71,43 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		A0999994 = {
+		AA000994 = {
 			isa = PBXGroup;
 			children = (
-				A099999F /* SafariCookieInjector */,
-				A100000E /* Extension */,
-				A099999A /* Products */,
+				AA00099F /* SafariCookieInjector */,
+				AA00200E /* Extension */,
+				AA00099A /* Products */,
 			);
 			sourceTree = "<group>";
 		};
-		A099999A /* Products */ = {
+		AA00099A /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				A0999999 /* SafariCookieInjector.app */,
-				A100000D /* Extension.appex */,
+				AA000999 /* SafariCookieInjector.app */,
+				AA00200D /* Extension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
 		};
-		A099999F /* SafariCookieInjector */ = {
+		AA00099F /* SafariCookieInjector */ = {
 			isa = PBXGroup;
 			children = (
-				A1000000 /* SafariCookieInjectorApp.swift */,
-				A1000002 /* ContentView.swift */,
-				A1000004 /* Assets.xcassets */,
-				A1000009 /* Info.plist */,
+				AA001000 /* SafariCookieInjectorApp.swift */,
+				AA001002 /* ContentView.swift */,
+				AA001004 /* Assets.xcassets */,
+				AA001009 /* Info.plist */,
+				AA00100A /* SafariCookieInjector.entitlements */,
 			);
 			path = SafariCookieInjector;
 			sourceTree = "<group>";
 		};
-		A100000E /* Extension */ = {
+		AA00200E /* Extension */ = {
 			isa = PBXGroup;
 			children = (
-				A100000F /* SafariWebExtensionHandler.swift */,
-				A1000011 /* Info.plist */,
-				A1000012 /* Resources */,
+				AA002000 /* SafariWebExtensionHandler.swift */,
+				AA002001 /* Info.plist */,
+				AA002002 /* Resources */,
+				AA002010 /* Extension.entitlements */,
 			);
 			path = Extension;
 			sourceTree = "<group>";
@@ -111,32 +115,32 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		A0999998 /* SafariCookieInjector */ = {
+		AA000998 /* SafariCookieInjector */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = A09999C7 /* Build configuration list for PBXNativeTarget "SafariCookieInjector" */;
+			buildConfigurationList = AA0009C7 /* Build configuration list for PBXNativeTarget "SafariCookieInjector" */;
 			buildPhases = (
-				A0999995 /* Sources */,
-				A0999996 /* Frameworks */,
-				A0999997 /* Resources */,
-				A1000019 /* Embed Extensions */,
+				AA000995 /* Sources */,
+				AA000996 /* Frameworks */,
+				AA000997 /* Resources */,
+				AA002009 /* Embed Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
-				A1000016 /* PBXTargetDependency */,
+				AA002006 /* PBXTargetDependency */,
 			);
 			name = SafariCookieInjector;
 			productName = SafariCookieInjector;
-			productReference = A0999999 /* SafariCookieInjector.app */;
+			productReference = AA000999 /* SafariCookieInjector.app */;
 			productType = "com.apple.product-type.application";
 		};
-		A100000C /* Extension */ = {
+		AA00200C /* Extension */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = A100001C /* Build configuration list for PBXNativeTarget "Extension" */;
+			buildConfigurationList = AA00201C /* Build configuration list for PBXNativeTarget "Extension" */;
 			buildPhases = (
-				A100000B /* Sources */,
-				A100000A /* Frameworks */,
-				A100000D /* Resources */,
+				AA002008 /* Sources */,
+				AA00200A /* Frameworks */,
+				AA00200B /* Resources */,
 			);
 			buildRules = (
 			);
@@ -144,28 +148,28 @@
 			);
 			name = Extension;
 			productName = Extension;
-			productReference = A100000D /* Extension.appex */;
+			productReference = AA00200D /* Extension.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
-		A0999995 /* Project object */ = {
+		AA000995 /* Project object */ = {
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 1500;
 				LastUpgradeCheck = 1500;
 				TargetAttributes = {
-					A0999998 = {
+					AA000998 = {
 						CreatedOnToolsVersion = 15.0;
 					};
-					A100000C = {
+					AA00200C = {
 						CreatedOnToolsVersion = 15.0;
 					};
 				};
 			};
-			buildConfigurationList = A0999998 /* Build configuration list for PBXProject "SafariCookieInjector" */;
+			buildConfigurationList = AA000998CFG /* Build configuration list for PBXProject "SafariCookieInjector" */;
 			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
@@ -173,66 +177,66 @@
 				en,
 				Base,
 			);
-			mainGroup = A0999994;
-			productRefGroup = A099999A /* Products */;
+			mainGroup = AA000994;
+			productRefGroup = AA00099A /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				A0999998 /* SafariCookieInjector */,
-				A100000C /* Extension */,
+				AA000998 /* SafariCookieInjector */,
+				AA00200C /* Extension */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		A0999997 /* Resources */ = {
+		AA000997 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A1000005 /* Assets.xcassets in Resources */,
+				AA001005 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		A100000D /* Resources */ = {
+		AA00200B /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A1000013 /* Resources in Resources */,
+				AA002003 /* Resources in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		A0999995 /* Sources */ = {
+		AA000995 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A1000003 /* ContentView.swift in Sources */,
-				A1000001 /* SafariCookieInjectorApp.swift in Sources */,
+				AA001003 /* ContentView.swift in Sources */,
+				AA001001 /* SafariCookieInjectorApp.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		A100000B /* Sources */ = {
+		AA002008 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A1000010 /* SafariWebExtensionHandler.swift in Sources */,
+				AA002001 /* SafariWebExtensionHandler.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
-		A1000016 /* PBXTargetDependency */ = {
+		AA002006 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = A100000C /* Extension */;
-			targetProxy = A1000015 /* PBXContainerItemProxy */;
+			target = AA00200C /* Extension */;
+			targetProxy = AA002005 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
-		A09999C5 /* Debug */ = {
+		AA0009C5 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -294,7 +298,7 @@
 			};
 			name = Debug;
 		};
-		A09999C6 /* Release */ = {
+		AA0009C6 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -348,7 +352,7 @@
 			};
 			name = Release;
 		};
-		A09999C8 /* Debug */ = {
+		AA0009C8 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
@@ -387,7 +391,7 @@
 			};
 			name = Debug;
 		};
-		A09999C9 /* Release */ = {
+		AA0009C9 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
@@ -427,7 +431,7 @@
 			};
 			name = Release;
 		};
-		A100001D /* Debug */ = {
+		AA00201D /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = Extension/Extension.entitlements;
@@ -458,7 +462,7 @@
 			};
 			name = Debug;
 		};
-		A100001E /* Release */ = {
+		AA00201E /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = Extension/Extension.entitlements;
@@ -493,34 +497,34 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		A0999998 /* Build configuration list for PBXProject "SafariCookieInjector" */ = {
+		AA000998CFG /* Build configuration list for PBXProject "SafariCookieInjector" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				A09999C5 /* Debug */,
-				A09999C6 /* Release */,
+				AA0009C5 /* Debug */,
+				AA0009C6 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		A09999C7 /* Build configuration list for PBXNativeTarget "SafariCookieInjector" */ = {
+		AA0009C7 /* Build configuration list for PBXNativeTarget "SafariCookieInjector" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				A09999C8 /* Debug */,
-				A09999C9 /* Release */,
+				AA0009C8 /* Debug */,
+				AA0009C9 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		A100001C /* Build configuration list for PBXNativeTarget "Extension" */ = {
+		AA00201C /* Build configuration list for PBXNativeTarget "Extension" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				A100001D /* Debug */,
-				A100001E /* Release */,
+				AA00201D /* Debug */,
+				AA00201E /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
 	};
-	rootObject = A0999995 /* Project object */;
+	rootObject = AA000995 /* Project object */;
 }
