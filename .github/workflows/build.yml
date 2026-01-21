@@ -76,87 +76,67 @@ jobs:
         
         echo "Compilation complete"
         
-    - name: Copy resources and create Info.plist
+    - name: Copy resources
       run: |
         echo "Copying resources..."
-        
-        # Copy assets
         cp -r SafariCookieInjector/Assets.xcassets build/Payload/SafariCookieInjector.app/ 2>/dev/null || echo "Assets copied"
-        
-        # Copy extension resources
         cp -r Extension/Resources build/Payload/SafariCookieInjector.app/PlugIns/Extension.appex/ 2>/dev/null || echo "Extension resources copied"
         
-        # Create main app Info.plist
-        cat > build/Payload/SafariCookieInjector.app/Info.plist << 'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleExecutable</key>
-    <string>SafariCookieInjector</string>
-    <key>CFBundleIdentifier</key>
-    <string>com.cookieinjector.safari</string>
-    <key>CFBundleName</key>
-    <string>Cookie Injector</string>
-    <key>CFBundleDisplayName</key>
-    <string>Cookie Injector</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
-    <key>CFBundleVersion</key>
-    <string>1</string>
-    <key>MinimumOSVersion</key>
-    <string>15.0</string>
-    <key>LSRequiresIPhoneOS</key>
-    <true/>
-    <key>UIDeviceFamily</key>
-    <array>
-        <integer>1</integer>
-        <integer>2</integer>
-    </array>
-    <key>UISupportedInterfaceOrientations</key>
-    <array>
-        <string>UIInterfaceOrientationPortrait</string>
-        <string>UIInterfaceOrientationLandscapeLeft</string>
-        <string>UIInterfaceOrientationLandscapeRight</string>
-    </array>
-    <key>UILaunchScreen</key>
-    <dict/>
-</dict>
-</plist>
-EOF
+    - name: Create Info.plist files
+      run: |
+        # Main app Info.plist
+        cat > build/Payload/SafariCookieInjector.app/Info.plist <<PLISTEND
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>CFBundleExecutable</key>
+            <string>SafariCookieInjector</string>
+            <key>CFBundleIdentifier</key>
+            <string>com.cookieinjector.safari</string>
+            <key>CFBundleName</key>
+            <string>Cookie Injector</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>CFBundleShortVersionString</key>
+            <string>1.0</string>
+            <key>CFBundleVersion</key>
+            <string>1</string>
+            <key>MinimumOSVersion</key>
+            <string>15.0</string>
+            <key>LSRequiresIPhoneOS</key>
+            <true/>
+            <key>UIDeviceFamily</key>
+            <array>
+                <integer>1</integer>
+                <integer>2</integer>
+            </array>
+        </dict>
+        </plist>
+        PLISTEND
         
-        # Create extension Info.plist
-        cat > build/Payload/SafariCookieInjector.app/PlugIns/Extension.appex/Info.plist << 'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleExecutable</key>
-    <string>Extension</string>
-    <key>CFBundleIdentifier</key>
-    <string>com.cookieinjector.safari.Extension</string>
-    <key>CFBundleName</key>
-    <string>Extension</string>
-    <key>CFBundleDisplayName</key>
-    <string>Cookie Injector Extension</string>
-    <key>CFBundlePackageType</key>
-    <string>XPC!</string>
-    <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
-    <key>CFBundleVersion</key>
-    <string>1</string>
-    <key>NSExtension</key>
-    <dict>
-        <key>NSExtensionPointIdentifier</key>
-        <string>com.apple.Safari.web-extension</string>
-        <key>NSExtensionPrincipalClass</key>
-        <string>SafariWebExtensionHandler</string>
-    </dict>
-</dict>
-</plist>
-EOF
+        # Extension Info.plist
+        cat > build/Payload/SafariCookieInjector.app/PlugIns/Extension.appex/Info.plist <<EXTPLIST
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>CFBundleExecutable</key>
+            <string>Extension</string>
+            <key>CFBundleIdentifier</key>
+            <string>com.cookieinjector.safari.Extension</string>
+            <key>CFBundleName</key>
+            <string>Extension</string>
+            <key>CFBundlePackageType</key>
+            <string>XPC!</string>
+            <key>NSExtension</key>
+            <dict>
+                <key>NSExtensionPointIdentifier</key>
+                <string>com.apple.Safari.web-extension</string>
+            </dict>
+        </dict>
+        </plist>
+        EXTPLIST
         
         echo "Info.plist files created"
         
