@@ -87,7 +87,7 @@ jobs:
         cp -r Extension/Resources build/Payload/SafariCookieInjector.app/PlugIns/Extension.appex/ 2>/dev/null || echo "Extension resources copied"
         
         # Create main app Info.plist
-        cat > build/Payload/SafariCookieInjector.app/Info.plist << 'PLIST'
+        cat > build/Payload/SafariCookieInjector.app/Info.plist << 'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -125,10 +125,10 @@ jobs:
     <dict/>
 </dict>
 </plist>
-PLIST
+EOF
         
         # Create extension Info.plist
-        cat > build/Payload/SafariCookieInjector.app/PlugIns/Extension.appex/Info.plist << 'PLIST'
+        cat > build/Payload/SafariCookieInjector.app/PlugIns/Extension.appex/Info.plist << 'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -156,7 +156,7 @@ PLIST
     </dict>
 </dict>
 </plist>
-PLIST
+EOF
         
         echo "Info.plist files created"
         
