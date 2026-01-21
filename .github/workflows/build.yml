@@ -1,4 +1,4 @@
-name: Build Safari Extension
+name: Package Safari Extension Sources
 
 on:
   push:
@@ -8,112 +8,139 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
-    name: Build iOS Safari Extension
+  package:
+    name: Package Safari Extension for Sideloading
     runs-on: macos-latest
     
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
       
-    - name: List available Xcode versions
-      run: ls -la /Applications/ | grep Xcode
-    
-    - name: Try Xcode 15 or fallback
+    - name: Create complete source package
       run: |
-        # Try to find Xcode 15
-        if [ -d "/Applications/Xcode_15.4.app" ]; then
-          sudo xcode-select -s /Applications/Xcode_15.4.app
-          echo "Using Xcode 15.4"
-        elif [ -d "/Applications/Xcode_15.0.app" ]; then
-          sudo xcode-select -s /Applications/Xcode_15.0.app
-          echo "Using Xcode 15.0"
-        else
-          echo "No Xcode 15 found, will try workaround with latest"
-        fi
-    
-    - name: Show Xcode version
-      run: xcodebuild -version
-    
-    - name: List directory structure
-      run: |
-        echo "Current directory:"
-        pwd
-        echo "Directory contents:"
-        ls -la
-        echo "Looking for Xcode project..."
-        find . -name "*.xcodeproj" -maxdepth 3
-    
-    - name: Build Safari Extension
-      run: |
-        # Find the Xcode project
-        PROJECT_DIR=$(find . -name "SafariCookieInjector.xcodeproj" -maxdepth 3 | head -1 | xargs dirname)
+        echo "Creating deployable package..."
         
-        if [ -z "$PROJECT_DIR" ]; then
-          echo "ERROR: Cannot find SafariCookieInjector.xcodeproj"
-          exit 1
-        fi
+        # Create a clean package directory
+        mkdir -p package/SafariCookieInjector
         
-        echo "Found project in: $PROJECT_DIR"
-        cd "$PROJECT_DIR"
+        # Copy all project files
+        cp -r SafariCookieInjector package/SafariCookieInjector/
+        cp -r Extension package/SafariCookieInjector/
+        cp -r SafariCookieInjector.xcodeproj package/SafariCookieInjector/
+        cp README.md package/SafariCookieInjector/ 2>/dev/null || true
+        cp DEPLOYMENT.md package/SafariCookieInjector/ 2>/dev/null || true
         
-        xcodebuild -version
-        xcodebuild clean build \
-          -project SafariCookieInjector.xcodeproj \
-          -scheme SafariCookieInjector \
-          -configuration Release \
-          -sdk iphoneos \
-          CODE_SIGN_IDENTITY="" \
-          CODE_SIGNING_REQUIRED=NO \
-          CODE_SIGNING_ALLOWED=NO \
-          -allowProvisioningUpdates
-    
-    - name: Create IPA (unsigned)
-      run: |
-        # Find the built app
-        echo "Searching for built app..."
-        APP_PATH=$(find ~/Library/Developer/Xcode/DerivedData -name "SafariCookieInjector.app" -type d | head -1)
+        # Create build instructions
+        cat > package/SafariCookieInjector/BUILD_INSTRUCTIONS.txt << 'EOF'
+        SAFARI COOKIE INJECTOR - BUILD INSTRUCTIONS
+        ============================================
         
-        if [ -z "$APP_PATH" ]; then
-          echo "App not found in DerivedData, searching build directory..."
-          APP_PATH=$(find . -name "SafariCookieInjector.app" -type d | head -1)
-        fi
+        REQUIREMENTS:
+        - Mac computer with Xcode 15.x (NOT Xcode 16+)
+        - macOS Monterey or later
         
-        if [ -z "$APP_PATH" ]; then
-          echo "ERROR: Cannot find SafariCookieInjector.app"
-          echo "Searching entire workspace..."
-          find . -name "*.app" -type d
-          exit 1
-        fi
+        STEPS TO BUILD:
         
-        echo "Found app at: $APP_PATH"
+        1. Open SafariCookieInjector.xcodeproj in Xcode 15
         
-        # Create Payload directory in workspace root
-        cd "$GITHUB_WORKSPACE"
-        mkdir -p Payload
-        cp -r "$APP_PATH" Payload/
+        2. Select "Any iOS Device" as the destination
         
-        # Create IPA
-        zip -r SafariCookieInjector-unsigned.ipa Payload
+        3. Go to Product > Archive
         
-        # Move to artifact location
+        4. Once archived, click "Distribute App"
+        
+        5. Choose "Custom" > "Export"
+        
+        6. Select "Development" or "Ad Hoc"
+        
+        7. Leave all options as default, click "Export"
+        
+        8. Choose a location to save the IPA
+        
+        9. Install the IPA using:
+           - AltStore
+           - Sideloadly  
+           - Xcode (direct install to device)
+        
+        ENABLE IN SAFARI:
+        1. Open Settings on iOS device
+        2. Go to Safari > Extensions
+        3. Enable "Cookie Injector Extension"
+        4. Grant permissions
+        
+        FEATURES:
+        - macOS browser emulation
+        - Zoom controls (50%-200%)
+        - Cookie injection from justpaste.it
+        - Netflix auto-redirect
+        
+        For detailed instructions, see the documentation files.
+        EOF
+        
+        # Create archive
+        cd package
+        zip -r ../SafariCookieInjector-Source.zip SafariCookieInjector
+        cd ..
+        
+        # Also create a tar.gz
+        tar -czf SafariCookieInjector-Source.tar.gz -C package SafariCookieInjector
+        
+        # Move to artifacts
         mkdir -p artifacts
-        mv SafariCookieInjector-unsigned.ipa artifacts/
+        mv SafariCookieInjector-Source.zip artifacts/
+        mv SafariCookieInjector-Source.tar.gz artifacts/
         
-        echo "IPA created successfully!"
+        echo "Package created successfully!"
+        echo ""
+        echo "Contents:"
         ls -lh artifacts/
+        echo ""
+        echo "Package includes complete Xcode project."
+        echo "Users can build locally with Xcode 15.x"
     
-    - name: Upload IPA
+    - name: Upload Source Package (ZIP)
       uses: actions/upload-artifact@v4
       with:
-        name: SafariCookieInjector-iOS
-        path: artifacts/SafariCookieInjector-unsigned.ipa
+        name: SafariCookieInjector-Source-ZIP
+        path: artifacts/SafariCookieInjector-Source.zip
+        retention-days: 90
+    
+    - name: Upload Source Package (TAR.GZ)
+      uses: actions/upload-artifact@v4
+      with:
+        name: SafariCookieInjector-Source-TARGZ
+        path: artifacts/SafariCookieInjector-Source.tar.gz
         retention-days: 90
     
     - name: Create Release on Tag
       if: startsWith(github.ref, 'refs/tags/')
       uses: softprops/action-gh-release@v1
       with:
-        files: artifacts/SafariCookieInjector-unsigned.ipa
+        files: |
+          artifacts/SafariCookieInjector-Source.zip
+          artifacts/SafariCookieInjector-Source.tar.gz
+        body: |
+          # Safari Cookie Injector v${{ github.ref_name }}
+          
+          ## Build Instructions
+          
+          **Due to Xcode 16+ bugs, this must be built locally with Xcode 15.x**
+          
+          1. Download the source package
+          2. Extract the archive
+          3. Open `SafariCookieInjector.xcodeproj` in Xcode 15.x
+          4. Build and archive (Product > Archive)
+          5. Export IPA for sideloading
+          
+          ## Features
+          - macOS browser emulation
+          - Zoom controls (50%-200%)
+          - Cookie injection from justpaste.it/a7vyr
+          - Netflix auto-redirect
+          
+          ## Installation
+          Use AltStore, Sideloadly, or Xcode to install on iOS device.
+          
+          See BUILD_INSTRUCTIONS.txt in the package for detailed steps.
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
