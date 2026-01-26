@@ -2,87 +2,143 @@
 <html lang="de">
 <head>
   <meta charset="UTF-8">
-  <title>Moderner Video‑Player (Dark Mode)</title>
-  <!-- Plyr CSS und JS von einem CDN laden -->
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/plyr@3.6.2/dist/plyr.css">
-  <script src="https://cdn.jsdelivr.net/npm/plyr@3.6.2/dist/plyr.min.js"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Moderner Video-Player (Dark Mode) – Mobile & Auto-Extract</title>
+  <!-- Neueste stabile Plyr-Version für bessere Kompatibilität -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/plyr@3.7.8/dist/plyr.css">
+  <script src="https://cdn.jsdelivr.net/npm/plyr@3.7.8/dist/plyr.min.js"></script>
   <style>
-    /* Grundlegendes dunkles Thema */
     body {
       margin: 0;
-      padding: 0;
+      padding: 10px;
       background: #0a0a0a;
       color: white;
       font-family: sans-serif;
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: center;
       min-height: 100vh;
     }
-    /* Behälter mit Glassmorphismus (gläserner Effekt) */
     .player-container {
-      width: 80%;
-      max-width: 800px;
+      width: 90%;
+      max-width: 900px;
       padding: 20px;
       border-radius: 15px;
       background: rgba(20, 20, 20, 0.6);
-      backdrop-filter: blur(12px); /* Erzeugt den gläsernen Effekt */
+      backdrop-filter: blur(12px);
       box-shadow: 0 8px 16px rgba(0, 0, 0, 0.6);
     }
     label, input {
       display: block;
       width: 100%;
-      margin-bottom: 12px;
+      margin-bottom: 16px;
     }
     input {
-      padding: 8px;
-      border-radius: 5px;
+      padding: 12px;
+      border-radius: 8px;
       border: none;
       background: rgba(255, 255, 255, 0.1);
       color: #eee;
+      font-size: 16px;
     }
     input:focus {
       outline: none;
-      background: rgba(255, 255, 255, 0.15);
+      background: rgba(255, 255, 255, 0.2);
     }
-    /* Passen Sie die Plyr‑Steuerelemente für dunkles Design an */
     .plyr__controls {
-      background-color: rgba(0, 0, 0, 0.6);
+      background-color: rgba(0, 0, 0, 0.7);
       border-radius: 10px;
+    }
+    @media (max-width: 600px) {
+      .player-container {
+        width: 96%;
+        padding: 12px;
+      }
+      body {
+        padding: 8px;
+      }
     }
   </style>
 </head>
 <body>
   <div class="player-container">
-    <label for="url">Video‑URL eingeben:</label>
-    <input type="text" id="url" placeholder="https://beispiel.com/video.mp4">
-    <!-- Das Videoelement dient als Ziel für den Plyr‑Player -->
-    <video id="player" controls preload="auto" crossorigin>
+    <label for="url">Video-URL oder Webseite mit Video eingeben:</label>
+    <input type="text" id="url" placeholder="https://beispiel.com/video.mp4  oder  https://irgend.eine.seite">
+    <video id="player" controls preload="auto" crossorigin playsinline>
       <source src="" type="video/mp4">
-      Ihr Browser unterstützt das Video‑Tag nicht.
+      Dein Browser unterstützt das Video-Tag nicht.
     </video>
   </div>
+
   <script>
     const input = document.getElementById('url');
     const video = document.getElementById('player');
-    // Plyr initialisieren und auf das Videoelement anwenden
+
     const player = new Plyr(video, {
-      controls: ['play', 'progress', 'current-time', 'mute', 'volume', 'fullscreen'],
-      autoplay: false
+      controls: ['play-large', 'restart', 'rewind', 'play', 'fast-forward', 'progress', 'current-time', 'duration', 'mute', 'volume', 'captions', 'settings', 'pip', 'airplay', 'fullscreen'],
+      autoplay: false,
+      invertTime: false,
+      hideControls: true,
+      fullscreen: { enabled: true, fallback: true, iosNative: true }
     });
-    // Wenn der Benutzer eine URL eingibt, wird diese als Quelle gesetzt
-    input.addEventListener('change', () => {
-      const url = input.value.trim();
-      if (url) {
-        // Setzen der Videoquelle. Typ 'video/mp4' kann an Ihre Quelle angepasst werden
+
+    input.addEventListener('change', async () => {
+      let url = input.value.trim();
+      if (!url) return;
+
+      // Direkte Video-URL erkennen und laden
+      if (url.match(/\.(mp4|webm|ogg|mkv|mov|avi)$/i)) {
         player.source = {
           type: 'video',
-          title: 'Benutzer‑Video',
-          sources: [
-            { src: url, type: 'video/mp4' }
-          ]
+          title: 'Direktes Video',
+          sources: [{ src: url, type: 'video/mp4' }]
         };
+        player.play();
+        return;
+      }
+
+      // Webseite: HTML fetchen und Video-Quelle extrahieren
+      try {
+        const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
+        const response = await fetch(proxyUrl);
+        if (!response.ok) throw new Error('Fetch fehlgeschlagen: ' + response.status);
+
+        const html = await response.text();
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, 'text/html');
+
+        let videoSrc = null;
+        const candidates = [
+          ...doc.querySelectorAll('video source'),
+          ...doc.querySelectorAll('video')
+        ];
+
+        for (const el of candidates) {
+          let src = el.src || el.getAttribute('src') || el.currentSrc || el.querySelector('source')?.src;
+          if (src && src.match(/\.(mp4|webm|ogg|mkv|mov)$/i)) {
+            videoSrc = src;
+            break;
+          }
+        }
+
+        if (videoSrc) {
+          // Relative URLs auflösen
+          if (!videoSrc.startsWith('http')) {
+            const base = new URL(url);
+            videoSrc = new URL(videoSrc, base).href;
+          }
+          player.source = {
+            type: 'video',
+            title: 'Gefundenes Video',
+            sources: [{ src: videoSrc, type: 'video/mp4' }]
+          };
+          player.play();
+        } else {
+          alert('Kein direkt spielbares Video (.mp4, .webm etc.) auf der Seite gefunden. Probier einen direkteren Videolink oder eine andere Seite.');
+        }
+      } catch (err) {
+        console.error(err);
+        alert('Fehler beim Laden/Extrahieren: ' + err.message + '\nTipp: Manche Seiten blocken den Zugriff – dann brauchst du den direkten Videolink aus den DevTools (Netzwerk-Tab).');
       }
     });
   </script>
