@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <title>Moderner Video‑Player (Dark Mode)</title>
+  <!-- Plyr CSS und JS von einem CDN laden -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/plyr@3.6.2/dist/plyr.css">
+  <script src="https://cdn.jsdelivr.net/npm/plyr@3.6.2/dist/plyr.min.js"></script>
+  <style>
+    /* Grundlegendes dunkles Thema */
+    body {
+      margin: 0;
+      padding: 0;
+      background: #0a0a0a;
+      color: white;
+      font-family: sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+    /* Behälter mit Glassmorphismus (gläserner Effekt) */
+    .player-container {
+      width: 80%;
+      max-width: 800px;
+      padding: 20px;
+      border-radius: 15px;
+      background: rgba(20, 20, 20, 0.6);
+      backdrop-filter: blur(12px); /* Erzeugt den gläsernen Effekt */
+      box-shadow: 0 8px 16px rgba(0, 0, 0, 0.6);
+    }
+    label, input {
+      display: block;
+      width: 100%;
+      margin-bottom: 12px;
+    }
+    input {
+      padding: 8px;
+      border-radius: 5px;
+      border: none;
+      background: rgba(255, 255, 255, 0.1);
+      color: #eee;
+    }
+    input:focus {
+      outline: none;
+      background: rgba(255, 255, 255, 0.15);
+    }
+    /* Passen Sie die Plyr‑Steuerelemente für dunkles Design an */
+    .plyr__controls {
+      background-color: rgba(0, 0, 0, 0.6);
+      border-radius: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="player-container">
+    <label for="url">Video‑URL eingeben:</label>
+    <input type="text" id="url" placeholder="https://beispiel.com/video.mp4">
+    <!-- Das Videoelement dient als Ziel für den Plyr‑Player -->
+    <video id="player" controls preload="auto" crossorigin>
+      <source src="" type="video/mp4">
+      Ihr Browser unterstützt das Video‑Tag nicht.
+    </video>
+  </div>
+  <script>
+    const input = document.getElementById('url');
+    const video = document.getElementById('player');
+    // Plyr initialisieren und auf das Videoelement anwenden
+    const player = new Plyr(video, {
+      controls: ['play', 'progress', 'current-time', 'mute', 'volume', 'fullscreen'],
+      autoplay: false
+    });
+    // Wenn der Benutzer eine URL eingibt, wird diese als Quelle gesetzt
+    input.addEventListener('change', () => {
+      const url = input.value.trim();
+      if (url) {
+        // Setzen der Videoquelle. Typ 'video/mp4' kann an Ihre Quelle angepasst werden
+        player.source = {
+          type: 'video',
+          title: 'Benutzer‑Video',
+          sources: [
+            { src: url, type: 'video/mp4' }
+          ]
+        };
+      }
+    });
+  </script>
+</body>
+</html>
