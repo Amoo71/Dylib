@@ -6,7 +6,8 @@
 }
 html, body {
   height: 100%;
-  background-color: #0d0d0d;
+  /* Add a subtle gradient background for a more polished look */
+  background: linear-gradient(180deg, #0d0d0d 0%, #1a1a2e 100%);
   color: #f5f5f5;
   font-family: 'Inter', sans-serif;
 }
@@ -18,16 +19,17 @@ html, body {
 }
 
 /* Card container for join and lobby */
+/* Card container for join and lobby */
 .card {
-  background: rgba(30, 30, 30, 0.8);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 16px;
-  padding: 24px;
+  background: rgba(34, 34, 58, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 20px;
+  padding: 32px;
   width: 90%;
-  max-width: 480px;
+  max-width: 520px;
   text-align: center;
-  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.25);
-  backdrop-filter: blur(10px);
+  box-shadow: 0 15px 30px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(12px);
 }
 .hidden {
   display: none !important;
@@ -61,20 +63,21 @@ html, body {
   color: #777;
 }
 
+/* Primary button styling with a more vibrant gradient */
 .primary {
-  margin-top: 8px;
-  padding: 10px 20px;
+  margin-top: 12px;
+  padding: 12px 26px;
   border: none;
-  border-radius: 8px;
-  background: linear-gradient(135deg, #4e8cff, #6a6ff5);
+  border-radius: 10px;
+  background: linear-gradient(135deg, #6a9bff, #9f6bff);
   color: #fff;
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.3s;
+  transition: background 0.3s ease;
 }
 .primary:hover {
-  background: linear-gradient(135deg, #6a6ff5, #4e8cff);
+  background: linear-gradient(135deg, #9f6bff, #6a9bff);
 }
 
 .notice {
@@ -105,6 +108,26 @@ ul#playerList {
   margin-top: 12px;
   text-align: left;
   font-size: 16px;
+}
+
+/* Error banner appears at the top of the page to show brief messages */
+#errorBanner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  background: #dc3545;
+  color: #fff;
+  text-align: center;
+  padding: 10px 0;
+  font-size: 16px;
+  font-weight: 600;
+  display: none;
+  z-index: 200;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+#errorBanner.visible {
+  display: block;
 }
 
 /* Overlay for spinner, instructions, scoreboard */

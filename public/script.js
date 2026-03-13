@@ -33,6 +33,10 @@
       scoreboard: 'Scoreboard',
       hostNote: 'You are the host. You control when a game starts.',
       notHostNote: 'Waiting for host to start the game...',
+      // When there is no existing lobby, the call‑to‑action on the join
+      // screen reads "Create Lobby" instead of "Join Lobby". This key
+      // allows us to translate that string.
+      createBtn: 'Create Lobby',
       games: {
         laser: {
           name: 'Laser!',
@@ -70,6 +74,9 @@
       scoreboard: 'Punktestand',
       hostNote: 'Du bist der Host. Du entscheidest, wann das Spiel beginnt.',
       notHostNote: 'Warten auf Host, um das Spiel zu starten...',
+      // When there is no existing lobby, show "Lobby erstellen" instead of
+      // "Lobby beitreten" to make it clear that a new lobby will be created.
+      createBtn: 'Lobby erstellen',
       games: {
         laser: {
           name: 'Laser!',
@@ -120,11 +127,33 @@
         el.textContent = value;
       }
     });
+
+    // After applying translations, update the join/create button text again.
+    // Without this, selecting a different language would revert the button
+    // label back to its original data-lang-key. We emit a lobby status
+    // request so the server tells us if a lobby exists, then update
+    // accordingly.
+    if (socket && socket.connected) {
+      socket.emit('requestLobbyStatus');
+    }
   }
 
   // When socket connects assign myId
   socket.on('connect', () => {
     myId = socket.id;
+    // Query the server to determine if a lobby already exists. The
+    // server responds with a 'lobbyStatus' event. This allows us to
+    // change the join button text to "Create Lobby" when no lobby is
+    // active.
+    socket.emit('requestLobbyStatus');
+  });
+
+  // Receive the lobby status from the server and update the join
+  // button label accordingly. We use the translated strings based
+  // on the current language selection.
+  socket.on('lobbyStatus', ({ hasLobby }) => {
+    // Choose which button label to display
+    joinBtn.textContent = hasLobby ? t('joinBtn') : t('createBtn');
   });
 
   // Resize canvas to full viewport
@@ -156,6 +185,30 @@
   const winnerNames = document.getElementById('winnerNames');
   const scoreBoardRound = document.getElementById('scoreBoardRound');
   const nextRoundBtn = document.getElementById('nextRoundBtn');
+
+  // Create an error banner for displaying connection and lobby errors.
+  const errorBanner = document.createElement('div');
+  errorBanner.id = 'errorBanner';
+  document.body.appendChild(errorBanner);
+
+  function showError(message) {
+    errorBanner.textContent = message;
+    errorBanner.classList.add('visible');
+    clearTimeout(showError._timeout);
+    showError._timeout = setTimeout(() => {
+      errorBanner.classList.remove('visible');
+    }, 3500);
+  }
+
+  // Listen for server error messages and connection errors. When
+  // something goes wrong (e.g. lobby is full) the server emits an
+  // 'errorMessage' event. We also handle Socket.IO connection errors.
+  socket.on('errorMessage', (msg) => {
+    showError(msg);
+  });
+  socket.io.on('error', (err) => {
+    showError('Connection error: ' + err.message);
+  });
 
   // Join lobby
   joinBtn.addEventListener('click', () => {
