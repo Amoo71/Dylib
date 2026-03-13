@@ -27,6 +27,12 @@
           <option value="de">Deutsch</option>
         </select>
       </div>
+      <!-- Solo leaderboard container (hidden by default). When there are solo scores,
+           this displays the top 10 high scores. -->
+      <div id="soloLeaderboardContainer" class="leaderboard hidden">
+        <h3 id="soloLeaderboardTitle">Solo Leaderboard</h3>
+        <ul id="soloLeaderboardList"></ul>
+      </div>
       <!-- The join/create button text is updated dynamically based on whether a lobby exists. -->
       <button id="joinBtn" class="primary">Join Lobby</button>
     </div>

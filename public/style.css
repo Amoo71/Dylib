@@ -110,6 +110,31 @@ ul#playerList {
   font-size: 16px;
 }
 
+/* Solo leaderboard styles */
+.leaderboard {
+  margin-top: 16px;
+  text-align: left;
+}
+.leaderboard h3 {
+  font-size: 18px;
+  margin-bottom: 6px;
+}
+.leaderboard ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.leaderboard li {
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 16px;
+}
+.leaderboard.hidden {
+  display: none;
+}
+
 /* Error banner appears at the top of the page to show brief messages */
 #errorBanner {
   position: fixed;
@@ -167,6 +192,42 @@ ul#playerList {
   font-size: 24px;
   font-weight: 600;
   text-align: center;
+}
+
+/* Simple circular loader used during random game selection */
+.loader {
+  border: 8px solid rgba(255, 255, 255, 0.2);
+  border-top: 8px solid #ffffff;
+  border-radius: 50%;
+  width: 80px;
+  height: 80px;
+  animation: spin 1.2s linear infinite;
+  margin: 0 auto;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Responsive adjustments for mobile devices */
+@media (max-width: 600px) {
+  .card {
+    padding: 20px;
+    max-width: 90%;
+    border-radius: 16px;
+  }
+  .primary {
+    font-size: 16px;
+    padding: 10px 20px;
+  }
+  .subtext {
+    font-size: 14px;
+  }
+  #playerList li,
+  .leaderboard li {
+    font-size: 14px;
+  }
 }
 
 /* Instruction card */

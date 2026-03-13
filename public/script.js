@@ -60,6 +60,7 @@
           ? `Winner: ${names[0]}`
           : `Winners: ${names.join(', ')}`;
       }
+      ,selectingGame: 'Selecting game…'
     },
     de: {
       welcome: 'Ein kooperatives Browser‑Partyspiel',
@@ -100,6 +101,7 @@
           ? `Gewinner: ${names[0]}`
           : `Gewinner: ${names.join(', ')}`;
       }
+      ,selectingGame: 'Spiel wird ausgewählt…'
     }
   };
 
@@ -127,6 +129,14 @@
         el.textContent = value;
       }
     });
+
+    // Update the solo leaderboard title based on current language. We
+    // deliberately avoid using data-lang-key here to keep control over
+    // join/create button translations.
+    const soloTitle = document.getElementById('soloLeaderboardTitle');
+    if (soloTitle) {
+      soloTitle.textContent = lang === 'de' ? 'Solo‑Bestenliste' : 'Solo Leaderboard';
+    }
 
     // After applying translations, update the join/create button text again.
     // Without this, selecting a different language would revert the button
@@ -186,6 +196,28 @@
   const scoreBoardRound = document.getElementById('scoreBoardRound');
   const nextRoundBtn = document.getElementById('nextRoundBtn');
 
+  // Elements for solo leaderboard
+  const soloLeaderboardContainer = document.getElementById('soloLeaderboardContainer');
+  const soloLeaderboardList = document.getElementById('soloLeaderboardList');
+
+  // Update the solo leaderboard when the server sends new scores. This
+  // leaderboard is shown on the join screen and lists the top
+  // high scores from solo games. Scores are displayed in seconds.
+  socket.on('soloLeaderboardUpdate', ({ leaderboard }) => {
+    if (leaderboard && leaderboard.length > 0) {
+      soloLeaderboardContainer.classList.remove('hidden');
+      soloLeaderboardList.innerHTML = '';
+      leaderboard.forEach((entry, idx) => {
+        const li = document.createElement('li');
+        // Format score with suffix s for seconds
+        li.textContent = `${idx + 1}. ${entry.name} – ${entry.score}s`;
+        soloLeaderboardList.appendChild(li);
+      });
+    } else {
+      soloLeaderboardContainer.classList.add('hidden');
+    }
+  });
+
   // Create an error banner for displaying connection and lobby errors.
   const errorBanner = document.createElement('div');
   errorBanner.id = 'errorBanner';
@@ -227,6 +259,13 @@
 
   // After spin instructions start game
   startGameBtn.addEventListener('click', () => {
+    // Attempt to enter fullscreen mode on user interaction. Some
+    // browsers require the fullscreen request to be called directly
+    // inside an event handler triggered by a user action. We ignore
+    // errors silently if the request fails (e.g. already in fullscreen).
+    if (document.documentElement.requestFullscreen) {
+      document.documentElement.requestFullscreen().catch(() => {});
+    }
     socket.emit('startGame');
   });
 
@@ -280,26 +319,30 @@
 
   // When server sends spin start – show spinner and animate
   socket.on('spinStarted', ({ game }) => {
+    // Show overlay and display a loader animation while we "select" a game.
     spinnerOverlay.classList.remove('hidden');
-    selectedGameName.textContent = '';
-    // Build spinner content – four segments horizontally with game names
+    // Clear previous content
     spinner.innerHTML = '';
-    const order = ['laser', 'infected', 'colorRush', 'mazeRunner'];
-    order.forEach(g => {
-      const div = document.createElement('div');
-      div.textContent = t(`games.${g}.name`);
-      spinner.appendChild(div);
-    });
-    // animate scroll horizontally to selected game
-    const index = order.indexOf(game);
-    const distance = index * 100; // each seg width 100%? We'll use transform
-    spinner.style.transition = 'transform 2s cubic-bezier(0.15, 0.4, 0.1, 1)';
-    spinner.style.transform = `translateX(-${distance}%)`;
-    // After animation show name and inform server we completed spin
+    selectedGameName.textContent = '';
+    // Create a loader element (spinning circle) and a message
+    const loader = document.createElement('div');
+    loader.classList.add('loader');
+    const message = document.createElement('p');
+    message.textContent = t('selectingGame') || 'Selecting game…';
+    message.style.marginTop = '16px';
+    message.style.textAlign = 'center';
+    spinner.appendChild(loader);
+    spinner.appendChild(message);
+    // After a delay, reveal the selected game name and inform the server
     setTimeout(() => {
+      // Remove loader and show selected game name
+      spinner.innerHTML = '';
       selectedGameName.textContent = t(`games.${game}.name`);
-      socket.emit('gameSelected');
-    }, 2100);
+      // Slight delay to allow the name to display before confirming
+      setTimeout(() => {
+        socket.emit('gameSelected');
+      }, 500);
+    }, 2000);
   });
 
   // Show instructions
