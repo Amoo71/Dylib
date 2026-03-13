@@ -5,7 +5,15 @@ const { Server } = require('socket.io');
 // Create app and server
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+// Enable CORS so the Socket.IO server can accept connections from
+// other origins (e.g. if the frontend is deployed separately). This
+// helps during local development and when hosting the frontend and
+// backend on different domains.
+const io = new Server(server, {
+  cors: {
+    origin: '*'
+  }
+});
 
 // Serve static files from public directory
 app.use(express.static('public'));
@@ -63,6 +71,15 @@ io.on('connection', (socket) => {
       scores: state.scores,
       language: state.language
     });
+  });
+
+  // Allow clients to query whether a lobby already exists. This lets
+  // the UI display "Create Lobby" instead of "Join Lobby" when the
+  // server has no connected players. We send back a boolean
+  // indicating if there are currently any players.
+  socket.on('requestLobbyStatus', () => {
+    const hasLobby = state.players.length > 0;
+    socket.emit('lobbyStatus', { hasLobby });
   });
 
   // The host initiates the spin to select a random mini game. This
