@@ -27,6 +27,10 @@ const state = {
   currentGame: null,  // String identifier of the current mini game
   scores: {},         // Map from socket.id to number of wins
   language: 'en'      // Host selected language for UI. 'en' or 'de'. Set via query param in the URL.
+  ,soloLeaderboard: [] // Array of { name: string, score: number } for solo games
+  ,soloMode: false
+  ,startTime: null
+  ,maxMazeTime: 120000
 };
 
 // Mini‑game definitions used on the server side. The client also has
@@ -34,6 +38,8 @@ const state = {
 // scores. Each mini game will emit a 'gameOver' event with the
 // winner's socket id, which we handle here.
 const miniGames = ['laser', 'infected', 'colorRush', 'mazeRunner'];
+// Games that can be played in solo mode (infected doesn't make sense alone)
+const soloGames = ['laser', 'colorRush', 'mazeRunner'];
 
 io.on('connection', (socket) => {
   console.log('A user connected', socket.id);
@@ -71,6 +77,11 @@ io.on('connection', (socket) => {
       scores: state.scores,
       language: state.language
     });
+
+    // Send current solo leaderboard to the new player so they can display
+    // the high scores on the join screen. This emits only to the
+    // connecting socket.
+    socket.emit('soloLeaderboardUpdate', { leaderboard: state.soloLeaderboard });
   });
 
   // Allow clients to query whether a lobby already exists. This lets
@@ -89,7 +100,10 @@ io.on('connection', (socket) => {
   // client and server in sync.
   socket.on('startSpin', () => {
     if (socket.id !== state.host || state.gameRunning) return;
-    const game = miniGames[Math.floor(Math.random() * miniGames.length)];
+    // Choose from solo or multi games based on number of players. If fewer
+    // than 2 players are present, we don't include "infected".
+    const gameList = state.players.length < 2 ? soloGames : miniGames;
+    const game = gameList[Math.floor(Math.random() * gameList.length)];
     state.currentGame = game;
     io.emit('spinStarted', { game });
   });
@@ -120,6 +134,10 @@ io.on('connection', (socket) => {
       const idx = Math.floor(Math.random() * state.players.length);
       state.players[idx].infected = true;
     }
+    // Determine if this round is solo mode
+    state.soloMode = state.players.length < 2;
+    // Record the start time for scoring; used for solo leaderboard
+    state.startTime = Date.now();
     state.gameRunning = true;
     io.emit('gameStarted', { game: state.currentGame, players: state.players });
   });
@@ -151,6 +169,38 @@ io.on('connection', (socket) => {
     }
     // Notify clients
     io.emit('roundOver', { winners, scores: state.scores });
+    // If this was a solo round, compute a score and update the solo leaderboard
+    const elapsed = Date.now() - (state.startTime || Date.now());
+    if (state.soloMode && winners && Array.isArray(winners) && winners.length === 1) {
+      const winnerId = winners[0];
+      const player = state.players.find(p => p.id === winnerId);
+      if (player) {
+        let score;
+        // For maze runs we reward shorter times with higher scores by subtracting from a maximum
+        if (state.currentGame === 'mazeRunner') {
+          const timeSec = elapsed / 1000;
+          const maxSec = state.maxMazeTime / 1000;
+          score = Math.max(0, maxSec - timeSec);
+        } else {
+          // For other games, we simply measure survival time
+          score = elapsed / 1000;
+        }
+        // Round to integer seconds for readability
+        score = Math.round(score);
+        // Update solo leaderboard; keep highest score per player
+        const existing = state.soloLeaderboard.find(entry => entry.name === player.name);
+        if (existing) {
+          if (score > existing.score) existing.score = score;
+        } else {
+          state.soloLeaderboard.push({ name: player.name, score });
+        }
+        // Sort descending and keep top 10
+        state.soloLeaderboard.sort((a, b) => b.score - a.score);
+        state.soloLeaderboard = state.soloLeaderboard.slice(0, 10);
+        // Broadcast updated solo leaderboard to all clients
+        io.emit('soloLeaderboardUpdate', { leaderboard: state.soloLeaderboard });
+      }
+    }
     state.currentGame = null;
   });
 
