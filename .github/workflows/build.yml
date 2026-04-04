@@ -5,29 +5,33 @@ jobs:
   build:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v3
-      
-      - name: Set up Xcode
-        run: sudo xcode-select -s /Applications/Xcode.app
-        
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode Project
+        run: xcodegen generate
+
       - name: Build App
         run: |
-          mkdir build
-          xcodebuild build-for-testing \
+          xcodebuild build \
             -scheme VisionInspect \
             -destination 'generic/platform=iOS' \
-            -derivedDataPath build
-            
-      - name: Create IPA
+            -configuration Release \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO
+
+      - name: Create IPA Structure
         run: |
-          mkdir Payload
-          # Hier wird der Pfad zur .app Datei automatisch gesucht
+          mkdir -p Payload
           APP_PATH=$(find build -name "*.app" | head -n 1)
           cp -r "$APP_PATH" Payload/
           zip -r VisionInspect.ipa Payload
-          
+
       - name: Upload Artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: VisionInspect-IPA
           path: VisionInspect.ipa
