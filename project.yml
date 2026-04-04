@@ -7,7 +7,7 @@ targets:
     platform: iOS
     deploymentTarget: "16.0"
     sources:
-      - path: Sources # Zeigt exakt auf den neuen Ordner
+      - path: AppSource
     info:
       plist:
         CFBundleShortVersionString: "1.0"
@@ -15,11 +15,6 @@ targets:
         UILaunchStoryboardName: LaunchScreen
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
-        UIApplicationSceneManifest:
-          UIApplicationSupportsMultipleScenes: false
-          UISceneConfigurations:
-            UIWindowSceneSessionRoleApplication:
-              - UISceneConfigurationName: Default Configuration
     settings:
       GENERATE_INFOPLIST_FILE: YES
       MARKETING_VERSION: 1.0
