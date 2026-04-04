@@ -6,7 +6,6 @@ struct VisionInspectApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .preferredColorScheme(.dark)
         }
     }
 }
@@ -19,74 +18,51 @@ struct ContentView: View {
         ZStack {
             Color.black.ignoresSafeArea()
             
-            VStack(spacing: 12) {
-                // Glassmorphism Adressleiste
+            VStack(spacing: 10) {
                 HStack {
-                    TextField("URL eingeben", text: $urlString)
-                        .keyboardType(.URL)
-                        .autocapitalization(.none)
-                        .padding(12)
-                        .background(.ultraThinMaterial)
-                        .cornerRadius(20)
+                    TextField("URL...", text: $urlString)
+                        .textFieldStyle(PlainTextFieldStyle())
+                        .padding(10)
+                        .background(Color.white.opacity(0.1))
+                        .cornerRadius(15)
                         .foregroundColor(.white)
-                        .onSubmit { showDevTools = false }
                     
                     Button(action: { showDevTools.toggle() }) {
                         Image(systemName: "terminal.fill")
-                            .foregroundColor(.white)
-                            .padding(12)
-                            .background(showDevTools ? Color.blue : Color.white.opacity(0.2))
+                            .padding(10)
+                            .background(showDevTools ? Color.blue : Color.gray.opacity(0.3))
                             .clipShape(Circle())
+                            .foregroundColor(.white)
                     }
                 }
-                .padding(.horizontal)
-                .padding(.top, 10)
+                .padding()
 
-                // Browser Engine
-                BrowserView(url: urlString, showDevTools: $showDevTools)
-                    .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
-                    .padding([.horizontal, .bottom], 8)
+                BrowserWrapper(url: urlString, showDevTools: $showDevTools)
+                    .cornerRadius(20)
+                    .padding(.bottom, 5)
             }
         }
     }
 }
 
-struct BrowserView: UIViewRepresentable {
+struct BrowserWrapper: UIViewRepresentable {
     let url: String
     @Binding var showDevTools: Bool
 
     func makeUIView(context: Context) -> WKWebView {
-        let webView = WKWebView()
-        webView.backgroundColor = .black
-        webView.isOpaque = false
-        return webView
+        return WKWebView()
     }
 
     func updateUIView(_ uiView: WKWebView, context: Context) {
-        if let targetUrl = URL(string: url.contains("://") ? url : "https://\(url)") {
-            if uiView.url?.host != targetUrl.host {
-                uiView.load(URLRequest(url: targetUrl))
+        if let target = URL(string: url.contains("://") ? url : "https://\(url)") {
+            if uiView.url == nil || uiView.url?.host != target.host {
+                uiView.load(URLRequest(url: target))
             }
         }
         
         if showDevTools {
-            let script = """
-            (function () {
-                if (!window.eruda) {
-                    var s = document.createElement('script');
-                    s.src = "https://cdn.jsdelivr.net/npm/eruda";
-                    document.body.appendChild(s);
-                    s.onload = function () { 
-                        eruda.init({theme: 'dark'}); 
-                        eruda.show(); 
-                        eruda.get('network').enable();
-                    };
-                } else { eruda.show(); }
-            })();
-            """
+            let script = "if(!window.eruda){var s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/eruda';document.body.appendChild(s);s.onload=function(){eruda.init();eruda.show();eruda.get('network').enable();}}else{eruda.show();}"
             uiView.evaluateJavaScript(script)
-        } else {
-            uiView.evaluateJavaScript("if(window.eruda) eruda.hide();")
         }
     }
 }
