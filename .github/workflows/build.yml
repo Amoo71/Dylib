@@ -7,12 +7,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Folders and Files
+      - name: Prepare Source Code
         run: |
           mkdir -p AppSource
-          # Suche alle Swift Dateien (egal wo) und verschiebe sie nach AppSource
-          find . -name "*.swift" -exec cp {} AppSource/ \;
-          ls -R AppSource/ # Debug: Zeige uns, was gefunden wurde
+          # Kopiert alle .swift Dateien in den Quellordner
+          find . -name "*.swift" -maxdepth 2 -exec cp {} AppSource/ \;
+          echo "Dateien in AppSource:"
+          ls AppSource
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -23,19 +24,26 @@ jobs:
       - name: Build App
         run: |
           xcodebuild build \
+            -project VisionInspect.xcodeproj \
             -scheme VisionInspect \
             -destination 'generic/platform=iOS' \
             -configuration Release \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY=""
+            CODE_SIGN_IDENTITY="" \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES
 
-      - name: Create IPA Structure
+      - name: Create IPA
         run: |
           mkdir -p Payload
-          APP_FOLDER=$(find build/Build/Products/Release-iphoneos -name "*.app" -type d | head -n 1)
-          cp -r "$APP_FOLDER" Payload/
+          # Sucht den .app Ordner
+          APP_PATH=$(find build/Build/Products/Release-iphoneos -name "*.app" -type d | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            echo "Fehler: .app Datei wurde nicht gefunden!"
+            exit 1
+          fi
+          cp -r "$APP_PATH" Payload/
           zip -r VisionInspect.ipa Payload
 
       - name: Upload Artifact
