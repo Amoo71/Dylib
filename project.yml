@@ -1,13 +1,30 @@
 name: VisionInspect
 options:
-  bundleIdPrefix: com.yourname
+  bundleIdPrefix: com.vision.inspect
 targets:
   VisionInspect:
     type: application
     platform: iOS
     deploymentTarget: "16.0"
     sources: [VisionInspect]
+    info:
+      plist:
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "1"
+        UILaunchStoryboardName: LaunchScreen
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+          UISceneConfigurations:
+            UIWindowSceneSessionRoleApplication:
+              - UISceneConfigurationName: Default Configuration
+                UISceneDelegateClassName: $(PRODUCT_MODULE_NAME).SceneDelegate
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true # Erlaubt HTTP Seiten
     settings:
+      GENERATE_INFOPLIST_FILE: YES
       MARKETING_VERSION: 1.0
       CURRENT_PROJECT_VERSION: 1
       CODE_SIGNING_ALLOWED: NO
+      CODE_SIGNING_REQUIRED: NO
+      CODE_SIGN_IDENTITY: ""
+      AD_HOC_CODE_SIGNING_ALLOWED: YES
