@@ -7,6 +7,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Setup Folders and Files
+        run: |
+          mkdir -p AppSource
+          # Suche alle Swift Dateien (egal wo) und verschiebe sie nach AppSource
+          find . -name "*.swift" -exec cp {} AppSource/ \;
+          ls -R AppSource/ # Debug: Zeige uns, was gefunden wurde
+
       - name: Install XcodeGen
         run: brew install xcodegen
 
@@ -21,13 +28,14 @@ jobs:
             -configuration Release \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
 
       - name: Create IPA Structure
         run: |
           mkdir -p Payload
-          APP_PATH=$(find build -name "*.app" | head -n 1)
-          cp -r "$APP_PATH" Payload/
+          APP_FOLDER=$(find build/Build/Products/Release-iphoneos -name "*.app" -type d | head -n 1)
+          cp -r "$APP_FOLDER" Payload/
           zip -r VisionInspect.ipa Payload
 
       - name: Upload Artifact
