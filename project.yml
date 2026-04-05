@@ -7,7 +7,7 @@ targets:
     platform: iOS
     deploymentTarget: "16.0"
     sources:
-      - path: /
+      - path: .
     settings:
       GENERATE_INFOPLIST_FILE: YES
       CODE_SIGNING_ALLOWED: NO
