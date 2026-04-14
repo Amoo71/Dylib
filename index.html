@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mal&Mahl – Kaffee, Kuchen & Keramik</title>
+    <meta
+      name="description"
+      content="Mal&Mahl: Nachhaltiges Café mit Kuchen, Spezialgetränken und Keramikbemalung in Nürnberg."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="ambient ambient-left"></div>
+    <div class="ambient ambient-right"></div>
+
+    <header class="site-header" id="top">
+      <nav class="nav container">
+        <a class="brand" href="#top" aria-label="Mal und Mahl Startseite">
+          <img src="logo.png" alt="Mal & Mahl Logo" class="logo" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline-block';" />
+          <span class="logo-fallback">Mal&Mahl</span>
+        </a>
+        <button class="menu-toggle" id="menuToggle" aria-label="Menü öffnen">☰</button>
+        <ul class="nav-links" id="navLinks">
+          <li><a href="#produkte">Produkte</a></li>
+          <li><a href="#preise">Preise</a></li>
+          <li><a href="#events">Events</a></li>
+          <li><a href="#reservierung">Reservieren</a></li>
+          <li><a href="#kontakt">Kontakt</a></li>
+        </ul>
+      </nav>
+
+      <section class="hero container reveal">
+        <p class="eyebrow">Café • Kunst • Nachhaltigkeit</p>
+        <h1>Mal&Mahl Kaffee, Kuchen & Keramikbemahlung</h1>
+        <p>
+          Moderner Botanical-Look mit warmem Holz-Charakter. Wir stehen für fairen Anbau,
+          fairen Handel und eine nachhaltige Umgebung – genussvoll & kreativ.
+        </p>
+        <div class="hero-cta">
+          <a href="#reservierung" class="btn btn-primary">Termin buchen</a>
+          <a href="#events" class="btn btn-ghost">Aktuelle Events</a>
+        </div>
+      </section>
+    </header>
+
+    <main>
+      <section class="section container" id="produkte">
+        <div class="section-head reveal">
+          <p class="eyebrow">Angebot</p>
+          <h2>Produkte</h2>
+        </div>
+
+        <div class="grid cards-2">
+          <article class="card reveal">
+            <h3>Speisekarte – Kuchen (täglich wechselnd)</h3>
+            <ul>
+              <li>Schoko-Himbeer Torte</li>
+              <li>Zitronen-Mohn Kuchen</li>
+              <li>Karotten-Walnuss Kuchen</li>
+              <li>Apfel-Zimt Crumble Cake</li>
+              <li>Veganer Bananen-Karamell Kuchen</li>
+            </ul>
+          </article>
+
+          <article class="card reveal">
+            <h3>Getränkekarte</h3>
+            <p class="sub">10 Heißgetränke</p>
+            <ul>
+              <li>Espresso, Doppio, Americano</li>
+              <li>Cappuccino, Flat White, Latte Macchiato</li>
+              <li>Filterkaffee, Mokka</li>
+              <li>Matcha Latte</li>
+              <li>Golden Kurkuma Latte</li>
+            </ul>
+            <p class="sub">5 Kaltgetränke</p>
+            <ul>
+              <li>Mineralwasser still/spritzig</li>
+              <li>Orangensaft</li>
+              <li>Apfel-Ingwer Saft</li>
+              <li>Hausgemachter Kräuter-Eistee</li>
+              <li>Iced Matcha</li>
+            </ul>
+          </article>
+
+          <article class="card reveal">
+            <h3>Keramikkarte – 10 Objekte zum Bemalen</h3>
+            <ul>
+              <li>Tasse klassisch</li>
+              <li>Jumbo-Becher</li>
+              <li>Espressotasse</li>
+              <li>Schale klein</li>
+              <li>Müslischale</li>
+              <li>Teller rund</li>
+              <li>Servierplatte</li>
+              <li>Vase mini</li>
+              <li>Vase groß</li>
+              <li>Kerzenhalter</li>
+            </ul>
+          </article>
+
+          <article class="card card-accent reveal">
+            <h3>Keramik-Pakete</h3>
+            <ul>
+              <li>Sweet Paint: Kuchen + Kaffee + Keramik</li>
+              <li>Classic Paint: Kaffee + Keramik</li>
+              <li>Cake & Create: Kuchen + Keramik</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section class="section container" id="preise">
+        <div class="section-head reveal">
+          <p class="eyebrow">Fair kalkuliert</p>
+          <h2>Preise</h2>
+          <p>Durchschnittlich und verhältnisgerecht für ein nachhaltiges Café-Erlebnis in Nürnberg.</p>
+        </div>
+
+        <div class="pricing-grid">
+          <article class="price-card reveal">
+            <h3>Kuchen</h3>
+            <p class="price">4,20 € – 5,90 €</p>
+            <p>Je nach Sorte, inkl. hochwertiger regionaler Zutaten.</p>
+          </article>
+          <article class="price-card reveal">
+            <h3>Heißgetränke</h3>
+            <p class="price">2,40 € – 5,20 €</p>
+            <p>Von Espresso bis Matcha – Fairtrade-Bohnen und Bio-Milchoptionen.</p>
+          </article>
+          <article class="price-card reveal">
+            <h3>Kaltgetränke</h3>
+            <p class="price">2,20 € – 4,90 €</p>
+            <p>Wasser, Säfte und hausgemachter gesunder Eistee.</p>
+          </article>
+          <article class="price-card reveal">
+            <h3>Keramikobjekte</h3>
+            <p class="price">12,00 € – 39,00 €</p>
+            <p>Nach Größe und Brennaufwand.</p>
+          </article>
+          <article class="price-card reveal card-accent">
+            <h3>Pakete</h3>
+            <p class="price">18,90 € – 34,90 €</p>
+            <p>Perfekt für Date, Freunde oder Team-Event.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section section-events" id="events">
+        <div class="container">
+          <div class="section-head reveal">
+            <p class="eyebrow">Highlight</p>
+            <h2>Events</h2>
+          </div>
+          <div class="event-ticker reveal" id="eventTicker" aria-live="polite"></div>
+          <div class="event-grid" id="eventGrid"></div>
+        </div>
+      </section>
+
+      <section class="section container" id="reservierung">
+        <div class="section-head reveal">
+          <p class="eyebrow">Jetzt buchen</p>
+          <h2>Termin reservieren</h2>
+        </div>
+
+        <form id="bookingForm" class="booking-form reveal">
+          <div class="form-row">
+            <label>Datum<input type="date" name="date" required /></label>
+            <label>Uhrzeit<input type="time" name="time" required /></label>
+          </div>
+          <div class="form-row">
+            <label>Personen
+              <select name="people" required>
+                <option value="">Bitte wählen</option>
+                <option>1</option><option>2</option><option>3</option><option>4</option>
+                <option>5</option><option>6</option><option>7</option><option>8</option>
+              </select>
+            </label>
+            <label>Name<input type="text" name="name" required /></label>
+          </div>
+          <div class="form-row">
+            <label>Telefonnummer<input type="tel" name="phone" required /></label>
+            <label>E-Mail<input type="email" name="email" required /></label>
+          </div>
+          <button class="btn btn-primary" type="submit">Reservierung anfragen</button>
+          <p class="form-note" id="formNote"></p>
+        </form>
+      </section>
+
+      <section class="section container" id="kontakt">
+        <div class="section-head reveal">
+          <p class="eyebrow">Kontakt</p>
+          <h2>Mal & Mahl</h2>
+        </div>
+        <article class="card reveal">
+          <p>Di – Do | 10:00–18:00 Uhr<br />Fr – So | 10:00–20:00 Uhr</p>
+          <p>☎️ 0911 7207 667</p>
+          <p>Mal-Mahl-Strasse 20, Nürnberg</p>
+        </article>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container footer-inner">
+        <p>© <span id="year"></span> Mal&Mahl – Nachhaltig, fair, kreativ.</p>
+        <button class="admin-trigger" id="adminTrigger" aria-label="Admin Bereich öffnen">+</button>
+      </div>
+    </footer>
+
+    <dialog id="adminDialog" class="admin-dialog">
+      <form method="dialog" class="admin-panel" id="adminForm">
+        <h3>Admin Zugriff</h3>
+        <label>Passwort
+          <input id="adminPassword" type="password" placeholder="••••" required />
+        </label>
+        <menu>
+          <button value="cancel" class="btn btn-ghost">Abbrechen</button>
+          <button id="adminLogin" value="default" class="btn btn-green">Einloggen</button>
+        </menu>
+        <p id="adminMessage" class="form-note"></p>
+      </form>
+    </dialog>
+
+    <script src="script.js"></script>
+  </body>
+</html>
