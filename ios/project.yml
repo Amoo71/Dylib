@@ -1,0 +1,25 @@
+name: LiquidBrowser
+options:
+  minimumXcodeGenVersion: 2.38.0
+  deploymentTarget:
+    iOS: 15.0
+settings:
+  PRODUCT_BUNDLE_IDENTIFIER: com.liquid.browser
+  PRODUCT_NAME: LiquidBrowser
+  SWIFT_VERSION: 5.0
+targets:
+  LiquidBrowser:
+    type: application
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: App/Sources
+      - path: App/Resources
+        type: folder
+    settings:
+      base:
+        INFOPLIST_FILE: App/Sources/Info.plist
+        TARGETED_DEVICE_FAMILY: "1,2"
+        GENERATE_INFOPLIST_FILE: NO
+    scheme:
+      testTargets: []
