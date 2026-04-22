@@ -1,9 +1,24 @@
-# Design Notizen – Mal&Mahl
+# Liquid Browser – Konzeptstand
 
-Das Frontend nutzt ein modernes Darkmode-Botanical-System nach den gelieferten Vorgaben:
+Dieses Repo ist auf ein iOS-Browser-Konzept im **Dark Mode** ausgelegt:
 
-- Farbpalette mit Schwerpunkt auf `#171717`, `#0f0f0f`, `#3ecf8e`, `#00c573`.
-- Typografie-Hierarchie mit großem Hero, klaren Section-Headings und reduzierter Gewichtung.
-- Tiefenwirkung rein über Border-Hierarchie statt Schatten.
-- Pill-Buttons, 16px Kartenradius und 8px-basierte Spacing-Skala.
-- Interaktionen: Scroll-Reveal, animierter Event-Ticker, mobiles Menü, Admin-Dialog.
+- **Liquid-Glass UI** mit zwei unteren Bubbles (Optionen + URL-Leiste).
+- **Safari-ähnlicher Look** in modernem, cleanem Stil.
+- **Option Sheet** mit:
+  - Built-in Ad Blocker
+  - Anti-New-Tab gegen Werbe-Popups
+  - Proxy-Support mit Liste und Auto-Wechsel
+  - Developer-Tools Umschalter
+- **Devtools Network Recorder** (Start/Stop/Clear, URL + Status).
+- **iOS Player + PiP** als integrierte Video-Vorschau.
+
+## GitHub Action: IPA Build
+
+Es gibt jetzt einen Workflow unter `.github/workflows/build-ipa.yml`, der auf macOS:
+
+1. Web-Dateien in das iOS-Bundle kopiert,
+2. per XcodeGen ein Xcode-Projekt erzeugt,
+3. eine iOS-App baut,
+4. eine **unsigned IPA** als Artifact bereitstellt (`LiquidBrowser-unsigned.ipa`).
+
+Damit bekommst du direkt eine IPA aus GitHub Actions als Download-Artefakt.
