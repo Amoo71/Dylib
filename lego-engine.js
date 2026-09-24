@@ -1,0 +1,7 @@
+// Deterministic LEGO placement engine: no overlaps, inventory limits, and stud-compatible layers.
+export const BRICKS={"1x1":[1,1],"1x2":[1,2],"1x3":[1,3],"1x4":[1,4],"1x6":[1,6],"2x2":[2,2],"2x3":[2,3],"2x4":[2,4],"2x6":[2,6],"2x8":[2,8]};
+export function footprint(size,rotation=0){const [h,w]=BRICKS[size]||[1,1];return rotation%2?[w,h]:[h,w]}
+export function cells(piece){const [h,w]=footprint(piece.size,piece.rotation);const out=[];for(let y=0;y<h;y++)for(let x=0;x<w;x++)out.push(`${piece.x+x},${piece.y+y},${piece.z||0}`);return out}
+export function canPlace(piece,pieces,stock){const count=pieces.filter(p=>p.size===piece.size).length;if(count>=(stock?.[piece.size]??0))return false;const occupied=new Set(pieces.flatMap(cells));return cells(piece).every(c=>!occupied.has(c));}
+export function compatible(piece,pieces){if(!pieces.length)return true;const z=piece.z||0;const below=new Set(pieces.filter(p=>(p.z||0)===z-1).flatMap(cells));if(z===0)return true;return cells({...piece,z:z-1}).some(c=>below.has(c));}
+export function validatePlan(pieces,stock){const seen=new Set();const errors=[];for(const p of pieces){if(!BRICKS[p.size])errors.push(`Unbekannte Größe ${p.size}`);for(const c of cells(p)){if(seen.has(c))errors.push(`Überlappung bei ${c}`);seen.add(c)}}for(const [s,n] of Object.entries(stock||{})){if(pieces.filter(p=>p.size===s).length>n)errors.push(`Zu viele ${s}`)}return {valid:errors.length===0,errors}}
