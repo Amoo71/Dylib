@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Get Money</title>
+<style>
+*{box-sizing:border-box}html,body{width:100%;height:100%;margin:0}body{display:grid;place-items:center;overflow:hidden;background:#050505;font-family:Inter,Arial,sans-serif}.button-wrap{position:relative;display:grid;place-items:center}.button-wrap:before{content:"";position:absolute;width:180px;height:180px;border-radius:50%;background:radial-gradient(circle,rgba(255,255,255,.16),transparent 68%);filter:blur(18px);opacity:.45;transition:transform .6s cubic-bezier(.22,1,.36,1),opacity .6s ease}button{position:relative;z-index:1;min-width:220px;padding:21px 42px;border:1px solid rgba(255,255,255,.16);border-radius:16px;color:#fff;background:linear-gradient(145deg,#1b1b1b,#0d0d0d);font:700 27px/1 Inter,Arial,sans-serif;letter-spacing:-.5px;cursor:pointer;box-shadow:0 12px 40px rgba(0,0,0,.65),inset 0 1px 0 rgba(255,255,255,.08);transition:transform .35s cubic-bezier(.22,1,.36,1),box-shadow .35s ease,border-color .35s ease}button:hover{transform:translateY(-5px) scale(1.025);border-color:rgba(255,255,255,.3);box-shadow:0 20px 55px rgba(0,0,0,.8),0 0 35px rgba(255,255,255,.07),inset 0 1px 0 rgba(255,255,255,.12)}.button-wrap:hover:before{transform:scale(1.35);opacity:.7}button:active{transform:translateY(-1px) scale(.98)}button:after{content:"";position:absolute;inset:0;border-radius:inherit;background:linear-gradient(110deg,transparent 20%,rgba(255,255,255,.12) 45%,transparent 70%);transform:translateX(-130%);transition:transform .8s cubic-bezier(.22,1,.36,1);pointer-events:none}button:hover:after{transform:translateX(130%)}
+</style>
+</head>
+<body>
+<div class="button-wrap"><button id="getMoney">Get Money</button></div>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script>
+function getISOWeek(date){const d=new Date(Date.UTC(date.getFullYear(),date.getMonth(),date.getDate()));const day=d.getUTCDay()||7;d.setUTCDate(d.getUTCDate()+4-day);const yearStart=new Date(Date.UTC(d.getUTCFullYear(),0,1));return Math.ceil((((d-yearStart)/86400000)+1)/7)}
+document.getElementById('getMoney').addEventListener('click',()=>{const kw=getISOWeek(new Date());const rows=[['KW-Woche',`KW ${kw}`],[],['Rang','Name'],[1,'Amo']];const ws=XLSX.utils.aoa_to_sheet(rows);ws['!cols']=[{wch:14},{wch:24}];const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Liste');XLSX.writeFile(wb,`Get-Money-KW-${kw}.xlsx`)});
+</script>
+</body>
+</html>
