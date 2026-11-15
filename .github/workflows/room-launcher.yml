@@ -1,0 +1,57 @@
+name: Build Room Launcher APK
+
+on:
+  push:
+    paths:
+      - "room-launcher/**"
+      - ".github/workflows/room-launcher.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: room-launcher
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build APKs
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon --stacktrace assembleRelease assembleDebug
+
+      - name: Collect APKs
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/out"
+          cp app/build/outputs/apk/release/app-release.apk "$GITHUB_WORKSPACE/out/RoomLauncher.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "$GITHUB_WORKSPACE/out/RoomLauncher-debug.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RoomLauncher-apk
+          path: out/*.apk
+
+      - name: Publish download (GitHub Release)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: room-launcher-latest
+          name: Room Launcher (neuester Build)
+          prerelease: true
+          make_latest: false
+          body: |
+            Neuester Build von Branch `${{ github.ref_name }}` (Commit ${{ github.sha }}).
+            Auf dem Tablet `RoomLauncher.apk` herunterladen und installieren.
+          files: out/*.apk
