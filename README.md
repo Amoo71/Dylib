@@ -6,16 +6,24 @@ mit drei Glas-Widgets: **Licht**, **AirPods** und **Apps**.
 **Download:** [neueste Version (Releases)](../../releases/latest) → `RoomLauncher.apk`
 
 - **Home-Launcher**: Als Standard-Startbildschirm landet die Home-Taste immer hier. Zurück-Taste verlässt ihn nicht.
-- **Exit**: Knopf unten rechts **gedrückt halten** → anderen Launcher öffnen / Standard ändern / Einstellungen.
-- **Govee-LED** direkt per Bluetooth LE: An/Aus, Helligkeit, Farbe, Presets (ohne Cloud, ohne Govee-App).
+- **Launcherboard** (8×4-Raster, wie iOS): Widgets und Apps frei anordnen.
+  Gedrückt halten → Bearbeiten: alles wackelt, **ziehen** zum Verschieben, **„–“** entfernen, **„⤡“** Größe (Klein/Mittel/Groß).
+- **Widgets**: Uhr · Licht (Govee) · AirPods – jeweils in mehreren Größen.
+- **Dock** unten (Liquid Glass): an/aus, Apps hinzufügen, per Gedrückthalten sortieren/entfernen.
+- **Einstellungen** (Zahnrad unten rechts): Hintergrund, Widgets, Apps, Dock, Geräte, Allgemein (inkl. Launcher verlassen).
+- **Hintergründe**, auf die das Glas reagiert (ab Android 12 mit echter Unschärfe, sonst transparent):
+  - *Regen*: dünne Tropfen mit Wind-Böen (Stärke, Wind, Tempo einstellbar)
+  - *Schwarz*: schwarz mit weichen grauen schwebenden Blasen
+  - *Farbig*: einfarbig oder Verlauf aus bis zu 4 Farben + Blasen (Anzahl, Größe, Tempo, Deckkraft, Farbe)
+  - *Eigenes*: eigenes Bild/GIF/PNG/JPEG + optional Regen oder Blasen darüber
+- **Govee-LED** direkt per Bluetooth LE: An/Aus, Helligkeit, Farbe, Presets, Szenen, Musikmodi, Status-Rücklesen.
 - **AirPods** (Protokoll nach [GreenPods](https://github.com/andrewkomkov/GreenPods)): Verbinden/Trennen, Akku L/R/Case + Laden + „im Ohr“,
   Geräuschkontrolle Aus / Transparenz / Adaptiv / ANC, Stärke des adaptiven Audios, Gesprächserkennung,
   automatische Ohrerkennung, ANC mit einem AirPod.
-- **App-Widget** mit angepinnten Apps + alle Apps (App gedrückt halten = anpinnen/entfernen).
 
 ## Installation
 
-1. APK laden: GitHub → *Releases* → **Room Launcher v1.0.0** → `RoomLauncher.apk`.
+1. APK laden: GitHub → *Releases* → **Room Launcher v1.1.0** (neueste) → `RoomLauncher.apk`.
 2. Auf dem Tablet installieren („Unbekannte Quellen“ erlauben).
 3. App öffnen, Bluetooth- und Standortberechtigung erlauben (Standort braucht Android ≤ 11 für BLE-Scans).
 4. Home-Taste drücken → **Room Launcher** als Standard wählen („Immer“).

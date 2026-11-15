@@ -19,6 +19,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -44,6 +45,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
@@ -52,7 +55,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlurEffect
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
@@ -60,6 +65,13 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.unit.Constraints
+import android.os.Build
+import com.amoo.roomlauncher.theme.LocalBackdrop
+import com.amoo.roomlauncher.theme.drawTheme
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
@@ -139,14 +151,69 @@ fun T(
     Text(text = text, fontSize = size, fontWeight = weight, color = color, modifier = modifier, maxLines = maxLines)
 }
 
+/**
+ * Glasfläche: zeigt (ab Android 12) den animierten Hintergrund unscharf durch –
+ * dadurch "reagiert" das Glas auf Regen, Blasen, Farben und eigene Bilder.
+ */
 @Composable
-fun GlassCard(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
-    Column(
+fun GlassSurface(
+    modifier: Modifier = Modifier,
+    corner: Dp = 32.dp,
+    strength: Float = 1f,
+    content: @Composable BoxScope.() -> Unit,
+) {
+    val backdrop = LocalBackdrop.current
+    val shape = RoundedCornerShape(corner)
+    var pos by remember { mutableStateOf(Offset.Zero) }
+    Box(
         modifier
-            .glass(32.dp)
-            .padding(24.dp),
-        content = content,
-    )
+            .onGloballyPositioned { pos = it.positionInRoot() }
+            .clip(shape),
+    ) {
+        if (backdrop != null && backdrop.theme.glassBlur && Build.VERSION.SDK_INT >= 31) {
+            Box(Modifier.matchParentSize()) {
+                Canvas(
+                    Modifier
+                        .layout { measurable, constraints ->
+                            val w = backdrop.screenSize.width.roundToInt().coerceAtLeast(1)
+                            val h = backdrop.screenSize.height.roundToInt().coerceAtLeast(1)
+                            val placeable = measurable.measure(Constraints.fixed(w, h))
+                            layout(constraints.maxWidth, constraints.maxHeight) {
+                                placeable.place(-pos.x.roundToInt(), -pos.y.roundToInt())
+                            }
+                        }
+                        .graphicsLayer {
+                            val r = 26.dp.toPx()
+                            renderEffect = BlurEffect(r, r, TileMode.Clamp)
+                        },
+                ) {
+                    drawTheme(backdrop.theme, backdrop.time.floatValue, backdrop.image)
+                }
+            }
+        }
+        Box(
+            Modifier
+                .matchParentSize()
+                .glass(corner, strength),
+        )
+        content()
+    }
+}
+
+@Composable
+fun GlassCard(
+    modifier: Modifier = Modifier,
+    padding: Dp = 22.dp,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    GlassSurface(modifier, 30.dp) {
+        Column(
+            Modifier
+                .matchParentSize()
+                .padding(padding),
+            content = content,
+        )
+    }
 }
 
 @Composable
@@ -280,40 +347,6 @@ fun GridGlyph(color: Color, modifier: Modifier = Modifier) {
         for (x in 0..2) for (y in 0..2) {
             drawCircle(color, r, Offset(step * x + step / 2, step * y + step / 2))
         }
-    }
-}
-
-/** Animierter dunkler Hintergrund mit weichen Farbflächen, durch die das Glas wirkt. */
-@Composable
-fun LiquidBackground(accent: Color?) {
-    val transition = rememberInfiniteTransition(label = "bg")
-    val p by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(40_000, easing = LinearEasing), RepeatMode.Reverse),
-        label = "p",
-    )
-    val accentAnim by animateFloatAsState(if (accent != null) 1f else 0f, tween(800), label = "accent")
-    Canvas(Modifier.fillMaxSize()) {
-        drawRect(Color(0xFF04050A))
-        val w = size.width
-        val h = size.height
-        fun blob(cx: Float, cy: Float, r: Float, c: Color) {
-            drawCircle(
-                Brush.radialGradient(listOf(c, c.copy(alpha = c.alpha * 0.4f), Color.Transparent), Offset(cx, cy), r),
-                r,
-                Offset(cx, cy),
-            )
-        }
-        blob(w * (0.12f + 0.10f * p), h * (0.15f + 0.20f * p), w * 0.48f, Color(0xFF3B2DFF).copy(alpha = 0.55f))
-        blob(w * (0.88f - 0.10f * p), h * (0.25f + 0.25f * p), w * 0.40f, Color(0xFFFF2D87).copy(alpha = 0.33f))
-        blob(w * (0.45f + 0.15f * p), h * (1.00f - 0.15f * p), w * 0.50f, Color(0xFF00B4FF).copy(alpha = 0.28f))
-        if (accent != null || accentAnim > 0f) {
-            val a = accent ?: Color.White
-            blob(w * (0.65f - 0.2f * p), h * 0.55f, w * 0.38f, a.copy(alpha = 0.45f * accentAnim))
-        }
-        // leichte Vignette
-        drawRect(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.45f))))
     }
 }
 

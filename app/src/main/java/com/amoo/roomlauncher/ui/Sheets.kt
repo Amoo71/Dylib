@@ -48,9 +48,12 @@ import com.amoo.roomlauncher.toast
 // ------------------------------------------------------------------ Alle Apps
 
 @Composable
-fun AppsSheet(repo: AppRepository, onDismiss: () -> Unit) {
+fun AppsSheet(repo: AppRepository, board: com.amoo.roomlauncher.board.BoardStore, onDismiss: () -> Unit) {
     val apps by repo.apps.collectAsState()
-    val favorites by repo.favorites.collectAsState()
+    val items by board.items.collectAsState()
+    val favorites = remember(items) {
+        items.filterIsInstance<com.amoo.roomlauncher.board.BoardItem.App>().map { it.component.substringBefore('/') }.toSet()
+    }
     var query by remember { mutableStateOf("") }
     val context = LocalContext.current
     val filtered = remember(apps, query) {
@@ -75,7 +78,7 @@ fun AppsSheet(repo: AppRepository, onDismiss: () -> Unit) {
             )
         }
         VSpacer(6.dp)
-        T("Gedrückt halten = im App-Widget anpinnen / entfernen", 12.sp, color = TextTertiary)
+        T("Gedrückt halten = aufs Board legen", 12.sp, color = TextTertiary)
         VSpacer(12.dp)
         LazyVerticalGrid(
             columns = GridCells.Adaptive(104.dp),
@@ -88,8 +91,8 @@ fun AppsSheet(repo: AppRepository, onDismiss: () -> Unit) {
                 Column(
                     Modifier.bouncy(
                         onLongClick = {
-                            repo.toggleFavorite(app.packageName)
-                            context.toast(if (fav) "Aus dem App-Widget entfernt" else "Im App-Widget angepinnt")
+                            board.addApp(app.component.flattenToString())
+                            context.toast(if (fav) "Ist schon auf dem Board" else "${app.label} aufs Board gelegt")
                         },
                     ) {
                         onDismiss()
@@ -121,131 +124,6 @@ fun AppsSheet(repo: AppRepository, onDismiss: () -> Unit) {
                     )
                 }
             }
-        }
-    }
-}
-
-// ------------------------------------------------------------------ App-Widget
-
-/** Glas-Widget mit den Lieblings-Apps zum direkten Öffnen. */
-@Composable
-fun AppsWidget(repo: AppRepository, onOpenAll: () -> Unit, modifier: Modifier = Modifier) {
-    val apps by repo.apps.collectAsState()
-    val favorites by repo.favorites.collectAsState()
-    val favApps = remember(apps, favorites) {
-        favorites.mapNotNull { p -> apps.firstOrNull { it.packageName == p } }
-    }
-    GlassCard(modifier) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                T("Apps", 28.sp, FontWeight.Bold)
-                T("${apps.size} installiert", 14.sp, color = TextSecondary)
-            }
-            Box(
-                Modifier
-                    .size(44.dp)
-                    .bouncy(onClick = onOpenAll)
-                    .glass(22.dp, 1.3f),
-                contentAlignment = Alignment.Center,
-            ) {
-                GridGlyph(TextPrimary, Modifier.size(18.dp))
-            }
-        }
-        VSpacer(16.dp)
-        if (favApps.isEmpty()) {
-            T("Tippe oben rechts auf das Raster und halte eine App gedrückt, um sie hier anzupinnen.", 15.sp, color = TextSecondary)
-            VSpacer(16.dp)
-            GlassButton("Alle Apps", highlighted = true, onClick = onOpenAll)
-        } else {
-            LazyVerticalGrid(
-                columns = GridCells.Adaptive(84.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                modifier = Modifier.weight(1f),
-            ) {
-                items(favApps, key = { it.component.flattenToString() }) { app ->
-                    Column(
-                        Modifier.bouncy(onLongClick = { repo.toggleFavorite(app.packageName) }) { repo.launch(app) },
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        Image(app.icon, contentDescription = app.label, modifier = Modifier.size(58.dp))
-                        VSpacer(6.dp)
-                        androidx.compose.material3.Text(
-                            app.label,
-                            color = TextPrimary,
-                            fontSize = 12.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            textAlign = TextAlign.Center,
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-// ------------------------------------------------------------------ Exit
-
-@Composable
-fun ExitSheet(
-    repo: AppRepository,
-    prefs: Prefs,
-    onKeepScreenOn: (Boolean) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val context = LocalContext.current
-    val launchers = remember { repo.otherLaunchers() }
-    var keepOn by remember { mutableStateOf(prefs.keepScreenOn) }
-
-    GlassSheet("Launcher verlassen", onDismiss) {
-        T(
-            "Die Home-Taste bringt dich immer hierher zurück, solange Room Launcher der Standard-Startbildschirm ist.",
-            15.sp, color = TextSecondary,
-        )
-        VSpacer(18.dp)
-        if (launchers.isNotEmpty()) {
-            T("Anderen Startbildschirm öffnen", 14.sp, FontWeight.Medium, TextSecondary)
-            VSpacer(10.dp)
-            launchers.forEach { l ->
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 10.dp)
-                        .bouncy {
-                            onDismiss()
-                            repo.launchHome(l)
-                        }
-                        .glass(20.dp, 0.8f)
-                        .padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Image(l.icon, null, Modifier.size(40.dp))
-                    HSpacer(14.dp)
-                    T(l.label, 17.sp, FontWeight.SemiBold)
-                }
-            }
-            VSpacer(8.dp)
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
-            GlassButton("Standard-Startbildschirm ändern") {
-                val ok = runCatching {
-                    context.startActivity(Intent(Settings.ACTION_HOME_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                }.isSuccess
-                if (!ok) context.startActivity(Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            }
-            GlassButton("Android-Einstellungen") {
-                context.startActivity(Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            }
-        }
-        VSpacer(22.dp)
-        T("Optionen", 14.sp, FontWeight.Medium, TextSecondary)
-        VSpacer(10.dp)
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            T("Bildschirm immer an", 17.sp, modifier = Modifier.weight(1f))
-            GlassChip("An", keepOn) { keepOn = true; prefs.keepScreenOn = true; onKeepScreenOn(true) }
-            HSpacer(8.dp)
-            GlassChip("Aus", !keepOn) { keepOn = false; prefs.keepScreenOn = false; onKeepScreenOn(false) }
         }
     }
 }

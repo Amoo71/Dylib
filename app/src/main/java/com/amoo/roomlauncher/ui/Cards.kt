@@ -38,7 +38,7 @@ import com.amoo.roomlauncher.airpods.AirPodsController
 import com.amoo.roomlauncher.govee.GoveeController
 import kotlin.math.roundToInt
 
-private val presets = listOf(
+internal val presets = listOf(
     Color(0xFFFFB46B), // Warmweiß
     Color(0xFFFFFFFF), // Kaltweiß
     Color(0xFFFF3B30),
@@ -52,11 +52,11 @@ private val presets = listOf(
     Color(0xFFFF2D87),
 )
 
-private val rainbow = Brush.horizontalGradient(
+internal val rainbow = Brush.horizontalGradient(
     (0..6).map { Color.hsv(it * 60f % 360f, 1f, 1f) },
 )
 
-private fun hueOf(argb: Int): Float {
+internal fun hueOf(argb: Int): Float {
     val hsv = FloatArray(3)
     android.graphics.Color.colorToHSV(argb, hsv)
     return hsv[0]
@@ -155,6 +155,18 @@ fun LightCard(govee: GoveeController, onSetup: () -> Unit, modifier: Modifier = 
                             .border(if (selected) 3.dp else 1.dp, Color.White.copy(alpha = if (selected) 1f else 0.35f), CircleShape),
                     )
                 }
+            }
+            VSpacer(20.dp)
+            T("Szenen", 14.sp, FontWeight.Medium, TextSecondary)
+            VSpacer(8.dp)
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                GoveeController.SCENES.forEach { (id, label) -> GlassChip(label, false) { govee.setScene(id) } }
+            }
+            VSpacer(14.dp)
+            T("Musik-Modus (Mikrofon am Controller)", 14.sp, FontWeight.Medium, TextSecondary)
+            VSpacer(8.dp)
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                GoveeController.MUSIC_MODES.forEach { (id, label) -> GlassChip(label, false) { govee.setMusicMode(id) } }
             }
             if (conn != GoveeController.Connection.CONNECTED) {
                 VSpacer(16.dp)
@@ -280,7 +292,7 @@ fun GlassSwitch(checked: Boolean, enabled: Boolean, onToggle: () -> Unit) {
 }
 
 @Composable
-private fun BatteryTile(label: String, percent: Int?, charging: Boolean, inEar: Boolean, modifier: Modifier) {
+internal fun BatteryTile(label: String, percent: Int?, charging: Boolean, inEar: Boolean, modifier: Modifier) {
     Column(
         modifier
             .glass(22.dp, 0.8f)
@@ -319,7 +331,7 @@ private fun BatteryTile(label: String, percent: Int?, charging: Boolean, inEar: 
 }
 
 @Composable
-private fun NoiseSelector(
+internal fun NoiseSelector(
     selected: AirPodsController.Noise?,
     enabled: Boolean,
     onSelect: (AirPodsController.Noise) -> Unit,

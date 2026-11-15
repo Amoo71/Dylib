@@ -10,6 +10,8 @@ import android.os.Build
 import androidx.core.content.ContextCompat
 import com.amoo.roomlauncher.airpods.AirPodsController
 import com.amoo.roomlauncher.apps.AppRepository
+import com.amoo.roomlauncher.board.BoardStore
+import com.amoo.roomlauncher.theme.ThemeStore
 import com.amoo.roomlauncher.govee.GoveeController
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -28,6 +30,10 @@ class RoomApp : Application() {
         private set
     lateinit var apps: AppRepository
         private set
+    lateinit var board: BoardStore
+        private set
+    lateinit var theme: ThemeStore
+        private set
 
     /** Zählt Home-Tasten-Drücke, damit offene Overlays geschlossen werden. */
     val homePresses = MutableStateFlow(0)
@@ -43,6 +49,8 @@ class RoomApp : Application() {
         govee = GoveeController(this, prefs, appScope)
         airpods = AirPodsController(this, prefs, appScope)
         apps = AppRepository(this, prefs, appScope)
+        board = BoardStore(this)
+        theme = ThemeStore(this)
         apps.start()
     }
 

@@ -135,6 +135,19 @@ class GoveeController(
         enqueue("color", bytes)
     }
 
+    /** Eingebaute Szenen: 33 05 04 <id>. */
+    fun setScene(id: Int) {
+        if (!_power.value) setPower(true)
+        enqueue("color", packet(0x33, 0x05, 0x04, id))
+    }
+
+    /** Musikmodus (Mikrofon im Controller): 33 05 01 <sub> [00 r g b]. */
+    fun setMusicMode(sub: Int) {
+        if (!_power.value) setPower(true)
+        val c = _color.value
+        enqueue("color", packet(0x33, 0x05, 0x01, sub, 0x00, (c shr 16) and 0xFF, (c shr 8) and 0xFF, c and 0xFF))
+    }
+
     /** Sendet die aktuellen Werte erneut (z.B. nach Ändern des Farbmodus). */
     fun resendState() {
         setBrightness(_brightness.value)
@@ -226,13 +239,58 @@ class GoveeController(
                 return
             }
             writeChar = ch
+            // Status-Meldungen abonnieren (Antworten auf aa 01 / aa 04 / aa 05 01).
+            g.getService(SERVICE_UUID)?.getCharacteristic(NOTIFY_UUID)?.let { n ->
+                runCatching {
+                    g.setCharacteristicNotification(n, true)
+                    n.getDescriptor(CCCD_UUID)?.let { d ->
+                        @Suppress("DEPRECATION")
+                        d.value = android.bluetooth.BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                        @Suppress("DEPRECATION")
+                        g.writeDescriptor(d)
+                    }
+                }
+            }
             _connection.value = Connection.CONNECTED
+            scope.launch {
+                delay(400)
+                enqueue("q_power", packet(0xAA, 0x01))
+                enqueue("q_bright", packet(0xAA, 0x04))
+                enqueue("q_color", packet(0xAA, 0x05, 0x01))
+            }
             wake.trySend(Unit)
+        }
+
+        @Deprecated("Deprecated in Java")
+        override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic) {
+            @Suppress("DEPRECATION")
+            c.value?.let { handleStatus(it) }
+        }
+
+        override fun onDescriptorWrite(g: BluetoothGatt, d: android.bluetooth.BluetoothGattDescriptor, status: Int) {
+            writeAck?.complete(Unit)
         }
 
         @Deprecated("Deprecated in Java")
         override fun onCharacteristicWrite(g: BluetoothGatt, c: BluetoothGattCharacteristic, status: Int) {
             writeAck?.complete(Unit)
+        }
+    }
+
+    private fun handleStatus(v: ByteArray) {
+        if (v.size < 3 || v[0] != 0xAA.toByte()) return
+        val b2 = v[2].toInt() and 0xFF
+        when (v[1].toInt() and 0xFF) {
+            0x01 -> _power.value = b2 == 0x01
+            0x04 -> {
+                val f = if (prefs.goveeBrightness100) b2 / 100f else b2 / 255f
+                if (b2 > 0) _brightness.value = f.coerceIn(0.01f, 1f)
+            }
+            0x05 -> if (v.size >= 6 && (b2 == 0x02 || b2 == 0x0D || b2 == 0x0B)) {
+                val argb = (0xFF shl 24) or ((v[3].toInt() and 0xFF) shl 16) or
+                    ((v[4].toInt() and 0xFF) shl 8) or (v[5].toInt() and 0xFF)
+                _color.value = argb
+            }
         }
     }
 
@@ -319,6 +377,16 @@ class GoveeController(
     companion object {
         val SERVICE_UUID: UUID = UUID.fromString("00010203-0405-0607-0809-0a0b0c0d1910")
         val WRITE_UUID: UUID = UUID.fromString("00010203-0405-0607-0809-0a0b0c0d2b11")
+        val NOTIFY_UUID: UUID = UUID.fromString("00010203-0405-0607-0809-0a0b0c0d2b10")
+        val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
+
+        /** Szenen-IDs (H6127/H61xx laut Reverse Engineering). */
+        val SCENES = listOf(
+            0x00 to "Sonnenaufgang", 0x01 to "Sonnenuntergang", 0x04 to "Film", 0x05 to "Date",
+            0x07 to "Romantisch", 0x08 to "Blinken", 0x09 to "Kerzenlicht", 0x0F to "Schneeflocke",
+        )
+
+        val MUSIC_MODES = listOf(0x00 to "Energisch", 0x01 to "Spektrum", 0x02 to "Rollen", 0x03 to "Rhythmus")
 
         fun isLikelyGovee(name: String): Boolean {
             val n = name.lowercase()
