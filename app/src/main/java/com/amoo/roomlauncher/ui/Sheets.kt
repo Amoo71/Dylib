@@ -75,7 +75,7 @@ fun AppsSheet(repo: AppRepository, onDismiss: () -> Unit) {
             )
         }
         VSpacer(6.dp)
-        T("Gedrückt halten = zum Dock hinzufügen / entfernen", 12.sp, color = TextTertiary)
+        T("Gedrückt halten = im App-Widget anpinnen / entfernen", 12.sp, color = TextTertiary)
         VSpacer(12.dp)
         LazyVerticalGrid(
             columns = GridCells.Adaptive(104.dp),
@@ -89,7 +89,7 @@ fun AppsSheet(repo: AppRepository, onDismiss: () -> Unit) {
                     Modifier.bouncy(
                         onLongClick = {
                             repo.toggleFavorite(app.packageName)
-                            context.toast(if (fav) "Aus dem Dock entfernt" else "Zum Dock hinzugefügt")
+                            context.toast(if (fav) "Aus dem App-Widget entfernt" else "Im App-Widget angepinnt")
                         },
                     ) {
                         onDismiss()
@@ -125,47 +125,62 @@ fun AppsSheet(repo: AppRepository, onDismiss: () -> Unit) {
     }
 }
 
-// ------------------------------------------------------------------ Dock
+// ------------------------------------------------------------------ App-Widget
 
+/** Glas-Widget mit den Lieblings-Apps zum direkten Öffnen. */
 @Composable
-fun Dock(repo: AppRepository, onOpenAll: () -> Unit, modifier: Modifier = Modifier) {
+fun AppsWidget(repo: AppRepository, onOpenAll: () -> Unit, modifier: Modifier = Modifier) {
     val apps by repo.apps.collectAsState()
     val favorites by repo.favorites.collectAsState()
     val favApps = remember(apps, favorites) {
         favorites.mapNotNull { p -> apps.firstOrNull { it.packageName == p } }
     }
-    Row(
-        modifier
-            .glass(34.dp)
-            .padding(horizontal = 18.dp, vertical = 12.dp)
-            .horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(18.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        favApps.take(10).forEach { app ->
-            Image(
-                app.icon,
-                contentDescription = app.label,
-                modifier = Modifier
-                    .size(60.dp)
-                    .bouncy(onLongClick = { repo.toggleFavorite(app.packageName) }) { repo.launch(app) },
-            )
-        }
-        if (favApps.isNotEmpty()) {
+    GlassCard(modifier) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                T("Apps", 28.sp, FontWeight.Bold)
+                T("${apps.size} installiert", 14.sp, color = TextSecondary)
+            }
             Box(
                 Modifier
-                    .size(width = 1.dp, height = 44.dp)
-                    .background(Color.White.copy(alpha = 0.22f)),
-            )
+                    .size(44.dp)
+                    .bouncy(onClick = onOpenAll)
+                    .glass(22.dp, 1.3f),
+                contentAlignment = Alignment.Center,
+            ) {
+                GridGlyph(TextPrimary, Modifier.size(18.dp))
+            }
         }
-        Box(
-            Modifier
-                .size(60.dp)
-                .bouncy(onClick = onOpenAll)
-                .glass(18.dp, 1.3f),
-            contentAlignment = Alignment.Center,
-        ) {
-            GridGlyph(TextPrimary, Modifier.size(24.dp))
+        VSpacer(16.dp)
+        if (favApps.isEmpty()) {
+            T("Tippe oben rechts auf das Raster und halte eine App gedrückt, um sie hier anzupinnen.", 15.sp, color = TextSecondary)
+            VSpacer(16.dp)
+            GlassButton("Alle Apps", highlighted = true, onClick = onOpenAll)
+        } else {
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(84.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.weight(1f),
+            ) {
+                items(favApps, key = { it.component.flattenToString() }) { app ->
+                    Column(
+                        Modifier.bouncy(onLongClick = { repo.toggleFavorite(app.packageName) }) { repo.launch(app) },
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Image(app.icon, contentDescription = app.label, modifier = Modifier.size(58.dp))
+                        VSpacer(6.dp)
+                        androidx.compose.material3.Text(
+                            app.label,
+                            color = TextPrimary,
+                            fontSize = 12.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = TextAlign.Center,
+                        )
+                    }
+                }
+            }
         }
     }
 }

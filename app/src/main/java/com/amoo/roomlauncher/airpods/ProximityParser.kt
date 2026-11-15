@@ -9,6 +9,7 @@ object ProximityParser {
         val model: String,
         val left: Int?, val right: Int?, val case: Int?,
         val chargingLeft: Boolean, val chargingRight: Boolean, val chargingCase: Boolean,
+        val leftInEar: Boolean, val rightInEar: Boolean,
     )
 
     fun parse(d: ByteArray): Info? {
@@ -24,12 +25,18 @@ object ProximityParser {
         val c = nib(15)
         val chg = nib(14)
         fun pct(v: Int): Int? = if (v in 0..10) v * 10 else null
+        // Byte 5: Status – 0x02 primärer AirPod im Ohr, 0x08 sekundärer im Ohr.
+        val status = d[5].toInt() and 0xFF
+        val primaryIn = status and 0x02 != 0
+        val secondaryIn = status and 0x08 != 0
         return Info(
             model = modelName(d[3].toInt() and 0xFF),
             left = pct(l), right = pct(r), case = pct(c),
             chargingLeft = chg and (if (flip) 0x02 else 0x01) != 0,
             chargingRight = chg and (if (flip) 0x01 else 0x02) != 0,
             chargingCase = chg and 0x04 != 0,
+            leftInEar = if (flip) primaryIn else secondaryIn,
+            rightInEar = if (flip) secondaryIn else primaryIn,
         )
     }
 

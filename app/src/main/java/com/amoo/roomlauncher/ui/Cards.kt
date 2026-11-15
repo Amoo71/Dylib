@@ -168,11 +168,16 @@ fun LightCard(govee: GoveeController, onSetup: () -> Unit, modifier: Modifier = 
 fun AirPodsCard(airpods: AirPodsController, onSetup: () -> Unit, modifier: Modifier = Modifier) {
     val connected by airpods.audioConnected.collectAsState()
     val battery by airpods.battery.collectAsState()
+    val inEar by airpods.inEar.collectAsState()
     val model by airpods.model.collectAsState()
     val noise by airpods.noise.collectAsState()
     val ready by airpods.controlReady.collectAsState()
     val controlStatus by airpods.controlStatus.collectAsState()
     val deviceName by airpods.deviceName.collectAsState()
+    val ca by airpods.conversationAwareness.collectAsState()
+    val strength by airpods.adaptiveStrength.collectAsState()
+    val earDetection by airpods.earDetection.collectAsState()
+    val oneBud by airpods.oneBudAnc.collectAsState()
 
     GlassCard(modifier) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -193,41 +198,98 @@ fun AirPodsCard(airpods: AirPodsController, onSetup: () -> Unit, modifier: Modif
             }
             GlassIconButton(Icons.Default.Settings, 44.dp, onSetup)
         }
-        VSpacer(18.dp)
+        VSpacer(16.dp)
 
         Column(Modifier.verticalScroll(rememberScrollState())) {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                BatteryTile("Links", battery?.left, battery?.chargingLeft == true, Modifier.weight(1f))
-                BatteryTile("Rechts", battery?.right, battery?.chargingRight == true, Modifier.weight(1f))
-                BatteryTile("Case", battery?.case, battery?.chargingCase == true, Modifier.weight(1f))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                BatteryTile("Links", battery?.left, battery?.chargingLeft == true, inEar?.left == true, Modifier.weight(1f))
+                BatteryTile("Rechts", battery?.right, battery?.chargingRight == true, inEar?.right == true, Modifier.weight(1f))
+                BatteryTile("Case", battery?.case, battery?.chargingCase == true, false, Modifier.weight(1f))
             }
-            VSpacer(20.dp)
+            VSpacer(14.dp)
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (connected) {
+                    GlassButton("Trennen", Modifier.weight(1f)) { airpods.disconnectAudio() }
+                    if (!ready) GlassButton("Steuerung verbinden", Modifier.weight(1f)) { airpods.openControl() }
+                } else {
+                    GlassButton("Verbinden", Modifier.fillMaxWidth(), highlighted = true) { airpods.connectAudio() }
+                }
+            }
+            VSpacer(18.dp)
             T("Geräuschkontrolle", 14.sp, FontWeight.Medium, TextSecondary)
             VSpacer(8.dp)
             NoiseSelector(noise, enabled = ready) { airpods.setNoise(it) }
-            VSpacer(10.dp)
-            T(controlStatus, 13.sp, color = TextTertiary)
-            VSpacer(16.dp)
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                if (connected) {
-                    GlassButton("Trennen") { airpods.disconnectAudio() }
-                    if (!ready) GlassButton("Steuerung verbinden") { airpods.openControl() }
-                } else {
-                    GlassButton("Verbinden", highlighted = true) { airpods.connectAudio() }
-                }
+            if (noise == AirPodsController.Noise.ADAPTIVE) {
+                VSpacer(14.dp)
+                T("Adaptives Audio: ${strength ?: 50} %  (weniger ↔ mehr Geräuschreduzierung)", 13.sp, color = TextSecondary)
+                VSpacer(6.dp)
+                GlassSlider(
+                    value = (strength ?: 50) / 100f,
+                    onChange = { airpods.setAdaptiveStrength((it * 100).roundToInt()) },
+                    height = 36.dp,
+                )
             }
+            VSpacer(14.dp)
+            ToggleRow("Gesprächserkennung", ca, ready) { airpods.setConversationAwareness(it) }
+            ToggleRow("Automatische Ohrerkennung", earDetection, ready) { airpods.setEarDetection(it) }
+            ToggleRow("ANC mit einem AirPod", oneBud, ready) { airpods.setOneBudAnc(it) }
+            VSpacer(8.dp)
+            T(controlStatus, 12.sp, color = TextTertiary)
         }
     }
 }
 
 @Composable
-private fun BatteryTile(label: String, percent: Int?, charging: Boolean, modifier: Modifier) {
+private fun ToggleRow(label: String, value: Boolean?, enabled: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        T(label, 15.sp, color = if (enabled) TextPrimary else TextTertiary, modifier = Modifier.weight(1f))
+        GlassSwitch(value == true, enabled) { onChange(!(value ?: false)) }
+    }
+}
+
+@Composable
+fun GlassSwitch(checked: Boolean, enabled: Boolean, onToggle: () -> Unit) {
+    val track by animateColorAsState(
+        when {
+            checked -> AccentGreen
+            else -> Color.White.copy(alpha = 0.16f)
+        },
+        label = "track",
+    )
+    val knobX by androidx.compose.animation.core.animateDpAsState(if (checked) 22.dp else 2.dp, label = "knob")
+    Box(
+        Modifier
+            .size(width = 52.dp, height = 32.dp)
+            .bouncy(onClick = onToggle)
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (enabled) track else track.copy(alpha = 0.35f)),
+    ) {
+        Box(
+            Modifier
+                .padding(start = knobX, top = 2.dp)
+                .size(28.dp)
+                .clip(CircleShape)
+                .background(Color.White),
+        )
+    }
+}
+
+@Composable
+private fun BatteryTile(label: String, percent: Int?, charging: Boolean, inEar: Boolean, modifier: Modifier) {
     Column(
         modifier
             .glass(22.dp, 0.8f)
             .padding(14.dp),
     ) {
-        T(label, 13.sp, color = TextSecondary)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            T(label, 13.sp, color = TextSecondary, modifier = Modifier.weight(1f))
+            if (inEar) T("im Ohr", 11.sp, FontWeight.SemiBold, AccentBlue)
+        }
         VSpacer(4.dp)
         Row(verticalAlignment = Alignment.CenterVertically) {
             T(percent?.let { "$it %" } ?: "–", 22.sp, FontWeight.SemiBold)

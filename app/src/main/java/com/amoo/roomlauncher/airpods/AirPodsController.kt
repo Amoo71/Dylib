@@ -15,6 +15,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.os.Build
 import android.os.ParcelUuid
 import androidx.core.content.ContextCompat
 import com.amoo.roomlauncher.Prefs
@@ -30,15 +31,18 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.IOException
 import java.io.OutputStream
+import java.lang.reflect.InvocationTargetException
 
 /**
- * AirPods-Steuerung:
- *  1. Audio verbinden/trennen über die (versteckten) connect()/disconnect()-Methoden von A2DP/HFP.
- *  2. Akkustand aus Apples BLE-"Proximity Pairing"-Werbepaketen (funktioniert ohne Root).
- *  3. Geräuschkontrolle (ANC/Transparenz/Adaptiv/Aus) über das Apple Accessory Protocol (AAP)
- *     auf einem klassischen L2CAP-Kanal, PSM 0x1001 – wie in LibrePods / MagicPods / AirPods-Desktop.
- *     Android bietet dafür keine öffentliche API; es wird per Reflection versucht. Ob das klappt,
- *     hängt von Android-Version und Bluetooth-Stack des Geräts ab.
+ * AirPods-Steuerung, angelehnt an GreenPods (github.com/andrewkomkov/GreenPods):
+ *
+ *  - Audio verbinden/trennen über die versteckten connect()/disconnect()-Methoden von A2DP/HFP.
+ *  - Akku, Laden und Ohrerkennung aus Apples BLE-Werbepaketen (läuft auf jedem Android).
+ *  - Über AAP (L2CAP PSM 0x1001, Apple-Service-UUID, sicherer Kanal):
+ *      Geräuschkontrolle Aus / Transparenz / Adaptiv / ANC, Gesprächserkennung,
+ *      Stärke des adaptiven Audios, automatische Ohrerkennung an/aus, ANC mit einem AirPod.
+ *    Android hat dafür keine offizielle API; der Kanal wird per Reflection gebaut.
+ *    Ob die AirPods ihn annehmen, hängt vom Bluetooth-Stack ab (sicher ab Android 16 QPR3/17).
  */
 @SuppressLint("MissingPermission")
 class AirPodsController(
@@ -62,6 +66,8 @@ class AirPodsController(
         val chargingCase: Boolean = false,
     )
 
+    data class InEar(val left: Boolean, val right: Boolean)
+
     data class PairedDevice(val name: String, val address: String)
 
     private val _audioConnected = MutableStateFlow(false)
@@ -70,11 +76,26 @@ class AirPodsController(
     private val _battery = MutableStateFlow<Battery?>(null)
     val battery: StateFlow<Battery?> = _battery.asStateFlow()
 
+    private val _inEar = MutableStateFlow<InEar?>(null)
+    val inEar: StateFlow<InEar?> = _inEar.asStateFlow()
+
     private val _model = MutableStateFlow<String?>(null)
     val model: StateFlow<String?> = _model.asStateFlow()
 
     private val _noise = MutableStateFlow<Noise?>(null)
     val noise: StateFlow<Noise?> = _noise.asStateFlow()
+
+    private val _conversationAwareness = MutableStateFlow<Boolean?>(null)
+    val conversationAwareness: StateFlow<Boolean?> = _conversationAwareness.asStateFlow()
+
+    private val _adaptiveStrength = MutableStateFlow<Int?>(null)
+    val adaptiveStrength: StateFlow<Int?> = _adaptiveStrength.asStateFlow()
+
+    private val _earDetection = MutableStateFlow<Boolean?>(null)
+    val earDetection: StateFlow<Boolean?> = _earDetection.asStateFlow()
+
+    private val _oneBudAnc = MutableStateFlow<Boolean?>(null)
+    val oneBudAnc: StateFlow<Boolean?> = _oneBudAnc.asStateFlow()
 
     private val _controlReady = MutableStateFlow(false)
     val controlReady: StateFlow<Boolean> = _controlReady.asStateFlow()
@@ -92,12 +113,13 @@ class AirPodsController(
     private var headset: BluetoothProfile? = null
     private var started = false
     private var bleCallback: ScanCallback? = null
-    private var lastAapBattery = 0L
-    private var lastBleSeen = 0L
+    @Volatile private var lastAapBattery = 0L
+    @Volatile private var lastBleSeen = 0L
 
     @Volatile private var socket: BluetoothSocket? = null
     @Volatile private var output: OutputStream? = null
     private var controlJob: Job? = null
+    private var retries = 0
 
     fun start() {
         if (started) return
@@ -129,13 +151,13 @@ class AirPodsController(
             ContextCompat.RECEIVER_EXPORTED,
         )
         startBatteryScan()
-        // Abgelaufene BLE-Akkuwerte ausblenden
         scope.launch {
             while (isActive) {
                 delay(10_000)
                 val now = System.currentTimeMillis()
                 if (_battery.value != null && now - lastBleSeen > 90_000 && now - lastAapBattery > 90_000 && !_controlReady.value) {
                     _battery.value = null
+                    _inEar.value = null
                 }
             }
         }
@@ -177,12 +199,16 @@ class AirPodsController(
         val was = _audioConnected.value
         _audioConnected.value = connected
         if (connected && !was) {
+            retries = 0
             scope.launch {
                 delay(1500)
                 openControl()
             }
         }
-        if (!connected && was) closeControl()
+        if (!connected && was) {
+            closeControl()
+            _controlStatus.value = "Steuerkanal nicht verbunden"
+        }
     }
 
     fun connectAudio() {
@@ -192,9 +218,7 @@ class AirPodsController(
         }
         scope.launch(Dispatchers.IO) {
             var ok = false
-            for (p in listOfNotNull(a2dp, headset)) {
-                ok = invokeProfile(p, "connect", dev) || ok
-            }
+            for (p in listOfNotNull(a2dp, headset)) ok = invokeProfile(p, "connect", dev) || ok
             if (!ok) context.toast("Automatisches Verbinden nicht erlaubt – bitte über Bluetooth-Einstellungen verbinden")
             delay(3000)
             refreshConnectionState()
@@ -219,24 +243,45 @@ class AirPodsController(
         false
     }
 
-    // ---------------------------------------------------------------- Geräuschkontrolle (AAP)
+    // ---------------------------------------------------------------- Befehle (AAP)
 
     fun setNoise(mode: Noise) {
-        val out = output
-        if (out == null || !_controlReady.value) {
-            context.toast("Steuerkanal nicht verbunden – versuche neu zu verbinden…")
+        if (send(Aap.control(Aap.CMD_LISTENING_MODE, mode.code))) _noise.value = mode
+    }
+
+    fun setConversationAwareness(on: Boolean) {
+        if (send(Aap.control(Aap.CMD_CONVERSATION_DETECT, Aap.toggle(on)))) _conversationAwareness.value = on
+    }
+
+    fun setAdaptiveStrength(value: Int) {
+        val v = value.coerceIn(0, 100)
+        _adaptiveStrength.value = v
+        send(Aap.control(Aap.CMD_ADAPTIVE_STRENGTH, v), quiet = true)
+    }
+
+    fun setEarDetection(on: Boolean) {
+        if (send(Aap.control(Aap.CMD_EAR_DETECTION, Aap.toggle(on)))) _earDetection.value = on
+    }
+
+    fun setOneBudAnc(on: Boolean) {
+        if (send(Aap.control(Aap.CMD_ONE_BUD_ANC, Aap.toggle(on)))) _oneBudAnc.value = on
+    }
+
+    private fun send(packet: ByteArray, quiet: Boolean = false): Boolean {
+        if (output == null || !_controlReady.value) {
+            if (!quiet) context.toast("Steuerkanal nicht verbunden – verbinde neu…")
             openControl()
-            return
+            return false
         }
-        _noise.value = mode
         scope.launch(Dispatchers.IO) {
             try {
-                write(Aap.noiseControl(mode.code))
+                write(packet)
             } catch (e: IOException) {
                 _controlStatus.value = "Senden fehlgeschlagen: ${e.message}"
                 closeControl()
             }
         }
+        return true
     }
 
     fun openControl() {
@@ -248,35 +293,57 @@ class AirPodsController(
         controlJob = scope.launch(Dispatchers.IO) {
             _controlStatus.value = "Verbinde Steuerkanal…"
             val s = try {
-                createL2capSocket(dev)
+                createAapSocket(dev)
             } catch (e: Throwable) {
-                _controlStatus.value = "Steuerkanal auf diesem Android nicht verfügbar"
+                _controlStatus.value = "Steuerkanal: Android erlaubt den Apple-Kanal nicht (${e.javaClass.simpleName})"
                 return@launch
             }
+            var frames = 0
             try {
                 runCatching { adapter?.cancelDiscovery() }
                 s.connect()
                 socket = s
                 output = s.outputStream
                 write(Aap.HANDSHAKE)
-                delay(250)
-                write(Aap.SET_FEATURES)
-                delay(100)
+                write(Aap.SET_HOST_CAPABILITIES)
                 write(Aap.REQUEST_NOTIFICATIONS)
                 _controlReady.value = true
                 _controlStatus.value = "Steuerkanal verbunden"
+                // Wächter: ein Kanal, der nichts sendet, ist tot (z.B. hält ein anderes Gerät ihn).
+                val watchdog = launch {
+                    delay(6000)
+                    if (frames == 0) {
+                        _controlStatus.value = "Kanal offen, aber AirPods antworten nicht – evtl. hält ein anderes Gerät/App ihn"
+                        runCatching { s.close() }
+                    }
+                }
                 val input = s.inputStream
-                val buf = ByteArray(2048)
+                val buf = ByteArray(4096)
                 while (isActive) {
                     val n = input.read(buf)
-                    if (n < 0) break
-                    if (n > 0) handlePacket(buf.copyOf(n))
+                    if (n <= 0) break
+                    for (packet in Aap.split(buf.copyOf(n))) {
+                        frames++
+                        handlePacket(packet)
+                    }
                 }
-                _controlStatus.value = "Steuerkanal getrennt"
+                watchdog.cancel()
+                if (frames > 0) _controlStatus.value = "Steuerkanal getrennt"
             } catch (e: IOException) {
-                _controlStatus.value = "Steuerkanal fehlgeschlagen (${e.message ?: "IO"}) – evtl. Root/neueres Android nötig"
+                if (frames == 0) {
+                    _controlStatus.value = "Steuerkanal fehlgeschlagen: ${e.message ?: "IO"} – dieser Bluetooth-Stack lässt AAP nicht zu"
+                } else {
+                    _controlStatus.value = "Steuerkanal getrennt"
+                }
             } finally {
                 closeSocketOnly()
+            }
+            // Bei getrennter, aber noch verbundener Audio-Verbindung einmal neu versuchen.
+            if (frames > 0 && _audioConnected.value && retries < 3) {
+                retries++
+                delay(3000)
+                controlJob = null
+                openControl()
             }
         }
     }
@@ -302,7 +369,13 @@ class AirPodsController(
 
     private fun handlePacket(p: ByteArray) {
         when (val msg = Aap.parse(p)) {
-            is Aap.Message.NoiseMode -> _noise.value = Noise.entries.firstOrNull { it.code == msg.code }
+            is Aap.Message.Control -> when (msg.command) {
+                Aap.CMD_LISTENING_MODE -> _noise.value = Noise.entries.firstOrNull { it.code == msg.value }
+                Aap.CMD_CONVERSATION_DETECT -> _conversationAwareness.value = msg.value == 0x01
+                Aap.CMD_ADAPTIVE_STRENGTH -> _adaptiveStrength.value = msg.value.coerceIn(0, 100)
+                Aap.CMD_EAR_DETECTION -> _earDetection.value = msg.value == 0x01
+                Aap.CMD_ONE_BUD_ANC -> _oneBudAnc.value = msg.value == 0x01
+            }
             is Aap.Message.BatteryInfo -> {
                 lastAapBattery = System.currentTimeMillis()
                 val old = _battery.value ?: Battery()
@@ -315,51 +388,65 @@ class AirPodsController(
                     chargingCase = if (msg.case != null) msg.chargingCase else old.chargingCase,
                 )
             }
-            null -> Unit
+            is Aap.Message.EarDetection, is Aap.Message.SpeechLevel, null -> Unit
         }
     }
 
     /**
-     * Erstellt einen klassischen L2CAP-Socket (TYPE_L2CAP = 3) zu PSM 0x1001.
-     * Versucht nacheinander versteckte Methoden und bekannte Konstruktor-Signaturen.
+     * Baut einen sicheren klassischen L2CAP-Socket (TYPE_L2CAP = 3, auth + encrypt) zu PSM 0x1001
+     * mit Apples Service-UUID. Probiert die bekannten versteckten Konstruktoren der Android-Versionen
+     * durch (Reihenfolge wie GreenPods' AapTransport).
      */
-    private fun createL2capSocket(dev: BluetoothDevice): BluetoothSocket {
-        val intT = Int::class.javaPrimitiveType
-        val boolT = Boolean::class.javaPrimitiveType
-        for (name in listOf("createL2capSocket", "createInsecureL2capSocket")) {
-            try {
-                val m = BluetoothDevice::class.java.getDeclaredMethod(name, intT)
-                m.isAccessible = true
-                return m.invoke(dev, Aap.PSM) as BluetoothSocket
-            } catch (_: Throwable) {
-            }
+    private fun createAapSocket(dev: BluetoothDevice): BluetoothSocket {
+        val uuid = ParcelUuid.fromString(Aap.SERVICE_UUID)
+        val psm = Aap.PSM
+        val candidates = buildList<Array<Any>> {
+            adapter?.let { add(arrayOf(it, dev, TYPE_L2CAP, true, true, psm, uuid)) } // Android 16 QPR3+
+            add(arrayOf(dev, TYPE_L2CAP, true, true, psm, uuid))
+            add(arrayOf(dev, TYPE_L2CAP, 1, true, true, psm, uuid))
+            add(arrayOf(TYPE_L2CAP, 1, true, true, dev, psm, uuid))
+            add(arrayOf(TYPE_L2CAP, -1, true, true, dev, psm, uuid)) // ältere Versionen (fd = -1)
+            add(arrayOf(TYPE_L2CAP, -1, true, true, dev, psm, uuid, false, false))
+            add(arrayOf(TYPE_L2CAP, true, true, dev, psm, uuid))
         }
-        val uuid = ParcelUuid.fromString("74ec2172-0bf9-11ef-9262-0242ac120002")
-        val dc = BluetoothDevice::class.java
-        val pc = ParcelUuid::class.java
-        for (c in BluetoothSocket::class.java.declaredConstructors) {
-            val p = c.parameterTypes.toList()
-            val args: Array<Any?> = when (p) {
-                listOf(intT, intT, boolT, boolT, dc, intT, pc) ->
-                    arrayOf<Any?>(TYPE_L2CAP, -1, true, true, dev, Aap.PSM, uuid)
-                listOf(intT, intT, boolT, boolT, dc, intT, pc, boolT, boolT) ->
-                    arrayOf<Any?>(TYPE_L2CAP, -1, true, true, dev, Aap.PSM, uuid, false, false)
-                listOf(intT, boolT, boolT, dc, intT, pc) ->
-                    arrayOf<Any?>(TYPE_L2CAP, true, true, dev, Aap.PSM, uuid)
-                listOf(intT, boolT, boolT, dc, intT, pc, boolT, boolT) ->
-                    arrayOf<Any?>(TYPE_L2CAP, true, true, dev, Aap.PSM, uuid, false, false)
-                else -> continue
-            }
+        var last: Throwable? = null
+        for (args in candidates) {
             try {
+                val types = args.map { a ->
+                    when (a) {
+                        is Int -> Int::class.javaPrimitiveType!!
+                        is Boolean -> Boolean::class.javaPrimitiveType!!
+                        is BluetoothAdapter -> BluetoothAdapter::class.java
+                        is BluetoothDevice -> BluetoothDevice::class.java
+                        is ParcelUuid -> ParcelUuid::class.java
+                        else -> a.javaClass
+                    }
+                }.toTypedArray()
+                val c = BluetoothSocket::class.java.getDeclaredConstructor(*types)
                 c.isAccessible = true
                 return c.newInstance(*args) as BluetoothSocket
-            } catch (_: Throwable) {
+            } catch (e: InvocationTargetException) {
+                throw (e.cause as? IOException ?: IOException("L2CAP-Socket konnte nicht erstellt werden", e))
+            } catch (e: Throwable) {
+                last = e
             }
         }
-        throw IOException("Kein L2CAP-Socket möglich")
+        // Letzter Versuch: versteckte Hilfsmethode am Gerät.
+        try {
+            val m = BluetoothDevice::class.java.getDeclaredMethod("createL2capSocket", Int::class.javaPrimitiveType)
+            m.isAccessible = true
+            return m.invoke(dev, psm) as BluetoothSocket
+        } catch (e: Throwable) {
+            last = e
+        }
+        if (Build.VERSION.SDK_INT >= 29) {
+            // Liefert immerhin eine klare Fehlermeldung beim connect().
+            return dev.createInsecureL2capChannel(psm)
+        }
+        throw IOException("Kein passender BluetoothSocket-Konstruktor", last)
     }
 
-    // ---------------------------------------------------------------- Akku via BLE
+    // ---------------------------------------------------------------- Akku/Ohrerkennung via BLE
 
     private fun startBatteryScan() {
         val scanner = adapter?.takeIf { it.isEnabled }?.bluetoothLeScanner ?: return
@@ -385,7 +472,7 @@ class AirPodsController(
         val info = ProximityParser.parse(data) ?: return
         lastBleSeen = System.currentTimeMillis()
         _model.value = info.model
-        // Wenn der AAP-Kanal frische Werte liefert, haben die Vorrang.
+        _inEar.value = InEar(info.leftInEar, info.rightInEar)
         if (System.currentTimeMillis() - lastAapBattery < 60_000) return
         _battery.value = Battery(
             left = info.left, right = info.right, case = info.case,

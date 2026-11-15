@@ -71,41 +71,24 @@ fun LauncherApp(app: RoomApp, activity: MainActivity) {
     Box(Modifier.fillMaxSize()) {
         LiquidBackground(accent = if (lightOn) Color(lightColor) else null)
 
-        BoxWithConstraints(
+        // Festes Querformat: Uhr oben, darunter drei Glas-Widgets nebeneinander.
+        Column(
             Modifier
                 .fillMaxSize()
-                .padding(horizontal = 36.dp, vertical = 26.dp),
+                .padding(horizontal = 32.dp, vertical = 22.dp),
         ) {
-            val wide = maxWidth > maxHeight && maxWidth >= 700.dp
-            Column(Modifier.fillMaxSize()) {
-                ClockHeader()
-                VSpacer(18.dp)
-                if (wide) {
-                    Row(
-                        Modifier
-                            .weight(1f)
-                            .fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(22.dp),
-                    ) {
-                        LightCard(app.govee, { overlay = Overlay.GOVEE }, Modifier.weight(1.2f).fillMaxHeight())
-                        AirPodsCard(app.airpods, { overlay = Overlay.AIRPODS }, Modifier.weight(1f).fillMaxHeight())
-                    }
-                } else {
-                    Column(
-                        Modifier
-                            .weight(1f)
-                            .fillMaxWidth()
-                            .verticalScroll(rememberScrollState()),
-                        verticalArrangement = Arrangement.spacedBy(22.dp),
-                    ) {
-                        LightCard(app.govee, { overlay = Overlay.GOVEE }, Modifier.fillMaxWidth().height(470.dp))
-                        AirPodsCard(app.airpods, { overlay = Overlay.AIRPODS }, Modifier.fillMaxWidth().height(470.dp))
-                    }
-                }
-                VSpacer(22.dp)
-                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    Dock(app.apps, onOpenAll = { overlay = Overlay.APPS })
-                }
+            ClockHeader()
+            VSpacer(16.dp)
+            Row(
+                Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .padding(bottom = 30.dp),
+                horizontalArrangement = Arrangement.spacedBy(20.dp),
+            ) {
+                LightCard(app.govee, { overlay = Overlay.GOVEE }, Modifier.weight(1.15f).fillMaxHeight())
+                AirPodsCard(app.airpods, { overlay = Overlay.AIRPODS }, Modifier.weight(1.1f).fillMaxHeight())
+                AppsWidget(app.apps, onOpenAll = { overlay = Overlay.APPS }, modifier = Modifier.weight(0.9f).fillMaxHeight())
             }
         }
 
@@ -163,6 +146,6 @@ private fun ClockHeader() {
     val date = remember(now) { SimpleDateFormat("EEEE, d. MMMM", Locale.GERMANY).format(now) }
     Column {
         T(date, 22.sp, FontWeight.SemiBold, TextSecondary)
-        T(time, 92.sp, FontWeight.Light, TextPrimary)
+        T(time, 78.sp, FontWeight.Light, TextPrimary)
     }
 }
