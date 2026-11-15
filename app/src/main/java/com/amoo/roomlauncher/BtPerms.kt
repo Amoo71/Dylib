@@ -4,7 +4,6 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
-import androidx.core.content.ContextCompat
 
 object BtPerms {
     fun required(): Array<String> =
@@ -18,13 +17,14 @@ object BtPerms {
             arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
         }
 
-    /** Minimal nötige Rechte, damit Bluetooth funktioniert. */
+    /** Bis Android 5.1 werden Rechte bei der Installation erteilt. */
     fun granted(context: Context): Boolean {
+        if (Build.VERSION.SDK_INT < 23) return true
         val needed = if (Build.VERSION.SDK_INT >= 31) {
             listOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
         } else {
             listOf(Manifest.permission.ACCESS_FINE_LOCATION)
         }
-        return needed.all { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }
+        return needed.all { context.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
     }
 }

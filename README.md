@@ -1,6 +1,6 @@
 # Room Launcher
 
-Dunkler Tablet-Launcher im iOS-„Liquid Glass“-Stil für das Zimmer-Tablet – fest im Querformat,
+Dunkler Tablet-Launcher im iOS-„Liquid Glass“-Stil für das Zimmer-Tablet (läuft ab **Android 4.4**, z. B. Galaxy Tab E) – fest im Querformat,
 mit drei Glas-Widgets: **Licht**, **AirPods** und **Apps**.
 
 **Download:** [neueste Version (Releases)](../../releases/latest) → `RoomLauncher.apk`
@@ -11,7 +11,7 @@ mit drei Glas-Widgets: **Licht**, **AirPods** und **Apps**.
 - **Widgets**: Uhr · Licht (Govee) · AirPods – jeweils in mehreren Größen.
 - **Dock** unten (Liquid Glass): an/aus, Apps hinzufügen, per Gedrückthalten sortieren/entfernen.
 - **Einstellungen** (Zahnrad unten rechts): Hintergrund, Widgets, Apps, Dock, Geräte, Allgemein (inkl. Launcher verlassen).
-- **Hintergründe**, auf die das Glas reagiert (ab Android 12 mit echter Unschärfe, sonst transparent):
+- **Hintergründe**, die durch das transparente Glas aller Widgets und des Docks schimmern:
   - *Regen*: dünne Tropfen mit Wind-Böen (Stärke, Wind, Tempo einstellbar)
   - *Schwarz*: schwarz mit weichen grauen schwebenden Blasen
   - *Farbig*: einfarbig oder Verlauf aus bis zu 4 Farben + Blasen (Anzahl, Größe, Tempo, Deckkraft, Farbe)
@@ -23,7 +23,7 @@ mit drei Glas-Widgets: **Licht**, **AirPods** und **Apps**.
 
 ## Installation
 
-1. APK laden: GitHub → *Releases* → **Room Launcher v1.1.0** (neueste) → `RoomLauncher.apk`.
+1. APK laden: GitHub → *Releases* → **Room Launcher v1.2.0** (neueste) → `RoomLauncher.apk`.
 2. Auf dem Tablet installieren („Unbekannte Quellen“ erlauben).
 3. App öffnen, Bluetooth- und Standortberechtigung erlauben (Standort braucht Android ≤ 11 für BLE-Scans).
 4. Home-Taste drücken → **Room Launcher** als Standard wählen („Immer“).

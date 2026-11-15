@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.RoomLauncher" parent="android:Theme.Material.NoActionBar">
+    <!-- Holo, damit es ab Android 4.4 läuft -->
+    <style name="Theme.RoomLauncher" parent="android:Theme.Holo.NoActionBar.Fullscreen">
         <item name="android:windowBackground">@android:color/black</item>
         <item name="android:colorBackground">@android:color/black</item>
-        <item name="android:statusBarColor">@android:color/transparent</item>
-        <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowShowWallpaper">false</item>
         <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:windowContentOverlay">@null</item>
     </style>
 </resources>

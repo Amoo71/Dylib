@@ -2,6 +2,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- Bibliothek nur ab Android 9 genutzt -->
+    <uses-sdk tools:overrideLibrary="org.lsposed.hiddenapibypass" />
+
     <!-- Bluetooth bis Android 11 -->
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />

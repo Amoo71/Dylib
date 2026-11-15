@@ -7,22 +7,23 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
-import androidx.core.content.ContextCompat
 import com.amoo.roomlauncher.airpods.AirPodsController
 import com.amoo.roomlauncher.apps.AppRepository
+import com.amoo.roomlauncher.ble.BleHub
 import com.amoo.roomlauncher.board.BoardStore
-import com.amoo.roomlauncher.theme.ThemeStore
 import com.amoo.roomlauncher.govee.GoveeController
+import com.amoo.roomlauncher.theme.ThemeStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.MutableStateFlow
 import org.lsposed.hiddenapibypass.HiddenApiBypass
 
 class RoomApp : Application() {
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     lateinit var prefs: Prefs
+        private set
+    lateinit var ble: BleHub
         private set
     lateinit var govee: GoveeController
         private set
@@ -35,20 +36,18 @@ class RoomApp : Application() {
     lateinit var theme: ThemeStore
         private set
 
-    /** Zählt Home-Tasten-Drücke, damit offene Overlays geschlossen werden. */
-    val homePresses = MutableStateFlow(0)
-
     private var bluetoothStarted = false
 
     override fun onCreate() {
         super.onCreate()
-        // Erlaubt Reflection auf versteckte Bluetooth-APIs (L2CAP-Socket für AirPods).
+        // Erlaubt ab Android 9 Reflection auf versteckte Bluetooth-APIs (AirPods-Steuerkanal).
         if (Build.VERSION.SDK_INT >= 28) runCatching { HiddenApiBypass.addHiddenApiExemptions("L") }
 
         prefs = Prefs(this)
-        govee = GoveeController(this, prefs, appScope)
-        airpods = AirPodsController(this, prefs, appScope)
-        apps = AppRepository(this, prefs, appScope)
+        ble = BleHub(this)
+        govee = GoveeController(this, prefs, appScope, ble)
+        airpods = AirPodsController(this, prefs, appScope, ble)
+        apps = AppRepository(this, appScope)
         board = BoardStore(this)
         theme = ThemeStore(this)
         apps.start()
@@ -59,19 +58,20 @@ class RoomApp : Application() {
         bluetoothStarted = true
         govee.start()
         airpods.start()
-        ContextCompat.registerReceiver(
-            this,
+        registerSystemReceiver(
             object : BroadcastReceiver() {
                 override fun onReceive(context: Context, intent: Intent) {
-                    val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, -1)
-                    if (state == BluetoothAdapter.STATE_ON) {
-                        govee.connect()
-                        airpods.onBluetoothOn()
+                    when (intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, -1)) {
+                        BluetoothAdapter.STATE_ON -> {
+                            ble.restart()
+                            govee.connect()
+                            airpods.onBluetoothOn()
+                        }
+                        BluetoothAdapter.STATE_OFF -> ble.stop()
                     }
                 }
             },
             IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED),
-            ContextCompat.RECEIVER_EXPORTED,
         )
     }
 }

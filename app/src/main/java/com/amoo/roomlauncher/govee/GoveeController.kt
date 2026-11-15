@@ -8,9 +8,6 @@ import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
-import android.bluetooth.le.ScanCallback
-import android.bluetooth.le.ScanResult
-import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.os.Build
 import com.amoo.roomlauncher.Prefs
@@ -44,6 +41,7 @@ class GoveeController(
     private val context: Context,
     private val prefs: Prefs,
     private val scope: CoroutineScope,
+    private val hub: com.amoo.roomlauncher.ble.BleHub,
 ) {
     enum class Connection { NOT_CONFIGURED, DISCONNECTED, CONNECTING, CONNECTED }
 
@@ -88,7 +86,6 @@ class GoveeController(
 
     private var started = false
     private var reconnectJob: Job? = null
-    private var scanCallback: ScanCallback? = null
     private var scanStopJob: Job? = null
 
     fun start() {
@@ -328,39 +325,26 @@ class GoveeController(
 
     // ---------------------------------------------------------------- Suche
 
+    private val scanListener = com.amoo.roomlauncher.ble.BleHub.Listener { device, rssi, record ->
+        val adv = com.amoo.roomlauncher.ble.BleHub.parse(record)
+        val name = adv.name ?: runCatching { device.name }.getOrNull()
+        if (name.isNullOrBlank()) return@Listener
+        val f = FoundDevice(name, device.address, rssi, isLikelyGovee(name))
+        _found.update { list ->
+            (list.filter { it.address != f.address } + f)
+                .sortedWith(compareByDescending<FoundDevice> { it.likelyGovee }.thenByDescending { it.rssi })
+        }
+    }
+
     fun startScan() {
-        val scanner = adapter?.takeIf { it.isEnabled }?.bluetoothLeScanner ?: run {
+        if (adapter?.isEnabled != true) {
             _lastError.value = "Bluetooth ist aus"
             return
         }
         stopScan()
         _found.value = emptyList()
         _scanning.value = true
-        val cb = object : ScanCallback() {
-            override fun onScanResult(callbackType: Int, result: ScanResult) {
-                val name = result.scanRecord?.deviceName ?: runCatching { result.device.name }.getOrNull() ?: return
-                if (name.isBlank()) return
-                val f = FoundDevice(name, result.device.address, result.rssi, isLikelyGovee(name))
-                _found.update { list ->
-                    (list.filter { it.address != f.address } + f)
-                        .sortedWith(compareByDescending<FoundDevice> { it.likelyGovee }.thenByDescending { it.rssi })
-                }
-            }
-
-            override fun onScanFailed(errorCode: Int) {
-                _scanning.value = false
-                _lastError.value = "Suche fehlgeschlagen ($errorCode)"
-            }
-        }
-        scanCallback = cb
-        val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
-        try {
-            scanner.startScan(null, settings, cb)
-        } catch (e: SecurityException) {
-            _scanning.value = false
-            _lastError.value = "Bluetooth-Berechtigung fehlt"
-            return
-        }
+        hub.add(scanListener)
         scanStopJob = scope.launch {
             delay(15000)
             stopScan()
@@ -369,8 +353,7 @@ class GoveeController(
 
     fun stopScan() {
         scanStopJob?.cancel()
-        scanCallback?.let { cb -> runCatching { adapter?.bluetoothLeScanner?.stopScan(cb) } }
-        scanCallback = null
+        hub.remove(scanListener)
         _scanning.value = false
     }
 

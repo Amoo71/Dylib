@@ -1,7 +1,6 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
-    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 android {
@@ -10,10 +9,10 @@ android {
 
     defaultConfig {
         applicationId = "com.amoo.roomlauncher"
-        minSdk = 21
+        minSdk = 19
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1.0"
+        versionCode = 3
+        versionName = "1.2.0"
     }
 
     // Fester Schlüssel im Repo, damit neue APKs sich über alte installieren lassen.
@@ -46,9 +45,6 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
-    buildFeatures {
-        compose = true
-    }
     lint {
         abortOnError = false
         checkReleaseBuilds = false
@@ -56,14 +52,7 @@ android {
 }
 
 dependencies {
-    val composeBom = platform("androidx.compose:compose-bom:2024.12.01")
-    implementation(composeBom)
-    implementation("androidx.compose.ui:ui")
-    implementation("androidx.compose.foundation:foundation")
-    implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.material:material-icons-core")
-    implementation("androidx.activity:activity-compose:1.9.3")
-    implementation("androidx.core:core-ktx:1.15.0")
+    // Bewusst ohne AndroidX/Compose: läuft so ab Android 4.4 (Galaxy Tab E).
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("org.lsposed.hiddenapibypass:hiddenapibypass:4.3")
 }

@@ -7,18 +7,14 @@ import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.bluetooth.BluetoothSocket
-import android.bluetooth.le.ScanCallback
-import android.bluetooth.le.ScanFilter
-import android.bluetooth.le.ScanResult
-import android.bluetooth.le.ScanSettings
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
 import android.os.ParcelUuid
-import androidx.core.content.ContextCompat
 import com.amoo.roomlauncher.Prefs
+import com.amoo.roomlauncher.registerSystemReceiver
 import com.amoo.roomlauncher.toast
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -49,6 +45,7 @@ class AirPodsController(
     private val context: Context,
     private val prefs: Prefs,
     private val scope: CoroutineScope,
+    private val hub: com.amoo.roomlauncher.ble.BleHub,
 ) {
     enum class Noise(val code: Int, val label: String) {
         OFF(0x01, "Aus"),
@@ -112,7 +109,6 @@ class AirPodsController(
     private var a2dp: BluetoothProfile? = null
     private var headset: BluetoothProfile? = null
     private var started = false
-    private var bleCallback: ScanCallback? = null
     @Volatile private var lastAapBattery = 0L
     @Volatile private var lastBleSeen = 0L
 
@@ -138,8 +134,7 @@ class AirPodsController(
         runCatching { a.getProfileProxy(context, listener, BluetoothProfile.A2DP) }
         runCatching { a.getProfileProxy(context, listener, BluetoothProfile.HEADSET) }
 
-        ContextCompat.registerReceiver(
-            context,
+        context.registerSystemReceiver(
             object : BroadcastReceiver() {
                 override fun onReceive(c: Context, intent: Intent) = refreshConnectionState()
             },
@@ -148,7 +143,6 @@ class AirPodsController(
                 addAction(BluetoothDevice.ACTION_ACL_CONNECTED)
                 addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED)
             },
-            ContextCompat.RECEIVER_EXPORTED,
         )
         startBatteryScan()
         scope.launch {
@@ -448,36 +442,23 @@ class AirPodsController(
 
     // ---------------------------------------------------------------- Akku/Ohrerkennung via BLE
 
-    private fun startBatteryScan() {
-        val scanner = adapter?.takeIf { it.isEnabled }?.bluetoothLeScanner ?: return
-        bleCallback?.let { runCatching { scanner.stopScan(it) } }
-        val cb = object : ScanCallback() {
-            override fun onScanResult(callbackType: Int, result: ScanResult) = handleAd(result)
-            override fun onBatchScanResults(results: MutableList<ScanResult>) = results.forEach { handleAd(it) }
-        }
-        val filter = ScanFilter.Builder()
-            .setManufacturerData(APPLE_ID, byteArrayOf(0x07, 0x19), byteArrayOf(0xFF.toByte(), 0xFF.toByte()))
-            .build()
-        val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_POWER).build()
-        try {
-            scanner.startScan(listOf(filter), settings, cb)
-            bleCallback = cb
-        } catch (_: Throwable) {
-        }
-    }
-
-    private fun handleAd(result: ScanResult) {
-        if (result.rssi < -75) return
-        val data = result.scanRecord?.getManufacturerSpecificData(APPLE_ID) ?: return
-        val info = ProximityParser.parse(data) ?: return
+    private val advertListener = com.amoo.roomlauncher.ble.BleHub.Listener { _, rssi, record ->
+        if (rssi < -75) return@Listener
+        val data = com.amoo.roomlauncher.ble.BleHub.parse(record).manufacturer[APPLE_ID] ?: return@Listener
+        val info = ProximityParser.parse(data) ?: return@Listener
         lastBleSeen = System.currentTimeMillis()
         _model.value = info.model
         _inEar.value = InEar(info.leftInEar, info.rightInEar)
-        if (System.currentTimeMillis() - lastAapBattery < 60_000) return
+        if (System.currentTimeMillis() - lastAapBattery < 60_000) return@Listener
         _battery.value = Battery(
             left = info.left, right = info.right, case = info.case,
             chargingLeft = info.chargingLeft, chargingRight = info.chargingRight, chargingCase = info.chargingCase,
         )
+    }
+
+    private fun startBatteryScan() {
+        hub.add(advertListener)
+        hub.ensureRunning()
     }
 
     companion object {
