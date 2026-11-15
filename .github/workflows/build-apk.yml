@@ -28,7 +28,9 @@ jobs:
       - name: Build APKs
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon --stacktrace assembleRelease assembleDebug
+          set -o pipefail
+          ./gradlew --no-daemon assembleRelease assembleDebug 2>&1 | tee build.log || {
+            echo "::group::Kompilierfehler"; grep -E "^e: " build.log || true; echo "::endgroup::"; exit 1; }
 
       - name: Collect APKs
         id: collect

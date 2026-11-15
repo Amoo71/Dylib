@@ -420,6 +420,7 @@ private fun Context.widgetsTab(app: RoomApp): View {
 // ---- Apps
 
 private fun Context.appsTab(app: RoomApp): View {
+    val ctx = this
     val root = column()
     var query = ""
     var list: List<AppEntry> = emptyList()
@@ -431,12 +432,12 @@ private fun Context.appsTab(app: RoomApp): View {
             val e = list[position]
             val onBoard = app.board.items.value.any { it is BoardItem.App && it.component == e.key }
             val inDock = e.key in app.board.dock.value
-            val icon = ImageView(context).apply {
+            val icon = ImageView(ctx).apply {
                 setImageBitmap(e.icon)
                 layoutParams = lp(dp(40), dp(40))
             }
             val name = label(e.label, 16f).apply { layoutParams = lp(0, WRAP, 1f).margins(l = dp(14)) }
-            val boardChip = Chip(context, if (onBoard) "✓ Board" else "+ Board", onBoard) {
+            val boardChip = Chip(ctx, if (onBoard) "✓ Board" else "+ Board", onBoard) {
                 if (onBoard) {
                     app.board.items.value.firstOrNull { it is BoardItem.App && it.component == e.key }?.let { app.board.remove(it.id) }
                 } else {
@@ -444,7 +445,7 @@ private fun Context.appsTab(app: RoomApp): View {
                 }
                 notifyDataSetChanged()
             }
-            val dockChip = Chip(context, if (inDock) "✓ Dock" else "+ Dock", inDock) {
+            val dockChip = Chip(ctx, if (inDock) "✓ Dock" else "+ Dock", inDock) {
                 if (inDock) app.board.removeFromDock(e.key) else app.board.addToDock(e.key)
                 notifyDataSetChanged()
             }
