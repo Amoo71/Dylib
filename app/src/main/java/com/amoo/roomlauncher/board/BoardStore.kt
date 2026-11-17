@@ -56,7 +56,7 @@ class BoardStore(context: Context) {
     fun move(id: String, toIndex: Int) {
         val list = _items.value.toMutableList()
         val from = list.indexOfFirst { it.id == id }
-        if (from < 0) return
+        if (from < 0 || from == toIndex.coerceIn(0, list.size - 1)) return
         val item = list.removeAt(from)
         list.add(toIndex.coerceIn(0, list.size), item)
         set(list)
@@ -108,6 +108,7 @@ class BoardStore(context: Context) {
 
     fun moveInDock(component: String, toIndex: Int) {
         val list = _dock.value.toMutableList()
+        if (list.indexOf(component) == toIndex.coerceIn(0, list.size - 1)) return
         if (!list.remove(component)) return
         list.add(toIndex.coerceIn(0, list.size), component)
         setDock(list)

@@ -364,7 +364,13 @@ class BoardLayout(
         x >= v.left && x < v.right && y >= v.top && y < v.bottom
     }
 
+    private var lastReorderAt = 0L
+    private var lastHitId: String? = null
+
     private fun checkReorder(id: String) {
+        // Nicht bei jeder Fingerbewegung umsortieren – sonst springen große und kleine Elemente hin und her
+        val now = android.os.SystemClock.uptimeMillis()
+        if (now - lastReorderAt < 260) return
         val me = placements.firstOrNull { it.cell.id == id } ?: return
         val cx = dragLeft + (me.cell.w * cellW + (me.cell.w - 1) * gap) / 2f
         val cy = dragTop + (me.cell.h * cellH + (me.cell.h - 1) * gap) / 2f
@@ -374,6 +380,9 @@ class BoardLayout(
             it.cell.id != id && col >= it.col && col < it.col + it.cell.w && row >= it.row && row < it.row + it.cell.h
         }
         if (hit != null) {
+            if (hit.cell.id == lastHitId && now - lastReorderAt < 700) return
+            lastHitId = hit.cell.id
+            lastReorderAt = now
             listener?.onMove(id, placements.indexOf(hit))
         } else if (isFixed && col >= placements.size) {
             listener?.onMove(id, placements.size - 1)
