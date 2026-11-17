@@ -25,12 +25,12 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Build APKs
+      - name: Test protocols & build APKs
         run: |
           chmod +x gradlew
           set -o pipefail
-          ./gradlew --no-daemon assembleRelease assembleDebug 2>&1 | tee build.log || {
-            echo "::group::Kompilierfehler"; grep -E "^e: " build.log || true; echo "::endgroup::"; exit 1; }
+          ./gradlew --no-daemon testDebugUnitTest assembleRelease assembleDebug 2>&1 | tee build.log || {
+            echo "::group::Fehler"; grep -E "^e: |FAILED|AssertionError|ComparisonFailure" build.log || true; echo "::endgroup::"; exit 1; }
 
       - name: Collect APKs
         id: collect

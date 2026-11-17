@@ -21,13 +21,14 @@ mit drei Glas-Widgets: **Licht**, **AirPods** und **Apps**.
   - *Farbig*: einfarbig oder Verlauf aus bis zu 4 Farben + Blasen (Anzahl, Größe, Tempo, Deckkraft, Farbe)
   - *Eigenes*: eigenes Bild/GIF/PNG/JPEG + optional Regen oder Blasen darüber
 - **Govee-LED** direkt per Bluetooth LE: An/Aus, Helligkeit, Farbe, Presets, Szenen, Musikmodi, Status-Rücklesen.
+  Modell wird am Namen erkannt (z. B. H6199) – RGBIC-Streifen bekommen eine **15-Segment-Leiste** zum Einfärben einzelner Abschnitte.
 - **AirPods** (Protokoll nach [GreenPods](https://github.com/andrewkomkov/GreenPods)): Verbinden/Trennen, Akku L/R/Case + Laden + „im Ohr“,
   Geräuschkontrolle Aus / Transparenz / Adaptiv / ANC, Stärke des adaptiven Audios, Gesprächserkennung,
   automatische Ohrerkennung, ANC mit einem AirPod.
 
 ## Installation
 
-1. APK laden: GitHub → *Releases* → **Room Launcher v2.2.0** (neueste) → `RoomLauncher.apk`.
+1. APK laden: GitHub → *Releases* → **Room Launcher v2.3.0** (neueste) → `RoomLauncher.apk`.
 2. Auf dem Tablet installieren („Unbekannte Quellen“ erlauben).
 3. App öffnen, Bluetooth-/Standortberechtigung erlauben und den **Standort einschalten** – ohne ihn findet Android 7 keine Bluetooth-LE-Geräte (Licht, AirPods-Akku). Der Launcher zeigt oben einen Hinweis, falls etwas fehlt.
 4. Home-Taste drücken → **Room Launcher** als Standard wählen („Immer“).
@@ -59,6 +60,11 @@ Lokal: Android SDK installieren, dann `./gradlew assembleRelease`.
 
 Die APK ist mit einem im Repo liegenden Schlüssel (`keystore/`) signiert, damit Updates sich drüber installieren lassen.
 Nur für den privaten Gebrauch gedacht.
+
+## Tests
+
+`app/src/test/.../ProtocolTest.kt` prüft die Bluetooth-Pakete Byte für Byte gegen veröffentlichte Mitschnitte
+(Govee: egold555/Govee-Reverse-Engineering, AirPods: GreenPods/LibrePods, OpenPods). Läuft bei jedem Build mit.
 
 ## Schriften
 

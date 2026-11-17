@@ -63,6 +63,18 @@ class GoveeController(
     private val _color = MutableStateFlow(prefs.lastColor)
     val color: StateFlow<Int> = _color.asStateFlow()
 
+    private val _model = MutableStateFlow(GoveeProtocol.modelOf(prefs.goveeName))
+    /** Erkanntes Modell, z. B. "H6199" (aus dem Bluetooth-Namen). */
+    val model: StateFlow<String?> = _model.asStateFlow()
+
+    private val _segmented = MutableStateFlow(prefs.goveeColorMode == GoveeProtocol.MODE_SEGMENTS)
+    /** true = RGBIC-Streifen, einzelne Segmente steuerbar. */
+    val segmented: StateFlow<Boolean> = _segmented.asStateFlow()
+
+    private val _segments = MutableStateFlow(prefs.goveeSegments ?: List(GoveeProtocol.SEGMENTS) { prefs.lastColor })
+    /** Zuletzt gesetzte Farbe je Segment (für die Anzeige im Widget). */
+    val segments: StateFlow<List<Int>> = _segments.asStateFlow()
+
     private val _found = MutableStateFlow<List<FoundDevice>>(emptyList())
     val found: StateFlow<List<FoundDevice>> = _found.asStateFlow()
 
@@ -90,6 +102,15 @@ class GoveeController(
     private var silentWrites = 0
     private var scanStopJob: Job? = null
 
+    init {
+        // Schon eingerichtetes Licht: Modell aus dem Namen erkennen, falls noch der Standard-Befehl aktiv ist
+        val model = GoveeProtocol.modelOf(prefs.goveeName)
+        if (prefs.goveeColorMode == GoveeProtocol.MODE_CLASSIC && GoveeProtocol.isSegmented(model)) {
+            prefs.goveeColorMode = GoveeProtocol.MODE_SEGMENTS
+            _segmented.value = true
+        }
+    }
+
     fun start() {
         if (started) return
         started = true
@@ -97,7 +118,7 @@ class GoveeController(
         scope.launch {
             while (true) {
                 delay(2000)
-                if (_connection.value == Connection.CONNECTED) enqueue("keepalive", packet(0xAA, 0x01))
+                if (_connection.value == Connection.CONNECTED) enqueue("keepalive", GoveeProtocol.KEEP_ALIVE)
             }
         }
         connect()
@@ -108,43 +129,60 @@ class GoveeController(
     fun setPower(on: Boolean) {
         _power.value = on
         prefs.lastPower = on
-        enqueue("power", packet(0x33, 0x01, if (on) 0x01 else 0x00))
+        enqueue("power", GoveeProtocol.power(on))
     }
 
     fun setBrightness(value: Float) {
         val v = value.coerceIn(0.01f, 1f)
         _brightness.value = v
         prefs.lastBrightness = v
-        val raw = if (prefs.goveeBrightness100) (v * 100).roundToInt().coerceIn(1, 100)
-        else (v * 255).roundToInt().coerceIn(1, 255)
-        enqueue("brightness", packet(0x33, 0x04, raw))
+        enqueue("brightness", GoveeProtocol.brightness(v, prefs.goveeBrightness100))
     }
 
+    /** Ganze Leiste in einer Farbe. */
     fun setColor(argb: Int) {
         _color.value = argb
         prefs.lastColor = argb
-        val r = (argb shr 16) and 0xFF
-        val g = (argb shr 8) and 0xFF
-        val b = argb and 0xFF
-        val bytes = when (prefs.goveeColorMode) {
-            0x15 -> packet(0x33, 0x05, 0x15, 0x01, r, g, b, 0, 0, 0, 0, 0, 0xFF, 0x7F)
-            else -> packet(0x33, 0x05, prefs.goveeColorMode, r, g, b)
-        }
         if (!_power.value) setPower(true)
-        enqueue("color", bytes)
+        if (prefs.goveeColorMode == GoveeProtocol.MODE_SEGMENTS) {
+            setSegmentsState(List(GoveeProtocol.SEGMENTS) { argb })
+        }
+        enqueue("color", GoveeProtocol.color(argb, prefs.goveeColorMode))
+    }
+
+    /** Nur die Segmente in [mask] (Bit 0 = Segment 1) färben – RGBIC-Streifen. */
+    fun setSegmentColor(mask: Int, argb: Int) {
+        if (mask == 0) return
+        if (mask == GoveeProtocol.ALL_SEGMENTS) return setColor(argb)
+        if (!_power.value) setPower(true)
+        _color.value = argb
+        prefs.lastColor = argb
+        setSegmentsState(_segments.value.mapIndexed { i, c -> if (mask and (1 shl i) != 0) argb else c })
+        enqueue("seg$mask", GoveeProtocol.color(argb, GoveeProtocol.MODE_SEGMENTS, mask))
+    }
+
+    private fun setSegmentsState(list: List<Int>) {
+        _segments.value = list
+        prefs.goveeSegments = list
     }
 
     /** Eingebaute Szenen: 33 05 04 <id>. */
     fun setScene(id: Int) {
         if (!_power.value) setPower(true)
-        enqueue("color", packet(0x33, 0x05, 0x04, id))
+        enqueue("color", GoveeProtocol.scene(id))
     }
 
-    /** Musikmodus (Mikrofon im Controller): 33 05 01 <sub> [00 r g b]. */
+    /** Musikmodus (Mikrofon im Controller). */
     fun setMusicMode(sub: Int) {
         if (!_power.value) setPower(true)
-        val c = _color.value
-        enqueue("color", packet(0x33, 0x05, 0x01, sub, 0x00, (c shr 16) and 0xFF, (c shr 8) and 0xFF, c and 0xFF))
+        enqueue("color", GoveeProtocol.music(sub, _color.value))
+    }
+
+    /** Farb-Befehl manuell ändern (überschreibt die automatische Modell-Erkennung). */
+    fun setColorMode(mode: Int) {
+        prefs.goveeColorMode = mode
+        _segmented.value = mode == GoveeProtocol.MODE_SEGMENTS
+        resendState()
     }
 
     /** Sendet die aktuellen Werte erneut (z.B. nach Ändern des Farbmodus). */
@@ -160,6 +198,11 @@ class GoveeController(
         failures = 0
         prefs.goveeAddress = device.address
         prefs.goveeName = device.name
+        // Modell erkennen → passenden Farb-Befehl automatisch setzen (RGBIC-Streifen: Segmente)
+        val model = GoveeProtocol.modelOf(device.name)
+        _model.value = model
+        prefs.goveeColorMode = GoveeProtocol.colorModeFor(model)
+        _segmented.value = prefs.goveeColorMode == GoveeProtocol.MODE_SEGMENTS
         _deviceName.value = device.name
         disconnectInternal()
         _connection.value = Connection.DISCONNECTED
@@ -291,9 +334,9 @@ class GoveeController(
             _connection.value = Connection.CONNECTED
             scope.launch {
                 delay(400)
-                enqueue("q_power", packet(0xAA, 0x01))
-                enqueue("q_bright", packet(0xAA, 0x04))
-                enqueue("q_color", packet(0xAA, 0x05, 0x01))
+                enqueue("q_power", GoveeProtocol.packet(0xAA, 0x01))
+                enqueue("q_bright", GoveeProtocol.packet(0xAA, 0x04))
+                enqueue("q_color", GoveeProtocol.packet(0xAA, 0x05, 0x01))
             }
             wake.trySend(Unit)
         }
@@ -318,20 +361,15 @@ class GoveeController(
     @Volatile private var lastLocalChange = 0L
 
     private fun handleStatus(v: ByteArray) {
-        if (v.size < 3 || v[0] != 0xAA.toByte()) return
         if (System.currentTimeMillis() - lastLocalChange < 2000) return
-        val b2 = v[2].toInt() and 0xFF
-        when (v[1].toInt() and 0xFF) {
-            0x01 -> _power.value = b2 == 0x01
-            0x04 -> {
-                val f = if (prefs.goveeBrightness100) b2 / 100f else b2 / 255f
-                if (b2 > 0) _brightness.value = f.coerceIn(0.01f, 1f)
+        when (val st = GoveeProtocol.parseStatus(v)) {
+            is GoveeProtocol.Status.Power -> _power.value = st.on
+            is GoveeProtocol.Status.Brightness -> {
+                val f = if (prefs.goveeBrightness100) st.raw / 100f else st.raw / 254f
+                _brightness.value = f.coerceIn(0.01f, 1f)
             }
-            0x05 -> if (v.size >= 6 && (b2 == 0x02 || b2 == 0x0D || b2 == 0x0B)) {
-                val argb = (0xFF shl 24) or ((v[3].toInt() and 0xFF) shl 16) or
-                    ((v[4].toInt() and 0xFF) shl 8) or (v[5].toInt() and 0xFF)
-                _color.value = argb
-            }
+            is GoveeProtocol.Status.Color -> _color.value = st.argb
+            null -> Unit
         }
     }
 
@@ -435,15 +473,6 @@ class GoveeController(
             val n = name.lowercase()
             return n.contains("govee") || n.startsWith("ihoment") || n.startsWith("gbk_") ||
                 n.startsWith("minger") || Regex("^h[5-7][0-9]{3}").containsMatchIn(n)
-        }
-
-        fun packet(vararg data: Int): ByteArray {
-            val b = ByteArray(20)
-            data.forEachIndexed { i, v -> if (i < 19) b[i] = v.toByte() }
-            var x = 0
-            for (i in 0 until 19) x = x xor (b[i].toInt() and 0xFF)
-            b[19] = x.toByte()
-            return b
         }
     }
 }

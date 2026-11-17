@@ -978,3 +978,226 @@ class AirPodsGlyph(context: Context) : View(context) {
         }
     }
 }
+
+// ------------------------------------------------------------------ LED-Segmente (RGBIC)
+
+/**
+ * 15 Felder = 15 Segmente des LED-Streifens, gefüllt mit ihrer aktuellen Farbe.
+ * Tippen wählt ein Segment aus/ab, Wischen wählt einen Bereich. Keine Auswahl = ganze Leiste.
+ */
+class SegmentBar(context: Context, private val count: Int = 15) : View(context) {
+    var colors: List<Int> = List(count) { Color.WHITE }
+        set(v) {
+            field = v
+            invalidate()
+        }
+    var dimmed = false
+        set(v) {
+            field = v
+            invalidate()
+        }
+
+    /** Bitmaske der ausgewählten Segmente (Bit 0 = Segment 1). 0 = keine Auswahl. */
+    var selection = 0
+        private set
+    var onSelectionChanged: (Int) -> Unit = {}
+
+    private val cell = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        color = Color.WHITE
+    }
+    private val r = RectF()
+    private val slop = ViewConfiguration.get(context).scaledTouchSlop
+    private var downX = 0f
+    private var downIndex = -1
+    private var dragging = false
+
+    fun clearSelection() {
+        selection = 0
+        invalidate()
+        onSelectionChanged(0)
+    }
+
+    private fun cellWidth(): Float {
+        val gap = dp(3).toFloat()
+        return (width - gap * (count - 1)) / count
+    }
+
+    private fun indexAt(x: Float): Int = (x / (cellWidth() + dp(3))).toInt().coerceIn(0, count - 1)
+
+    override fun onDraw(canvas: Canvas) {
+        val gap = dp(3).toFloat()
+        val w = cellWidth()
+        val h = height.toFloat()
+        val rad = min(w, h) * 0.32f
+        ring.strokeWidth = dp(2).toFloat()
+        for (i in 0 until count) {
+            val left = i * (w + gap)
+            val sel = selection and (1 shl i) != 0
+            val inset = if (sel) 0f else dp(2).toFloat()
+            r.set(left, inset, left + w, h - inset)
+            cell.color = colors.getOrElse(i) { Color.WHITE }
+            cell.alpha = if (dimmed) 70 else 255
+            canvas.drawRoundRect(r, rad, rad, cell)
+            if (sel) {
+                r.inset(ring.strokeWidth / 2, ring.strokeWidth / 2)
+                canvas.drawRoundRect(r, rad, rad, ring)
+            }
+        }
+    }
+
+    override fun onTouchEvent(e: MotionEvent): Boolean {
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                downX = e.x
+                downIndex = indexAt(e.x)
+                dragging = false
+                return true
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (!dragging && abs(e.x - downX) > slop) {
+                    dragging = true
+                    parent?.requestDisallowInterceptTouchEvent(true)
+                }
+                if (dragging) {
+                    // Bereich vom Startsegment bis zum Finger auswählen
+                    val a = min(downIndex, indexAt(e.x))
+                    val b = max(downIndex, indexAt(e.x))
+                    var m = 0
+                    for (i in a..b) m = m or (1 shl i)
+                    if (m != selection) {
+                        selection = m
+                        invalidate()
+                        onSelectionChanged(m)
+                    }
+                }
+            }
+            MotionEvent.ACTION_UP -> {
+                if (!dragging) {
+                    selection = selection xor (1 shl indexAt(e.x))
+                    invalidate()
+                    onSelectionChanged(selection)
+                }
+                dragging = false
+            }
+            MotionEvent.ACTION_CANCEL -> dragging = false
+        }
+        return true
+    }
+}
+
+// ------------------------------------------------------------------ Farbwähler
+
+/** Farbleiste: Warmweiß → Weiß → ganzer Farbkreis. Ziehen oder tippen wählt die Farbe. */
+class ColorStrip(context: Context, private val heightDp: Int = 34, var onPick: (Int) -> Unit = {}) : View(context) {
+    private val stops = intArrayOf(
+        0xFFFFA64D.toInt(), 0xFFFFD9B0.toInt(), 0xFFFFFFFF.toInt(),
+        0xFFFF0000.toInt(), 0xFFFFFF00.toInt(), 0xFF00FF00.toInt(), 0xFF00FFFF.toInt(),
+        0xFF0000FF.toInt(), 0xFFFF00FF.toInt(), 0xFFFF0000.toInt(),
+    )
+    private val grad = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val thumb = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        color = Color.WHITE
+    }
+    private val thumbFill = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val rect = RectF()
+    private val slop = ViewConfiguration.get(context).scaledTouchSlop
+    private var downX = 0f
+    private var dragging = false
+    private var pos = -1f
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        setMeasuredDimension(MeasureSpec.getSize(widthMeasureSpec), dp(heightDp))
+    }
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        rect.set(0f, 0f, w.toFloat(), h.toFloat())
+        grad.shader = LinearGradient(0f, 0f, w.toFloat(), 0f, stops, null, Shader.TileMode.CLAMP)
+    }
+
+    /** Farbe an Position 0..1 (gleiche Interpolation wie der Verlauf). */
+    fun colorAt(f: Float): Int {
+        val x = f.coerceIn(0f, 1f) * (stops.size - 1)
+        val i = x.toInt().coerceAtMost(stops.size - 2)
+        return blend(stops[i], stops[i + 1], x - i)
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        val h = height.toFloat()
+        canvas.drawRoundRect(rect, h / 2, h / 2, grad)
+        if (pos >= 0f) {
+            val cx = (h / 2 + (width - h) * pos)
+            thumbFill.color = colorAt(pos)
+            thumb.strokeWidth = dp(3).toFloat()
+            canvas.drawCircle(cx, h / 2, h / 2 - dp(3), thumbFill)
+            canvas.drawCircle(cx, h / 2, h / 2 - dp(3), thumb)
+        }
+    }
+
+    override fun onTouchEvent(e: MotionEvent): Boolean {
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                downX = e.x
+                dragging = false
+                return true
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (!dragging && abs(e.x - downX) > slop) {
+                    dragging = true
+                    parent?.requestDisallowInterceptTouchEvent(true)
+                }
+                if (dragging) pick(e.x)
+            }
+            MotionEvent.ACTION_UP -> {
+                if (!dragging) pick(e.x)
+                dragging = false
+            }
+            MotionEvent.ACTION_CANCEL -> dragging = false
+        }
+        return true
+    }
+
+    private fun pick(x: Float) {
+        val h = height.toFloat()
+        pos = ((x - h / 2) / max(1f, width - h)).coerceIn(0f, 1f)
+        invalidate()
+        onPick(colorAt(pos))
+    }
+}
+
+// ------------------------------------------------------------------ Uhr-Doppelpunkt
+
+/** Schlichter Doppelpunkt aus zwei runden Punkten – passend zur Punktmatrix-Schrift. */
+class ColonDots(context: Context, textSp: Float, var color: Int = C.TEXT) : View(context) {
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        typeface = Fonts.display
+        textSize = context.dpf(textSp) * context.resources.configuration.fontScale
+    }
+    private val bounds = Rect()
+
+    init {
+        p.getTextBounds("0", 0, 1, bounds)
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val fm = p.fontMetrics
+        setMeasuredDimension((p.textSize * 0.34f).toInt(), (fm.descent - fm.ascent).toInt())
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        val fm = p.fontMetrics
+        val baseline = -fm.ascent
+        val digitH = bounds.height().toFloat()
+        val cy = baseline - digitH / 2
+        val r = p.textSize * 0.045f
+        // weicher Schatten wie bei den Ziffern
+        p.color = 0x40000000
+        canvas.drawCircle(width / 2f, cy - digitH * 0.22f + dp(2), r * 1.4f, p)
+        canvas.drawCircle(width / 2f, cy + digitH * 0.22f + dp(2), r * 1.4f, p)
+        p.color = color
+        canvas.drawCircle(width / 2f, cy - digitH * 0.22f, r, p)
+        canvas.drawCircle(width / 2f, cy + digitH * 0.22f, r, p)
+    }
+}

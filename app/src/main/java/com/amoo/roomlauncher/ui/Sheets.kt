@@ -240,6 +240,7 @@ enum class SettingsTab(val label: String) {
     DOCK("Dock"),
     DEVICES("Geräte"),
     GENERAL("Allgemein"),
+    EXIT("Verlassen"),
 }
 
 private val SWATCHES = longArrayOf(
@@ -264,7 +265,8 @@ fun MainActivity.settingsSheet(
             SettingsTab.APPS -> appsTab(app)
             SettingsTab.DOCK -> scroll(dockTab(app))
             SettingsTab.DEVICES -> scroll(devicesTab(app, onOpenGovee, onOpenAirPods))
-            SettingsTab.GENERAL -> scroll(generalTab(app, onDismiss))
+            SettingsTab.GENERAL -> scroll(generalTab(app))
+            SettingsTab.EXIT -> scroll(exitTab(app, onDismiss))
         }
         v.alpha = 0f
         content.addView(v, FrameLayout.LayoutParams(MATCH, MATCH))
@@ -653,7 +655,7 @@ private fun Context.diagnosis(app: RoomApp): String {
 
 // ---- Allgemein
 
-private fun MainActivity.generalTab(app: RoomApp, onDismiss: () -> Unit): View {
+private fun MainActivity.generalTab(app: RoomApp): View {
     val root = column()
     root.addView(sectionTitle("Darstellung"), lp().margins(b = dp(6)))
     root.addView(
@@ -671,49 +673,98 @@ private fun MainActivity.generalTab(app: RoomApp, onDismiss: () -> Unit): View {
             app.smooth.value = it
         },
     )
-    root.addView(switchRow("Bildschirm immer an", app.prefs.keepScreenOn) {
+    root.addView(switchRow("Bildschirm immer an", app.prefs.keepScreenOn, "Das Tablet geht nicht in den Standby, solange der Launcher offen ist.") {
         app.prefs.keepScreenOn = it
         applyKeepScreenOn(it)
     })
-    root.section("Launcher verlassen")
+    root.section("System")
     root.addView(
-        label("Solange Room Launcher der Standard-Startbildschirm ist, bringt die Home-Taste dich immer hierher zurück.", 14f, C.TEXT2, lines = 3),
+        row(
+            glassButton("Android-Einstellungen") {
+                startActivity(Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            },
+            glassButton("Bluetooth") {
+                startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            },
+            glassButton("WLAN") {
+                startActivity(Intent(Settings.ACTION_WIFI_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            },
+            spacingDp = 12,
+        ),
     )
-    app.apps.otherLaunchers().forEach { l ->
+    val version = runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrNull() ?: ""
+    root.addView(label("Room Launcher $version", 12f, C.TEXT3), lp().margins(t = dp(22)))
+    return root
+}
+
+// ---- Verlassen: zurück zum normalen Launcher
+
+private fun MainActivity.exitTab(app: RoomApp, onDismiss: () -> Unit): View {
+    val root = column()
+    root.addView(
+        label(
+            "Solange Room Launcher der Standard-Startbildschirm ist, bringt dich die Home-Taste immer hierher zurück. " +
+                "Hier kommst du zum normalen Launcher.",
+            15f, C.TEXT2, lines = 3,
+        ),
+    )
+
+    root.section("Einmal kurz wechseln")
+    val others = app.apps.otherLaunchers()
+    if (others.isEmpty()) root.addView(label("Kein anderer Launcher installiert.", 14f, C.TEXT3))
+    others.forEach { l ->
         val r = row(
             ImageView(this).apply {
                 setImageBitmap(l.icon)
-                layoutParams = lp(dp(40), dp(40))
+                layoutParams = lp(dp(44), dp(44))
             },
-            label("${l.label} öffnen", 17f, bold = true),
-            spacingDp = 14,
+            column().apply {
+                addView(label("${l.label} öffnen", 17f, bold = true))
+                addView(label("Home-Taste führt danach wieder hierher", 12.5f, C.TEXT3), lp().margins(t = dp(3)))
+                layoutParams = lp(0, WRAP, 1f).margins(l = dp(14))
+            },
         ).apply {
-            background = GlassDrawable(context, 20f, 0.8f, frosted = false)
-            setPadding(dp(12), dp(12), dp(12), dp(12))
+            background = GlassDrawable(context, 20f, 0.9f, frosted = false)
+            setPadding(dp(14), dp(12), dp(14), dp(12))
             pressable {
                 onDismiss()
                 app.apps.launchHome(l)
             }
         }
-        root.addView(r, lp().margins(t = dp(10)))
+        root.addView(r, lp().margins(b = dp(10)))
     }
+
+    root.section("Dauerhaft zurück zum normalen Launcher")
+    root.addView(
+        label(
+            "Hebt Room Launcher als Standard auf. Beim nächsten Druck auf Home fragt Android, welcher Startbildschirm " +
+                "verwendet werden soll – dort den alten Launcher mit „Immer“ wählen.",
+            14f, C.TEXT2, lines = 4,
+        ),
+    )
     root.addView(
         row(
-            glassButton("Standard-Startbildschirm ändern") {
+            glassButton("Als Standard aufheben", true) {
+                @Suppress("DEPRECATION")
+                runCatching { packageManager.clearPackagePreferredActivities(packageName) }
+                toast("Erledigt – jetzt Home drücken und den Launcher wählen")
+                onDismiss()
+                // Home-Auswahl direkt anzeigen
+                runCatching {
+                    startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                }
+            },
+            glassButton("Startbildschirm-Einstellungen") {
                 val ok = runCatching {
                     startActivity(Intent(Settings.ACTION_HOME_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                 }.isSuccess
                 if (!ok) startActivity(Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             },
-            glassButton("Android-Einstellungen") {
-                startActivity(Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            },
             spacingDp = 12,
         ),
-        lp().margins(t = dp(14)),
+        lp().margins(t = dp(12)),
     )
-    val version = runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrNull() ?: ""
-    root.addView(label("Room Launcher $version", 12f, C.TEXT3), lp().margins(t = dp(22)))
+    root.addView(spacer(16))
     return root
 }
 
@@ -734,9 +785,21 @@ fun Context.goveeSheet(govee: GoveeController, prefs: Prefs, onDismiss: () -> Un
     }
     control.addView(row(powerButton(govee, 76), bright.also { it.layoutParams = lp(0, WRAP, 1f) }, spacingDp = 18))
     control.section("Farbe")
-    val hue = hueSlider(govee, 38)
-    control.addView(hue)
-    control.addView(presetRow(govee, 40, hue), lp().margins(t = dp(14)))
+    val segLabel = label("", 13f, C.TEXT3)
+    val bar = segmentBar(govee, 36)
+    val segBox = column().apply {
+        addView(bar, lp(MATCH, dp(36)))
+        addView(segLabel, lp().margins(t = dp(6), b = dp(12)))
+    }
+    bar.onSelectionChanged = { m ->
+        val n = Integer.bitCount(m)
+        segLabel.text = if (n == 0) "Keine Auswahl – Farbe gilt für die ganze Leiste" else "$n Segment(e) ausgewählt – jetzt Farbe wählen"
+    }
+    bar.onSelectionChanged(0)
+    segBox.bind(govee.segmented) { segBox.visibility = if (it) View.VISIBLE else View.GONE }
+    control.addView(segBox)
+    control.addView(colorPicker(govee, bar, 40))
+    control.addView(presetRow(govee, 40, null), lp().margins(t = dp(14)))
     control.section("Szenen")
     control.addView(hScroll(*GoveeController.SCENES.map { (id, l) -> Chip(this, l) { govee.setScene(id) } }.toTypedArray()))
     control.section("Musik-Modus (Mikrofon am Controller)")
@@ -758,6 +821,18 @@ fun Context.goveeSheet(govee: GoveeController, prefs: Prefs, onDismiss: () -> Un
     current.bind(govee.deviceName) { refreshCurrent() }
     current.bind(govee.connection) { refreshCurrent() }
     root.addView(current)
+    val modelInfo = label("", 13f, C.TEXT3, lines = 2)
+    fun refreshModel() {
+        val m = govee.model.value
+        modelInfo.text = when {
+            m == null -> "Modell unbekannt – Farb-Befehl unten ggf. anpassen."
+            govee.segmented.value -> "Erkannt: $m · RGBIC-Streifen mit 15 Segmenten"
+            else -> "Erkannt: $m"
+        }
+    }
+    modelInfo.bind(govee.model) { refreshModel() }
+    modelInfo.bind(govee.segmented) { refreshModel() }
+    root.addView(modelInfo, lp().margins(t = dp(4)))
     val err = label("", 13f, C.ORANGE, lines = 2)
     err.bind(govee.lastError) {
         err.text = it.orEmpty()
@@ -794,8 +869,7 @@ fun Context.goveeSheet(govee: GoveeController, prefs: Prefs, onDismiss: () -> Un
     root.section("Farb-Befehl (modellabhängig)")
     val modes = listOf(0x02 to "Standard (02)", 0x0D to "Neuere H6xxx (0D)", 0x0B to "0B", 0x15 to "Segmente (15)")
     root.addView(chipGroup(modes.map { it.second }, modes.indexOfFirst { it.first == prefs.goveeColorMode }) { i ->
-        prefs.goveeColorMode = modes[i].first
-        govee.resendState()
+        govee.setColorMode(modes[i].first)
     })
     root.section("Helligkeitsskala")
     root.addView(chipGroup(listOf("0–255", "0–100"), if (prefs.goveeBrightness100) 1 else 0) { i ->

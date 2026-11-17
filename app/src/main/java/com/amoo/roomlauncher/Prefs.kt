@@ -57,6 +57,11 @@ class Prefs(context: Context) {
             later("last_color") { it.putInt("last_color", v) }
         }
 
+    /** Farbe je Segment (RGBIC-Streifen). */
+    var goveeSegments: List<Int>?
+        get() = sp.getString("govee_segments", null)?.split(",")?.mapNotNull { it.toIntOrNull() }?.takeIf { it.size == 15 }
+        set(v) = later("govee_segments") { it.putString("govee_segments", v?.joinToString(",")) }
+
     var airpodsAddress: String?
         get() = sp.getString("airpods_address", null)
         set(v) = sp.edit().putString("airpods_address", v).apply()

@@ -88,7 +88,8 @@ private class Header(context: Context, title: String, icon: View?, gear: Boolean
 // ------------------------------------------------------------------ Uhr
 
 private val DAY = SimpleDateFormat("EEEE", Locale.GERMANY)
-private val TIME = SimpleDateFormat("HH:mm", Locale.GERMANY)
+private val HOURS = SimpleDateFormat("HH", Locale.GERMANY)
+private val MINUTES = SimpleDateFormat("mm", Locale.GERMANY)
 private val DATE = SimpleDateFormat("d. MMMM yyyy", Locale.GERMANY)
 
 /** Uhr ohne Kasten – Punktmatrix-Ziffern schweben frei über dem Hintergrund. */
@@ -99,17 +100,21 @@ fun Context.clockWidget(size: WidgetSize): View {
         setPadding(dp(8), dp(8), dp(8), dp(8))
     }
     fun TextView.shadow() = apply { setShadowLayer(dpf(10), 0f, dpf(2), 0x8C000000.toInt()) }
+    val sp = if (small) 66f else 112f
     val day = label("", if (small) 15f else 18f, C.RED, bold = true).shadow()
-    val time = label("", if (small) 66f else 112f, display = true).shadow()
+    val hours = label("", sp, display = true).shadow()
+    val minutes = label("", sp, display = true).shadow()
+    val time = row(hours, ColonDots(this, sp), minutes)
     val date = label("", if (small) 14f else 17f, C.TEXT2).shadow()
     card.addView(day)
-    card.addView(time, lp().margins(t = dp(4), b = dp(6)))
+    card.addView(time, lp(WRAP, WRAP).margins(t = dp(4), b = dp(6)))
     card.addView(date)
     val tick = object : Runnable {
         override fun run() {
             val now = Date()
             day.text = DAY.format(now).uppercase(Locale.GERMANY)
-            time.text = TIME.format(now)
+            hours.text = HOURS.format(now)
+            minutes.text = MINUTES.format(now)
             date.text = DATE.format(now)
             card.removeCallbacks(this)
             card.postDelayed(this, 1000L - System.currentTimeMillis() % 1000L)
@@ -165,7 +170,7 @@ private fun Context.lightHeader(govee: GoveeController, gear: Boolean, onOpen: (
         h.setStatus(
             when (c) {
                 GoveeController.Connection.NOT_CONFIGURED -> "nicht eingerichtet"
-                GoveeController.Connection.CONNECTED -> govee.deviceName.value ?: "verbunden"
+                GoveeController.Connection.CONNECTED -> govee.model.value?.let { "verbunden · $it" } ?: "verbunden"
                 GoveeController.Connection.CONNECTING -> "verbinde…"
                 GoveeController.Connection.DISCONNECTED -> "getrennt – verbinde neu"
             },
@@ -179,6 +184,7 @@ private fun Context.lightHeader(govee: GoveeController, gear: Boolean, onOpen: (
     }
     h.bind(govee.connection) { refresh() }
     h.bind(govee.deviceName) { refresh() }
+    h.bind(govee.model) { refresh() }
     glow.bind(govee.color) { glow.color = it }
     glow.bind(govee.power) { glow.on = it }
     return h
@@ -219,12 +225,39 @@ internal fun Context.presetRow(govee: GoveeController, sizeDp: Int, hue: GlassSl
     return hScroll(*swatches.toTypedArray(), spacingDp = 8)
 }
 
+/** Segment-Leiste, verbunden mit dem Licht (zeigt die echten Segmentfarben). */
+internal fun Context.segmentBar(govee: GoveeController, heightDp: Int): SegmentBar {
+    val bar = SegmentBar(this)
+    bar.layoutParams = lp(MATCH, dp(heightDp))
+    bar.bind(govee.segments) { bar.colors = it }
+    bar.bind(govee.power) { bar.dimmed = !it }
+    return bar
+}
+
+/** Farbwähler: färbt die ausgewählten Segmente – oder die ganze Leiste, wenn nichts gewählt ist. */
+internal fun Context.colorPicker(govee: GoveeController, bar: SegmentBar?, heightDp: Int): ColorStrip =
+    ColorStrip(this, heightDp) { c ->
+        val mask = bar?.selection ?: 0
+        if (mask != 0 && govee.segmented.value) govee.setSegmentColor(mask, c) else govee.setColor(c)
+    }
+
+/**
+ * Licht-Widget. Ist das Licht einmal erkannt, ist es kompakt:
+ * Ein/Aus · Helligkeit · 15 Segmente (bei RGBIC-Streifen) · Farbwähler. Alles Weitere im Panel.
+ */
 fun Context.lightWidget(size: WidgetSize, govee: GoveeController, onOpen: () -> Unit): View {
     val small = size == WidgetSize.S
     val card = glassCard(if (small) 16 else 20)
     card.addView(lightHeader(govee, gear = !small, onOpen = onOpen))
     card.addView(flexSpace())
+
     val body = column()
+    body.addView(row(powerButton(govee, if (small) 48 else 60), brightnessSlider(govee, if (small) 40 else 46).also { it.layoutParams = lp(0, WRAP, 1f) }, spacingDp = 12))
+    val bar = segmentBar(govee, if (small) 26 else 32)
+    body.addView(bar, lp(MATCH, dp(if (small) 26 else 32)).margins(t = dp(if (small) 10 else 14)))
+    body.addView(colorPicker(govee, bar, if (small) 30 else 36), lp().margins(t = dp(if (small) 10 else 12)))
+    bar.bind(govee.segmented) { bar.visibility = if (it) View.VISIBLE else View.GONE }
+
     val setup = column().apply {
         addView(label("Noch kein Licht verbunden.", 14f, C.TEXT2, lines = 2))
         addView(glassButton("Licht einrichten", true, onOpen), lp(WRAP, WRAP).margins(t = dp(10)))
@@ -236,20 +269,6 @@ fun Context.lightWidget(size: WidgetSize, govee: GoveeController, onOpen: () -> 
         val none = c == GoveeController.Connection.NOT_CONFIGURED
         body.visibility = if (none) View.GONE else View.VISIBLE
         setup.visibility = if (none) View.VISIBLE else View.GONE
-    }
-    if (small) {
-        val pct = label("", 26f, display = true)
-        pct.bind(govee.brightness) { pct.text = "${(it * 100).roundToInt()}%" }
-        body.addView(row(powerButton(govee, 54), pct, spacingDp = 14))
-        body.addView(brightnessSlider(govee, 38), lp().margins(t = dp(14)))
-    } else {
-        val hue = hueSlider(govee, 30)
-        val sliders = column().apply {
-            addView(brightnessSlider(govee, 40))
-            addView(hue, lp().margins(t = dp(10)))
-        }
-        body.addView(row(powerButton(govee, 66), sliders.also { it.layoutParams = lp(0, WRAP, 1f) }, spacingDp = 16))
-        body.addView(presetRow(govee, 30, hue), lp().margins(t = dp(14)))
     }
     return card
 }
