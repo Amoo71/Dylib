@@ -56,6 +56,7 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
     private val dock = BoardLayout(activity, columns = 1, rows = 1, fixedCellDp = 60).apply { gap = dp(18) }
     private val dockBar = LinearLayout(activity)
     private val dockDivider = View(activity)
+    private val dockGlass = GlassDrawable(activity, 34f, 1.15f)
     private val editBar = LinearLayout(activity)
     private val banner = LinearLayout(activity)
     private val overlayHost = FrameLayout(activity)
@@ -84,8 +85,6 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
 
         dockBar.orientation = LinearLayout.HORIZONTAL
         dockBar.gravity = Gravity.CENTER_VERTICAL
-        dockBar.background = GlassDrawable(activity, 34f, 1.15f)
-        dockBar.setPadding(dp(18), dp(12), dp(18), dp(12))
         dockBar.addView(dock, lp(WRAP, WRAP))
         dockDivider.setBackgroundColor(C.white(0.22f))
         dockBar.addView(dockDivider, lp(dp(1), dp(44)).margins(l = dp(18), r = dp(18)))
@@ -231,7 +230,18 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
             },
             recreate = { recreate },
         )
-        dockDivider.visibility = if (comps.isEmpty()) View.GONE else View.VISIBLE
+        // Nur der Alle-Apps-Knopf → kein Kasten. Mit Apps: [App App App | Alle Apps] in der Glasleiste.
+        if (comps.isEmpty()) {
+            dock.visibility = View.GONE
+            dockDivider.visibility = View.GONE
+            dockBar.background = null
+            dockBar.setPadding(0, 0, 0, 0)
+        } else {
+            dock.visibility = View.VISIBLE
+            dockDivider.visibility = View.VISIBLE
+            if (dockBar.background == null) dockBar.background = dockGlass
+            dockBar.setPadding(dp(18), dp(12), dp(18), dp(12))
+        }
     }
 
     // ---------------------------------------------------------------- Hinweise

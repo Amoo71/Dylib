@@ -86,11 +86,15 @@ private val DATE = SimpleDateFormat("d. MMMM yyyy", Locale.GERMANY)
 
 fun Context.clockWidget(size: WidgetSize): View {
     val small = size == WidgetSize.S
-    val card = glassCard(22)
-    card.gravity = Gravity.CENTER_VERTICAL
-    val day = label("", if (small) 15f else 19f, C.RED, bold = true)
-    val time = label("", if (small) 58f else 92f, thin = true)
-    val date = label("", if (small) 13f else 16f, C.TEXT2)
+    // Kein Glas-Kasten – die Uhr schwebt frei über dem Hintergrund (Schatten für Lesbarkeit)
+    val card = column().apply {
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(dp(8), dp(8), dp(8), dp(8))
+    }
+    fun TextView.shadow() = apply { setShadowLayer(dpf(10), 0f, dpf(2), 0x80000000.toInt()) }
+    val day = label("", if (small) 16f else 20f, C.RED, bold = true).shadow()
+    val time = label("", if (small) 62f else 104f, thin = true).shadow()
+    val date = label("", if (small) 14f else 18f, C.TEXT2).shadow()
     card.addView(day)
     card.addView(time, lp().margins(t = dp(2), b = dp(4)))
     card.addView(date)
@@ -284,20 +288,39 @@ private fun Context.flexSpaceIf(flex: Boolean): View = if (flex) flexSpace() els
 
 // ------------------------------------------------------------------ AirPods
 
-private fun Context.airPodsHeader(airpods: AirPodsController, onSetup: (() -> Unit)?): View {
-    val h = Header(this, "AirPods", onSetup)
+private val SHORT_NOISE = mapOf(
+    AirPodsController.Noise.OFF to "Aus",
+    AirPodsController.Noise.TRANSPARENCY to "Transp.",
+    AirPodsController.Noise.ADAPTIVE to "Adaptiv",
+    AirPodsController.Noise.ANC to "ANC",
+)
+
+/** Kopfzeile: AirPods-Symbol, Name und Verbindungsstatus. */
+private fun Context.airPodsHeader(airpods: AirPodsController, onSetup: (() -> Unit)?, compact: Boolean): View {
+    val title = label("AirPods", if (compact) 17f else 20f, bold = true)
+    val status = label("", 12f, C.TEXT2)
+    val dot = dot(C.TEXT3, 7)
+    val text = column().apply {
+        addView(title)
+        addView(row(dot, status, spacingDp = 5), lp().margins(t = dp(3)))
+    }
+    val h = row(
+        AirPodsGlyph(this).apply { layoutParams = lp(dp(if (compact) 28 else 34), dp(if (compact) 28 else 34)) },
+        text.also { it.layoutParams = lp(0, WRAP, 1f).margins(l = dp(10)) },
+    )
+    if (onSetup != null) h.addView(glassIconButton(Glyph.GEAR, 36, onClick = onSetup))
     fun refresh() {
         val name = airpods.deviceName.value
-        h.title.text = name ?: airpods.model.value ?: "AirPods"
+        val model = airpods.model.value
+        title.text = name ?: model ?: "AirPods"
         val c = airpods.audioConnected.value
-        h.setStatus(
-            when {
-                c -> "verbunden" + (airpods.model.value?.let { " · $it" } ?: "")
-                name == null -> "nicht gekoppelt"
-                else -> "nicht verbunden"
-            },
-            if (c) C.GREEN else C.TEXT3,
-        )
+        status.text = when {
+            c -> if (model != null && model != name) "verbunden · $model" else "verbunden"
+            name == null -> "nicht gekoppelt"
+            else -> "nicht verbunden"
+        }
+        (dot.background as? RoundDrawable)?.color = if (c) C.GREEN else C.TEXT3
+        dot.invalidate()
     }
     h.bind(airpods.deviceName) { refresh() }
     h.bind(airpods.audioConnected) { refresh() }
@@ -305,49 +328,52 @@ private fun Context.airPodsHeader(airpods: AirPodsController, onSetup: (() -> Un
     return h
 }
 
-/** Akku eines Teils (Links/Rechts/Case) mit Batterie-Symbol. */
-private fun Context.batteryItem(
-    name: String,
-    airpods: AirPodsController,
-    pick: (AirPodsController.Battery?) -> Pair<Int?, Boolean>,
-    inEar: ((AirPodsController.InEar?) -> Boolean)? = null,
-): LinearLayout {
-    val title = label(name, 11.5f, C.TEXT3)
-    val value = label("–", 17f, light = true)
-    val bat = BatteryView(this)
-    val col = column().apply {
+/** Ein Akku-Ring mit Prozentzahl darunter. */
+private fun Context.ringItem(part: BatteryRing.Part, ringDp: Int, airpods: AirPodsController): LinearLayout {
+    val ring = BatteryRing(this, part)
+    val pct = label("–", 13.5f, C.TEXT2).apply { gravity = Gravity.CENTER }
+    ring.bind(airpods.battery) { b ->
+        val (p, ch) = when (part) {
+            BatteryRing.Part.LEFT -> b?.left to (b?.chargingLeft == true)
+            BatteryRing.Part.RIGHT -> b?.right to (b?.chargingRight == true)
+            BatteryRing.Part.CASE -> b?.case to (b?.chargingCase == true)
+        }
+        ring.percent = p
+        ring.charging = ch
+        pct.text = p?.let { "$it %" } ?: "–"
+        pct.setTextColor(if (p != null) C.TEXT else C.TEXT3)
+    }
+    if (part != BatteryRing.Part.CASE) {
+        ring.bind(airpods.inEar) { e -> ring.inEar = if (part == BatteryRing.Part.LEFT) e?.left == true else e?.right == true }
+    }
+    return column().apply {
         gravity = Gravity.CENTER_HORIZONTAL
-        addView(title, lp(WRAP, WRAP))
-        addView(value, lp(WRAP, WRAP).margins(t = dp(3)))
-        addView(bat, lp(dp(30), dp(14)).apply { topMargin = dp(5) })
+        addView(ring, lp(dp(ringDp), dp(ringDp)))
+        addView(pct, lp(WRAP, WRAP).margins(t = dp(7)))
     }
-    col.bind(airpods.battery) { b ->
-        val (p, charging) = pick(b)
-        value.text = p?.let { "$it %" } ?: "–"
-        bat.percent = p
-        bat.charging = charging
-    }
-    if (inEar != null) col.bind(airpods.inEar) { e -> title.text = if (inEar(e)) "$name · im Ohr" else name }
-    return col
 }
 
-private fun Context.batteryRow(airpods: AirPodsController): LinearLayout = LinearLayout(this).apply {
+private fun Context.ringRow(airpods: AirPodsController, ringDp: Int): LinearLayout = LinearLayout(this).apply {
     orientation = LinearLayout.HORIZONTAL
-    addView(batteryItem("Links", airpods, { (it?.left) to (it?.chargingLeft == true) }) { it?.left == true }, lp(0, WRAP, 1f))
-    addView(batteryItem("Rechts", airpods, { (it?.right) to (it?.chargingRight == true) }) { it?.right == true }, lp(0, WRAP, 1f))
-    addView(batteryItem("Case", airpods, { (it?.case) to (it?.chargingCase == true) }), lp(0, WRAP, 1f))
+    gravity = Gravity.CENTER_VERTICAL
+    for (part in BatteryRing.Part.entries) addView(ringItem(part, ringDp, airpods), lp(0, WRAP, 1f))
 }
 
-private fun Context.noiseSelector(airpods: AirPodsController): Segmented {
+private fun Context.noiseSelector(airpods: AirPodsController, short: Boolean): Segmented {
     val modes = AirPodsController.Noise.entries
-    val seg = Segmented(this, modes.map { it.label }) { i -> airpods.setNoise(modes[i]) }
+    val seg = Segmented(
+        this,
+        modes.map { if (short) SHORT_NOISE.getValue(it) else it.label },
+        textSp = if (short) 12.5f else 14f,
+        heightDp = if (short) 42 else 50,
+    ) { i -> airpods.setNoise(modes[i]) }
     seg.bind(airpods.noise) { n -> seg.selected = n?.let { modes.indexOf(it) } ?: -1 }
     seg.bind(airpods.controlReady) { seg.isEnabled = it }
     return seg
 }
 
-private fun Context.connectButton(airpods: AirPodsController): TextView {
-    val b = glassButton("Verbinden") {
+private fun Context.connectButton(airpods: AirPodsController, highlighted: Boolean): TextView {
+    val b = glassButton("Verbinden", highlighted) {
         if (airpods.audioConnected.value) airpods.disconnectAudio() else airpods.connectAudio()
     }
     b.bind(airpods.audioConnected) { b.text = if (it) "Trennen" else "Verbinden" }
@@ -356,43 +382,45 @@ private fun Context.connectButton(airpods: AirPodsController): TextView {
 
 fun Context.airPodsWidget(size: WidgetSize, airpods: AirPodsController, onSetup: () -> Unit): View = when (size) {
     WidgetSize.S -> glassCard(16).apply {
-        addView(airPodsHeader(airpods, null))
+        addView(airPodsHeader(airpods, null, compact = true))
         addView(flexSpace())
-        addView(batteryRow(airpods))
+        addView(ringRow(airpods, 56))
         addView(flexSpace())
-        val modes = AirPodsController.Noise.entries
-        val b = glassButton("Modus") {
-            if (!airpods.audioConnected.value) {
-                airpods.connectAudio()
-            } else {
-                val cur = airpods.noise.value?.let { modes.indexOf(it) } ?: -1
-                airpods.setNoise(modes[(cur + 1) % modes.size])
-            }
+        // Verbunden: Geräuschmodus direkt wählbar, sonst ein Verbinden-Knopf
+        val bottom = FrameLayout(context)
+        val seg = noiseSelector(airpods, short = true)
+        val connect = glassButton("Verbinden", true) { airpods.connectAudio() }
+        bottom.addView(seg, FrameLayout.LayoutParams(MATCH, WRAP))
+        bottom.addView(connect, FrameLayout.LayoutParams(MATCH, WRAP))
+        bottom.bind(airpods.audioConnected) { c ->
+            seg.visibility = if (c) View.VISIBLE else View.GONE
+            connect.visibility = if (c) View.GONE else View.VISIBLE
         }
-        val refresh = {
-            b.text = if (!airpods.audioConnected.value) "Verbinden" else airpods.noise.value?.label ?: "Modus wechseln"
-        }
-        b.bind(airpods.noise) { refresh() }
-        b.bind(airpods.audioConnected) { refresh() }
-        addView(b, lp())
+        addView(bottom, lp())
     }
     WidgetSize.M -> glassCard(20).apply {
-        addView(airPodsHeader(airpods, onSetup))
+        addView(airPodsHeader(airpods, onSetup, compact = false))
         addView(flexSpace())
-        addView(row(batteryRow(airpods).also { it.layoutParams = lp(0, WRAP, 1f) }, connectButton(airpods), spacingDp = 10))
+        addView(
+            row(
+                ringRow(airpods, 62).also { it.layoutParams = lp(0, WRAP, 1f) },
+                connectButton(airpods, highlighted = false),
+                spacingDp = 12,
+            ),
+        )
         addView(flexSpace())
-        addView(noiseSelector(airpods))
+        addView(noiseSelector(airpods, short = false))
     }
     WidgetSize.L -> {
         val card = glassCard(20)
-        card.addView(airPodsHeader(airpods, onSetup))
+        card.addView(airPodsHeader(airpods, onSetup, compact = false))
         val content = column()
-        content.addView(batteryRow(airpods), lp().margins(t = dp(6)))
+        content.addView(ringRow(airpods, 76), lp().margins(t = dp(10)))
         val ctrl = glassButton("Steuerung verbinden") { airpods.openControl() }
         ctrl.bind(airpods.controlReady) { ctrl.visibility = if (it) View.GONE else View.VISIBLE }
-        content.addView(row(connectButton(airpods), ctrl, spacingDp = 10), lp().margins(t = dp(16)))
+        content.addView(row(connectButton(airpods, highlighted = false), ctrl, spacingDp = 10), lp().margins(t = dp(18)))
         content.addView(label("Geräuschkontrolle", 14f, C.TEXT2, bold = true), lp().margins(t = dp(18)))
-        content.addView(noiseSelector(airpods), lp().margins(t = dp(8)))
+        content.addView(noiseSelector(airpods, short = false), lp().margins(t = dp(8)))
 
         val strengthLabel = label("", 13f, C.TEXT2)
         val strength = GlassSlider(this, 34) { airpods.setAdaptiveStrength((it * 100).roundToInt()) }

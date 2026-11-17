@@ -721,12 +721,18 @@ class PowerButton(context: Context, sizeDp: Int, onClick: () -> Unit) : View(con
 
 // ------------------------------------------------------------------ Segment-Auswahl (mit gleitender Pille)
 
-class Segmented(context: Context, private val labels: List<String>, var onSelect: (Int) -> Unit) : View(context) {
+class Segmented(
+    context: Context,
+    private val labels: List<String>,
+    textSp: Float = 14f,
+    private val heightDp: Int = 50,
+    var onSelect: (Int) -> Unit,
+) : View(context) {
     private val pill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = C.white(0.92f) }
     private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         typeface = Fonts.medium
         textAlign = Paint.Align.CENTER
-        textSize = context.dpf(14) * context.resources.configuration.fontScale
+        textSize = context.dpf(textSp) * context.resources.configuration.fontScale
     }
     private val rect = RectF()
     private var pillPos = -1f
@@ -761,7 +767,7 @@ class Segmented(context: Context, private val labels: List<String>, var onSelect
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        setMeasuredDimension(MeasureSpec.getSize(widthMeasureSpec), dp(50))
+        setMeasuredDimension(MeasureSpec.getSize(widthMeasureSpec), dp(heightDp))
     }
 
     override fun setEnabled(enabled: Boolean) {
@@ -797,66 +803,143 @@ class Segmented(context: Context, private val labels: List<String>, var onSelect
     }
 }
 
-// ------------------------------------------------------------------ Akku-Anzeige
+// ------------------------------------------------------------------ Akku-Ring (wie das iOS-Batterie-Widget)
 
-/** Kleine Batterie-Kapsel mit Füllstand und Blitz beim Laden. */
-class BatteryView(context: Context) : View(context) {
+/** Runder Akku-Ring mit AirPod- bzw. Case-Symbol in der Mitte. */
+class BatteryRing(context: Context, private val part: Part) : View(context) {
+    enum class Part { LEFT, RIGHT, CASE }
+
     var percent: Int? = null
         set(v) {
-            field = v
-            invalidate()
+            if (field != v) {
+                animateTo(v)
+                field = v
+            }
         }
     var charging = false
         set(v) {
             field = v
             invalidate()
         }
-    private val frame = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    var inEar = false
+        set(v) {
+            field = v
+            invalidate()
+        }
+
+    private var shown = 0f
+    private var anim: ValueAnimator? = null
+    private val track = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        color = C.white(0.45f)
+        color = C.white(0.13f)
     }
-    private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val bolt = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+    private val arc = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val glyph = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val badge = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val oval = RectF()
     private val r = RectF()
     private val path = Path()
 
-    init {
-        layoutParams = lp(dp(30), dp(14))
+    private fun animateTo(v: Int?) {
+        anim?.cancel()
+        anim = ValueAnimator.ofFloat(shown, (v ?: 0) / 100f).apply {
+            duration = 600
+            interpolator = EASE_OUT
+            addUpdateListener {
+                shown = it.animatedValue as Float
+                invalidate()
+            }
+            start()
+        }
     }
 
     override fun onDraw(canvas: Canvas) {
-        val w = width.toFloat()
-        val h = height.toFloat()
-        val sw = dp(1.2f).toFloat()
-        frame.strokeWidth = sw
-        val bodyW = w - dp(3)
-        r.set(sw / 2, sw / 2, bodyW - sw / 2, h - sw / 2)
-        canvas.drawRoundRect(r, h * 0.3f, h * 0.3f, frame)
-        r.set(bodyW, h * 0.32f, w, h * 0.68f)
-        fill.color = C.white(0.45f)
-        canvas.drawRoundRect(r, dp(1).toFloat(), dp(1).toFloat(), fill)
-        val p = percent ?: return
-        fill.color = when {
-            charging -> C.GREEN
-            p <= 20 -> C.RED
-            else -> C.white(0.92f)
+        val s = min(width, height).toFloat()
+        val cx = width / 2f
+        val cy = height / 2f
+        val sw = s * 0.085f
+        val rad = s / 2 - sw / 2 - dp(1)
+        track.strokeWidth = sw
+        arc.strokeWidth = sw
+        canvas.drawCircle(cx, cy, rad, track)
+        val p = percent
+        if (p != null && shown > 0f) {
+            arc.color = when {
+                charging -> C.GREEN
+                p <= 20 -> C.RED
+                else -> C.white(0.95f)
+            }
+            oval.set(cx - rad, cy - rad, cx + rad, cy + rad)
+            canvas.drawArc(oval, -90f, 360f * shown, false, arc)
         }
-        val inset = sw + dp(1.2f)
-        r.set(inset, inset, inset + (bodyW - inset * 2) * (p / 100f), h - inset)
-        canvas.drawRoundRect(r, h * 0.18f, h * 0.18f, fill)
-        if (charging) {
-            val cx = bodyW / 2
-            val cy = h / 2
-            val s = h * 0.9f
+        // Symbol in der Mitte
+        glyph.color = if (p == null) C.white(0.35f) else C.white(0.9f)
+        val g = s * 0.62f
+        when (part) {
+            Part.LEFT -> drawBud(canvas, cx, cy, g, mirror = false)
+            Part.RIGHT -> drawBud(canvas, cx, cy, g, mirror = true)
+            Part.CASE -> {
+                r.set(cx - g * 0.36f, cy - g * 0.27f, cx + g * 0.36f, cy + g * 0.27f)
+                canvas.drawRoundRect(r, g * 0.12f, g * 0.12f, glyph)
+                glyph.color = 0xFF1C1C1E.toInt()
+                glyph.strokeWidth = g * 0.04f
+                canvas.drawLine(cx - g * 0.34f, cy - g * 0.08f, cx + g * 0.34f, cy - g * 0.08f, glyph)
+            }
+        }
+        // Laden: kleiner grüner Blitz unten rechts
+        if (charging && p != null) {
+            val bx = cx + rad * 0.72f
+            val by = cy + rad * 0.72f
+            val br = s * 0.13f
+            badge.color = C.GREEN
+            canvas.drawCircle(bx, by, br, badge)
+            badge.color = Color.BLACK
             path.reset()
-            path.moveTo(cx + s * 0.08f, cy - s * 0.45f)
-            path.lineTo(cx - s * 0.22f, cy + s * 0.06f)
-            path.lineTo(cx, cy + s * 0.06f)
-            path.lineTo(cx - s * 0.08f, cy + s * 0.45f)
-            path.lineTo(cx + s * 0.22f, cy - s * 0.06f)
-            path.lineTo(cx, cy - s * 0.06f)
+            path.moveTo(bx + br * 0.15f, by - br * 0.65f)
+            path.lineTo(bx - br * 0.4f, by + br * 0.1f)
+            path.lineTo(bx - br * 0.02f, by + br * 0.1f)
+            path.lineTo(bx - br * 0.15f, by + br * 0.65f)
+            path.lineTo(bx + br * 0.4f, by - br * 0.1f)
+            path.lineTo(bx + br * 0.02f, by - br * 0.1f)
             path.close()
-            canvas.drawPath(path, bolt)
+            canvas.drawPath(path, badge)
+        }
+        // Im Ohr: blauer Punkt oben rechts
+        if (inEar) {
+            badge.color = C.BLUE
+            canvas.drawCircle(cx + rad * 0.72f, cy - rad * 0.72f, s * 0.07f, badge)
+        }
+    }
+
+    /** Ein AirPod: runder Kopf + Stiel. */
+    private fun drawBud(canvas: Canvas, cx: Float, cy: Float, g: Float, mirror: Boolean) {
+        canvas.save()
+        if (mirror) canvas.scale(-1f, 1f, cx, cy)
+        canvas.drawCircle(cx - g * 0.07f, cy - g * 0.16f, g * 0.19f, glyph)
+        r.set(cx + g * 0.0f, cy - g * 0.16f, cx + g * 0.13f, cy + g * 0.36f)
+        canvas.drawRoundRect(r, g * 0.065f, g * 0.065f, glyph)
+        canvas.restore()
+    }
+}
+
+/** Kleines AirPods-Symbol (zwei Ohrhörer) für Kopfzeilen. */
+class AirPodsGlyph(context: Context) : View(context) {
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = C.TEXT }
+    private val r = RectF()
+
+    override fun onDraw(canvas: Canvas) {
+        val s = min(width, height).toFloat()
+        val cy = height / 2f
+        for ((i, cx) in listOf(width * 0.3f, width * 0.7f).withIndex()) {
+            canvas.save()
+            if (i == 1) canvas.scale(-1f, 1f, cx, cy)
+            canvas.drawCircle(cx - s * 0.04f, cy - s * 0.17f, s * 0.15f, p)
+            r.set(cx + s * 0.02f, cy - s * 0.17f, cx + s * 0.12f, cy + s * 0.32f)
+            canvas.drawRoundRect(r, s * 0.05f, s * 0.05f, p)
+            canvas.restore()
         }
     }
 }

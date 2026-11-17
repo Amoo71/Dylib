@@ -167,8 +167,8 @@ class BoardStore(context: Context) {
 
     private fun defaults(): List<BoardItem> = listOf(
         BoardItem.Widget(newId(), WidgetKind.CLOCK, WidgetSize.M),
-        BoardItem.Widget(newId(), WidgetKind.LIGHT, WidgetSize.M),
-        BoardItem.Widget(newId(), WidgetKind.AIRPODS, WidgetSize.M),
+        BoardItem.Widget(newId(), WidgetKind.LIGHT, WidgetSize.S),
+        BoardItem.Widget(newId(), WidgetKind.AIRPODS, WidgetSize.S),
     )
 
     private fun newId() = UUID.randomUUID().toString().take(8)
