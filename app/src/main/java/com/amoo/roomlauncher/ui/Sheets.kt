@@ -3,12 +3,15 @@ package com.amoo.roomlauncher.ui
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.GradientDrawable
 import android.provider.Settings
 import android.text.Editable
 import android.text.TextWatcher
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.inputmethod.InputMethodManager
 import android.widget.BaseAdapter
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -22,6 +25,7 @@ import com.amoo.roomlauncher.Prefs
 import com.amoo.roomlauncher.RoomApp
 import com.amoo.roomlauncher.airpods.AirPodsController
 import com.amoo.roomlauncher.apps.AppEntry
+import com.amoo.roomlauncher.ble.BleHub
 import com.amoo.roomlauncher.board.BoardItem
 import com.amoo.roomlauncher.board.WidgetKind
 import com.amoo.roomlauncher.govee.GoveeController
@@ -34,16 +38,18 @@ import kotlin.math.roundToInt
 
 // ------------------------------------------------------------------ Grundgerüst
 
-/** Modales Glas-Panel über abgedunkeltem Hintergrund. */
+/** Modales Milchglas-Panel über abgedunkeltem Hintergrund, mit Ein-/Ausblend-Animation. */
 class Sheet(context: Context, title: String, fillHeight: Boolean, val onDismiss: () -> Unit) : FrameLayout(context) {
     val body: LinearLayout
+    private val panel: LinearLayout
+    private var closing = false
 
     init {
-        setBackgroundColor(0x99000000.toInt())
+        setBackgroundColor(0x8C000000.toInt())
         isClickable = true
         setOnClickListener { onDismiss() }
-        val panel = context.column().apply {
-            background = GlassDrawable(context, 34f, 1.2f, 0xE010121A.toInt())
+        panel = context.column().apply {
+            background = GlassDrawable(context, 34f, 1.2f, 0xB80E1016.toInt())
             setPadding(dp(26), dp(24), dp(26), dp(22))
             isClickable = true
         }
@@ -55,17 +61,34 @@ class Sheet(context: Context, title: String, fillHeight: Boolean, val onDismiss:
         body = context.column()
         panel.addView(body, lp(MATCH, if (fillHeight) 0 else WRAP, if (fillHeight) 1f else 0f).margins(t = dp(16)))
         val dm = resources.displayMetrics
-        val w = minOf(dp(860), (dm.widthPixels * 0.94f).toInt())
+        val w = minOf(dp(880), (dm.widthPixels * 0.94f).toInt())
         val h = if (fillHeight) (dm.heightPixels * 0.9f).toInt() else WRAP
         addView(panel, LayoutParams(w, h, Gravity.CENTER))
-        if (!fillHeight) panel.layoutParams = (panel.layoutParams as LayoutParams).apply { height = WRAP }
+    }
+
+    fun animateIn() {
+        alpha = 0f
+        panel.scaleX = 0.94f
+        panel.scaleY = 0.94f
+        panel.translationY = dp(24).toFloat()
+        animate().alpha(1f).setDuration(180).setInterpolator(EASE_OUT).start()
+        panel.animate().scaleX(1f).scaleY(1f).translationY(0f).setDuration(320).setInterpolator(SPRING)
+            .withEndAction { Backdrop.invalidateAll() }.start()
+    }
+
+    fun animateOut(then: () -> Unit) {
+        if (closing) return
+        closing = true
+        (context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager)?.hideSoftInputFromWindow(windowToken, 0)
+        panel.animate().scaleX(0.96f).scaleY(0.96f).translationY(dp(12).toFloat()).setDuration(160).setInterpolator(EASE_OUT).start()
+        animate().alpha(0f).setDuration(160).withEndAction(then).start()
     }
 }
 
-private fun Context.sectionTitle(text: String): TextView = label(text, 15f, C.TEXT2, bold = true)
+private fun Context.sectionTitle(text: String): TextView = label(text.uppercase(), 12.5f, C.TEXT3, bold = true)
 
 private fun LinearLayout.section(text: String) {
-    addView(context.sectionTitle(text), lp().margins(t = context.dp(18), b = context.dp(10)))
+    addView(context.sectionTitle(text), lp().margins(t = context.dp(22), b = context.dp(10)))
 }
 
 private fun Context.searchField(hint: String, onChange: (String) -> Unit): EditText = EditText(this).apply {
@@ -74,7 +97,7 @@ private fun Context.searchField(hint: String, onChange: (String) -> Unit): EditT
     setTextColor(C.TEXT)
     textSize = 16f
     isSingleLine = true
-    background = GlassDrawable(context, 20f, 0.8f)
+    background = GlassDrawable(context, 20f, 0.8f, frosted = false)
     setPadding(dp(18), dp(12), dp(18), dp(12))
     addTextChangedListener(object : TextWatcher {
         override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
@@ -86,20 +109,27 @@ private fun Context.searchField(hint: String, onChange: (String) -> Unit): EditT
 /** Slider-Zeile mit Beschriftung und Wertanzeige. */
 private fun Context.sliderRow(title: String, value: Float, format: (Float) -> String, onChange: (Float) -> Unit): LinearLayout {
     val name = label(title, 15f).apply { layoutParams = lp(dp(170), WRAP) }
-    val shown = label(format(value), 14f, C.TEXT2).apply { layoutParams = lp(dp(64), WRAP).margins(l = dp(12)) }
-    val slider = GlassSlider(this, 34) {
+    val shown = label(format(value), 14f, C.TEXT2).apply {
+        gravity = Gravity.END
+        layoutParams = lp(dp(64), WRAP).margins(l = dp(12))
+    }
+    val slider = GlassSlider(this, 32) {
         shown.text = format(it)
         onChange(it)
     }.apply {
         this.value = value
         layoutParams = lp(0, WRAP, 1f)
     }
-    return row(name, slider, shown).apply { setPadding(0, dp(5), 0, dp(5)) }
+    return row(name, slider, shown).apply { setPadding(0, dp(6), 0, dp(6)) }
 }
 
-private fun Context.switchRow(title: String, checked: Boolean, onChange: (Boolean) -> Unit): LinearLayout {
-    val t = label(title, 16f).apply { layoutParams = lp(0, WRAP, 1f) }
-    return row(t, GlassSwitch(this, checked, onChange)).apply { setPadding(0, dp(6), 0, dp(6)) }
+private fun Context.switchRow(title: String, checked: Boolean, subtitle: String? = null, onChange: (Boolean) -> Unit): LinearLayout {
+    val text = column().apply {
+        addView(label(title, 16f))
+        if (subtitle != null) addView(label(subtitle, 12.5f, C.TEXT3, lines = 2), lp().margins(t = dp(3)))
+        layoutParams = lp(0, WRAP, 1f).margins(r = dp(12))
+    }
+    return row(text, GlassSwitch(this, checked, onChange)).apply { setPadding(0, dp(8), 0, dp(8)) }
 }
 
 private fun Context.chipGroup(labels: List<String>, selected: Int, onSelect: (Int) -> Unit): View {
@@ -113,10 +143,43 @@ private fun Context.chipGroup(labels: List<String>, selected: Int, onSelect: (In
     return hScroll(*chips.toTypedArray(), spacingDp = 10)
 }
 
+/** Listeneintrag auf Glas (für Geräte-Listen). */
+private fun Context.listItem(title: String, subtitle: String, badge: String?, badgeColor: Int, strong: Boolean, onClick: () -> Unit): View {
+    val info = column().apply {
+        addView(label(title, 17f, bold = strong))
+        addView(label(subtitle, 12f, C.TEXT3), lp().margins(t = dp(3)))
+        layoutParams = lp(0, WRAP, 1f)
+    }
+    return row(info).apply {
+        if (badge != null) addView(label(badge, 13f, badgeColor, bold = true))
+        background = GlassDrawable(context, 18f, if (strong) 1.4f else 0.8f, frosted = false)
+        setPadding(dp(16), dp(13), dp(16), dp(13))
+        pressable(onClick = onClick)
+    }
+}
+
+/** Hinweis, wenn der Standort aus ist – ohne ihn findet Android keine BLE-Geräte. */
+private fun Context.locationHint(): View? {
+    if (BleHub.locationEnabled(this)) return null
+    return row(
+        label("Standort ist aus – ohne ihn findet Android keine Bluetooth-Geräte.", 13.5f, C.ORANGE, lines = 2).apply {
+            layoutParams = lp(0, WRAP, 1f)
+        },
+        glassButton("Einschalten") {
+            startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        },
+        spacingDp = 12,
+    ).apply {
+        background = RoundDrawable(context, 18f, 0x26FF9F0A, 0x55FF9F0A)
+        setPadding(dp(16), dp(10), dp(10), dp(10))
+    }
+}
+
 // ------------------------------------------------------------------ Alle Apps
 
 fun Context.appsSheet(app: RoomApp, onDismiss: () -> Unit): Sheet {
     val sheet = Sheet(this, "Apps", true, onDismiss)
+    val style = app.iconStyle.value
     var all: List<AppEntry> = app.apps.apps.value
     var shown = all
     val adapter = object : BaseAdapter() {
@@ -125,23 +188,22 @@ fun Context.appsSheet(app: RoomApp, onDismiss: () -> Unit): Sheet {
         override fun getItemId(position: Int) = position.toLong()
         override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
             val e = shown[position]
-            val v = (convertView as? LinearLayout) ?: column().apply {
+            val v = column().apply {
                 gravity = Gravity.CENTER_HORIZONTAL
                 setPadding(dp(4), dp(10), dp(4), dp(10))
-                addView(ImageView(context), lp(dp(60), dp(60)).apply { gravity = Gravity.CENTER_HORIZONTAL })
-                addView(label("", 13f).apply { gravity = Gravity.CENTER }, lp().margins(t = dp(6)))
+                addView(AppIconTile(context, e.icon, style), lp(dp(62), dp(62)).apply { gravity = Gravity.CENTER_HORIZONTAL })
+                addView(label(e.label, 13f).apply { gravity = Gravity.CENTER }, lp().margins(t = dp(7)))
             }
-            (v.getChildAt(0) as ImageView).setImageBitmap(e.icon)
-            (v.getChildAt(1) as TextView).text = e.label
             return v
         }
     }
     val grid = GridView(this).apply {
         numColumns = GridView.AUTO_FIT
-        columnWidth = dp(110)
+        columnWidth = dp(112)
         stretchMode = GridView.STRETCH_COLUMN_WIDTH
         verticalSpacing = dp(6)
-        selector = android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
+        selector = ColorDrawable(Color.TRANSPARENT)
+        isVerticalScrollBarEnabled = false
         this.adapter = adapter
         setOnItemClickListener { _, _, pos, _ ->
             onDismiss()
@@ -158,7 +220,7 @@ fun Context.appsSheet(app: RoomApp, onDismiss: () -> Unit): Sheet {
         shown = if (q.isBlank()) all else all.filter { it.label.contains(q.trim(), true) }
         adapter.notifyDataSetChanged()
     })
-    sheet.body.addView(label("Tippen = öffnen · gedrückt halten = aufs Board legen", 12f, C.TEXT3), lp().margins(t = dp(8), b = dp(8)))
+    sheet.body.addView(label("Tippen = öffnen · gedrückt halten = aufs Board legen", 12f, C.TEXT3), lp().margins(t = dp(10), b = dp(6)))
     sheet.body.addView(grid, lp(MATCH, 0, 1f))
     grid.bind(app.apps.apps) {
         all = it
@@ -200,10 +262,12 @@ fun MainActivity.settingsSheet(
             SettingsTab.WIDGETS -> scroll(widgetsTab(app))
             SettingsTab.APPS -> appsTab(app)
             SettingsTab.DOCK -> scroll(dockTab(app))
-            SettingsTab.DEVICES -> scroll(devicesTab(onOpenGovee, onOpenAirPods))
+            SettingsTab.DEVICES -> scroll(devicesTab(app, onOpenGovee, onOpenAirPods))
             SettingsTab.GENERAL -> scroll(generalTab(app, onDismiss))
         }
+        v.alpha = 0f
         content.addView(v, FrameLayout.LayoutParams(MATCH, MATCH))
+        v.animate().alpha(1f).setDuration(160).start()
     }
     val tabs = SettingsTab.entries
     sheet.body.addView(chipGroup(tabs.map { it.label }, tabs.indexOf(initial)) { show(tabs[it]) })
@@ -228,14 +292,12 @@ private fun MainActivity.backgroundTab(app: RoomApp): View {
             BgType.RAIN -> rainControls(dynamic, app)
             BgType.BLACK -> bubbleControls(dynamic, app, allowThemeColor = false)
             BgType.COLORED -> {
-                dynamic.section("Farben (1 = einfarbig, mehrere = Verlauf, max. 4)")
+                dynamic.section("Farben – eine = einfarbig, mehrere = Verlauf (max. 4)")
                 val preview = View(this).apply { layoutParams = lp(MATCH, dp(26)).margins(t = dp(12)) }
                 fun paintPreview() {
                     val cols = theme().colors
                     preview.background = if (cols.size > 1) {
-                        android.graphics.drawable.GradientDrawable(
-                            android.graphics.drawable.GradientDrawable.Orientation.LEFT_RIGHT, cols.toIntArray(),
-                        ).apply { cornerRadius = dpf(13) }
+                        GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, cols.toIntArray()).apply { cornerRadius = dpf(13) }
                     } else {
                         RoundDrawable(this, 13f, cols.firstOrNull() ?: Color.BLACK)
                     }
@@ -325,10 +387,10 @@ private fun MainActivity.backgroundTab(app: RoomApp): View {
     rebuild()
     root.section("Liquid Glass")
     root.addView(
-        label(
-            "Das Glas ist durchsichtig: Regen, Blasen und Farben schimmern durch alle Widgets und den Dock.",
-            13f, C.TEXT3, lines = 3,
-        ),
+        switchRow(
+            "Milchglas", theme().glassBlur,
+            "Widgets, Dock und Panels zeigen den Hintergrund verschwommen – wie bei iOS. Aus = klares Glas, spart Leistung.",
+        ) { on -> update { it.copy(glassBlur = on) } },
     )
     root.addView(spacer(20))
     return root
@@ -378,7 +440,7 @@ private fun Context.bubbleControls(parent: LinearLayout, app: RoomApp, allowThem
 
 private fun Context.widgetsTab(app: RoomApp): View {
     val root = column()
-    root.addView(label("Widget-Größe antippen, um es zum Board hinzuzufügen.", 14f, C.TEXT2, lines = 2))
+    root.addView(label("Größe antippen, um das Widget aufs Board zu legen.", 14f, C.TEXT2, lines = 2))
     WidgetKind.entries.forEach { kind ->
         val info = column().apply {
             addView(label(kind.title, 18f, bold = true))
@@ -402,14 +464,14 @@ private fun Context.widgetsTab(app: RoomApp): View {
             }
         }
         val r = row(info, *chips.toTypedArray(), spacingDp = 8).apply {
-            background = GlassDrawable(context, 20f, 0.8f)
+            background = GlassDrawable(context, 20f, 0.8f, frosted = false)
             setPadding(dp(16), dp(16), dp(16), dp(16))
         }
         root.addView(r, lp().margins(t = dp(12)))
     }
     root.addView(
         label(
-            "Tipp: Auf dem Board ein Widget gedrückt halten → ziehen zum Verschieben, „Größe“ antippen zum Ändern, „–“ zum Entfernen.",
+            "Tipp: Auf dem Board etwas gedrückt halten → ziehen zum Verschieben, „Größe“ zum Ändern, „–“ zum Entfernen.",
             13f, C.TEXT3, lines = 3,
         ),
         lp().margins(t = dp(14)),
@@ -449,7 +511,7 @@ private fun Context.appsTab(app: RoomApp): View {
                 if (inDock) app.board.removeFromDock(e.key) else app.board.addToDock(e.key)
                 notifyDataSetChanged()
             }
-            return row(icon, name, boardChip, dockChip, spacingDp = 0).apply {
+            return row(icon, name, boardChip, dockChip).apply {
                 (dockChip.layoutParams as LinearLayout.LayoutParams).leftMargin = dp(8)
                 setPadding(0, dp(6), 0, dp(6))
                 descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
@@ -467,7 +529,8 @@ private fun Context.appsTab(app: RoomApp): View {
     })
     val lv = ListView(this).apply {
         divider = null
-        selector = android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
+        selector = ColorDrawable(Color.TRANSPARENT)
+        isVerticalScrollBarEnabled = false
         this.adapter = adapter
     }
     root.addView(lv, lp(MATCH, 0, 1f).margins(t = dp(10)))
@@ -479,7 +542,7 @@ private fun Context.appsTab(app: RoomApp): View {
 
 private fun Context.dockTab(app: RoomApp): View {
     val root = column()
-    root.addView(switchRow("Dock anzeigen", app.board.dockEnabled.value) { app.board.setDockEnabled(it) })
+    root.addView(switchRow("Dock anzeigen", app.board.dockEnabled.value, "Die Glas-Leiste unten mit deinen Lieblings-Apps.") { app.board.setDockEnabled(it) })
     val listBox = column()
     root.section("Apps im Dock (max. 10)")
     root.addView(listBox)
@@ -510,18 +573,35 @@ private fun Context.dockTab(app: RoomApp): View {
 
 // ---- Geräte
 
-private fun Context.devicesTab(onOpenGovee: () -> Unit, onOpenAirPods: () -> Unit): View = column().apply {
-    addView(label("Bluetooth-Geräte einrichten", 14f, C.TEXT2))
-    addView(
-        row(glassButton("Govee-Licht einrichten", true, onOpenGovee), glassButton("AirPods einrichten", true, onOpenAirPods), spacingDp = 12),
-        lp().margins(t = dp(14)),
-    )
+private fun Context.devicesTab(app: RoomApp, onOpenGovee: () -> Unit, onOpenAirPods: () -> Unit): View = column().apply {
+    locationHint()?.let { addView(it, lp().margins(b = dp(14))) }
+    val light = app.govee.deviceName.value
+    addView(listItem("Govee-Licht", light ?: "nicht eingerichtet", "Einrichten ›", C.BLUE, light != null, onOpenGovee))
+    addView(spacer(10))
+    val pods = app.airpods.deviceName.value
+    addView(listItem("AirPods", pods ?: "nicht ausgewählt", "Einrichten ›", C.BLUE, pods != null, onOpenAirPods))
 }
 
 // ---- Allgemein
 
 private fun MainActivity.generalTab(app: RoomApp, onDismiss: () -> Unit): View {
     val root = column()
+    root.addView(sectionTitle("Darstellung"), lp().margins(b = dp(6)))
+    root.addView(
+        row(
+            label("App-Icons", 16f).apply { layoutParams = lp(0, WRAP, 1f) },
+            chipGroup(IconStyle.labels, app.iconStyle.value) { i ->
+                app.prefs.iconStyle = i
+                app.iconStyle.value = i
+            },
+        ).apply { setPadding(0, dp(8), 0, dp(8)) },
+    )
+    root.addView(
+        switchRow("Flüssige Animationen (60 fps)", app.smooth.value, "Aus = 30 fps, schont ein älteres Tablet.") {
+            app.prefs.smooth = it
+            app.smooth.value = it
+        },
+    )
     root.addView(switchRow("Bildschirm immer an", app.prefs.keepScreenOn) {
         app.prefs.keepScreenOn = it
         applyKeepScreenOn(it)
@@ -539,7 +619,7 @@ private fun MainActivity.generalTab(app: RoomApp, onDismiss: () -> Unit): View {
             label("${l.label} öffnen", 17f, bold = true),
             spacingDp = 14,
         ).apply {
-            background = GlassDrawable(context, 20f, 0.8f)
+            background = GlassDrawable(context, 20f, 0.8f, frosted = false)
             setPadding(dp(12), dp(12), dp(12), dp(12))
             pressable {
                 onDismiss()
@@ -564,18 +644,16 @@ private fun MainActivity.generalTab(app: RoomApp, onDismiss: () -> Unit): View {
         lp().margins(t = dp(14)),
     )
     val version = runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrNull() ?: ""
-    root.addView(label("Room Launcher $version", 12f, C.TEXT3), lp().margins(t = dp(20)))
+    root.addView(label("Room Launcher $version", 12f, C.TEXT3), lp().margins(t = dp(22)))
     return root
 }
 
 // ------------------------------------------------------------------ Govee einrichten
 
 fun Context.goveeSheet(govee: GoveeController, prefs: Prefs, onDismiss: () -> Unit): Sheet {
-    val sheet = Sheet(this, "Govee-Licht einrichten", true, {
-        govee.stopScan()
-        onDismiss()
-    })
+    val sheet = Sheet(this, "Govee-Licht einrichten", true, onDismiss)
     val root = column()
+    locationHint()?.let { root.addView(it, lp().margins(b = dp(14))) }
     val current = label("", 15f, C.TEXT2)
     current.bind(govee.deviceName) { current.text = "Aktuell: ${it ?: "keins"}" }
     root.addView(current)
@@ -585,34 +663,24 @@ fun Context.goveeSheet(govee: GoveeController, prefs: Prefs, onDismiss: () -> Un
     )
     val head = label("Suche Geräte…", 17f, bold = true).apply { layoutParams = lp(0, WRAP, 1f) }
     head.bind(govee.scanning) { head.text = if (it) "Suche Geräte…" else "Gefundene Geräte" }
-    root.addView(row(head, glassButton("Neu suchen") { govee.startScan() }), lp().margins(t = dp(14)))
+    root.addView(row(head, glassButton("Neu suchen") { govee.startScan() }), lp().margins(t = dp(16)))
     val err = label("", 13f, C.RED, lines = 2)
     err.bind(govee.lastError) {
         err.text = it.orEmpty()
         err.visibility = if (it == null) View.GONE else View.VISIBLE
     }
-    root.addView(err)
+    root.addView(err, lp().margins(t = dp(6)))
     val list = column()
     root.addView(list, lp().margins(t = dp(10)))
     list.bind(govee.found) { found ->
         list.removeAllViews()
         if (found.isEmpty()) list.addView(label("Noch nichts gefunden. Ist das Licht an und in der Nähe?", 14f, C.TEXT3, lines = 2))
         found.take(25).forEach { f ->
-            val info = column().apply {
-                addView(label(f.name, 17f, bold = f.likelyGovee))
-                addView(label("${f.address} · ${f.rssi} dBm", 12f, C.TEXT3))
-                layoutParams = lp(0, WRAP, 1f)
+            val item = listItem(f.name, "${f.address} · ${f.rssi} dBm", if (f.likelyGovee) "Govee" else null, C.GREEN, f.likelyGovee) {
+                govee.select(f)
+                sheet.onDismiss()
             }
-            val r = row(info).apply {
-                if (f.likelyGovee) addView(label("Govee", 13f, C.GREEN, bold = true))
-                background = GlassDrawable(context, 18f, if (f.likelyGovee) 1.4f else 0.7f)
-                setPadding(dp(16), dp(12), dp(16), dp(12))
-                pressable {
-                    govee.select(f)
-                    sheet.onDismiss()
-                }
-            }
-            list.addView(r, lp().margins(b = dp(8)))
+            list.addView(item, lp().margins(b = dp(8)))
         }
     }
     root.section("Farb-Befehl (modellabhängig)")
@@ -631,7 +699,10 @@ fun Context.goveeSheet(govee: GoveeController, prefs: Prefs, onDismiss: () -> Un
         lp().margins(t = dp(12)),
     )
     sheet.body.addView(scroll(root), lp(MATCH, 0, 1f))
-    govee.startScan()
+    sheet.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+        override fun onViewAttachedToWindow(v: View) = govee.startScan()
+        override fun onViewDetachedFromWindow(v: View) = govee.stopScan()
+    })
     return sheet
 }
 
@@ -642,7 +713,7 @@ fun Context.airPodsSheet(airpods: AirPodsController, prefs: Prefs, onDismiss: ()
     val root = column()
     root.addView(
         label(
-            "AirPods zuerst einmalig in den Android-Bluetooth-Einstellungen koppeln (Case öffnen, Knopf hinten gedrückt halten). Danach hier auswählen.",
+            "AirPods einmalig in den Android-Bluetooth-Einstellungen koppeln (Case öffnen, Knopf hinten gedrückt halten). Danach hier auswählen.",
             15f, C.TEXT2, lines = 3,
         ),
     )
@@ -653,21 +724,11 @@ fun Context.airPodsSheet(airpods: AirPodsController, prefs: Prefs, onDismiss: ()
         if (devices.isEmpty()) list.addView(label("Keine gekoppelten Geräte gefunden.", 14f, C.TEXT3))
         devices.forEach { d ->
             val sel = d.address == prefs.airpodsAddress
-            val info = column().apply {
-                addView(label(d.name, 17f, bold = true))
-                addView(label(d.address, 12f, C.TEXT3))
-                layoutParams = lp(0, WRAP, 1f)
+            val item = listItem(d.name, d.address, if (sel) "Ausgewählt" else null, C.BLUE, sel) {
+                airpods.selectDevice(d.address)
+                onDismiss()
             }
-            val r = row(info).apply {
-                if (sel) addView(label("Ausgewählt", 13f, C.BLUE, bold = true))
-                background = GlassDrawable(context, 18f, if (sel) 1.6f else 0.8f)
-                setPadding(dp(16), dp(12), dp(16), dp(12))
-                pressable {
-                    airpods.selectDevice(d.address)
-                    onDismiss()
-                }
-            }
-            list.addView(r, lp().margins(b = dp(8)))
+            list.addView(item, lp().margins(b = dp(8)))
         }
     }
     root.addView(
@@ -684,9 +745,10 @@ fun Context.airPodsSheet(airpods: AirPodsController, prefs: Prefs, onDismiss: ()
     root.addView(list)
     root.addView(
         label(
-            "Akku und „im Ohr“ kommen aus Bluetooth-LE-Signalen. ANC/Transparenz nutzt Apples AAP-Protokoll – " +
-                "auf Android 4.4 lässt der Bluetooth-Stack diesen Kanal meist nicht zu; der Status steht im großen AirPods-Widget.",
-            13f, C.TEXT3, lines = 4,
+            "Akku und „im Ohr“ kommen aus Bluetooth-LE-Signalen (dafür muss der Standort an sein). " +
+                "ANC/Transparenz nutzt Apples AAP-Protokoll – ob der Bluetooth-Stack von Android 7 diesen Kanal zulässt, " +
+                "zeigt der Status im großen AirPods-Widget.",
+            13f, C.TEXT3, lines = 5,
         ),
         lp().margins(t = dp(14)),
     )

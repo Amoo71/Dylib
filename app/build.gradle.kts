@@ -9,10 +9,10 @@ android {
 
     defaultConfig {
         applicationId = "com.amoo.roomlauncher"
-        minSdk = 19
+        minSdk = 25
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.2.0"
+        versionCode = 4
+        versionName = "2.0.0"
     }
 
     // Fester Schlüssel im Repo, damit neue APKs sich über alte installieren lassen.
@@ -52,7 +52,7 @@ android {
 }
 
 dependencies {
-    // Bewusst ohne AndroidX/Compose: läuft so ab Android 4.4 (Galaxy Tab E).
+    // Bewusst ohne AndroidX/Compose: klassische Views sind auf dem Galaxy Tab E am flüssigsten.
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("org.lsposed.hiddenapibypass:hiddenapibypass:4.3")
 }

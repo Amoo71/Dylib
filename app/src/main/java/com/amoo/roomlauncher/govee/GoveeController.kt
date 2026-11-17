@@ -9,7 +9,6 @@ import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.content.Context
-import android.os.Build
 import com.amoo.roomlauncher.Prefs
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -86,6 +85,8 @@ class GoveeController(
 
     private var started = false
     private var reconnectJob: Job? = null
+    private var connectTimeout: Job? = null
+    private var failures = 0
     private var scanStopJob: Job? = null
 
     fun start() {
@@ -155,6 +156,7 @@ class GoveeController(
 
     fun select(device: FoundDevice) {
         stopScan()
+        failures = 0
         prefs.goveeAddress = device.address
         prefs.goveeName = device.name
         _deviceName.value = device.name
@@ -183,14 +185,22 @@ class GoveeController(
         _connection.value = Connection.CONNECTING
         _lastError.value = null
         try {
-            gatt = if (Build.VERSION.SDK_INT >= 23) {
-                device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
-            } else {
-                device.connectGatt(context, false, gattCallback)
-            }
+            gatt = device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
         } catch (e: SecurityException) {
             _connection.value = Connection.DISCONNECTED
             _lastError.value = "Bluetooth-Berechtigung fehlt"
+            return
+        }
+        // Manche Stacks melden sich bei einem ausgeschalteten Licht nie zurück.
+        connectTimeout?.cancel()
+        connectTimeout = scope.launch {
+            delay(15_000)
+            if (_connection.value == Connection.CONNECTING) {
+                _lastError.value = "Licht antwortet nicht – ist es eingeschaltet und in Reichweite?"
+                disconnectInternal()
+                _connection.value = Connection.DISCONNECTED
+                scheduleReconnect()
+            }
         }
     }
 
@@ -202,20 +212,40 @@ class GoveeController(
         writeAck?.complete(Unit)
     }
 
+    /** Wiederverbinden mit wachsender Pause (4 s … 60 s), damit ein ausgeschaltetes Licht nicht stresst. */
     private fun scheduleReconnect() {
         reconnectJob?.cancel()
         if (prefs.goveeAddress == null) return
+        val wait = (4000L shl failures.coerceAtMost(4)).coerceAtMost(60_000L)
+        failures++
         reconnectJob = scope.launch {
-            delay(4000)
+            delay(wait)
             if (_connection.value == Connection.DISCONNECTED) connect()
+        }
+    }
+
+    /** Sofort neu verbinden (z. B. Knopf "Jetzt verbinden"). */
+    fun reconnectNow() {
+        failures = 0
+        reconnectJob?.cancel()
+        if (_connection.value != Connection.CONNECTED) {
+            disconnectInternal()
+            _connection.value = Connection.DISCONNECTED
+            connect()
         }
     }
 
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
+            if (gatt !== g) {
+                // Callback einer alten, bereits verworfenen Verbindung
+                runCatching { g.close() }
+                return
+            }
             if (newState == BluetoothProfile.STATE_CONNECTED && status == BluetoothGatt.GATT_SUCCESS) {
                 g.discoverServices()
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED || status != BluetoothGatt.GATT_SUCCESS) {
+                connectTimeout?.cancel()
                 runCatching { g.close() }
                 if (gatt === g) {
                     gatt = null
@@ -228,6 +258,10 @@ class GoveeController(
         }
 
         override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
+            if (status != BluetoothGatt.GATT_SUCCESS) {
+                g.disconnect()
+                return
+            }
             val ch = g.getService(SERVICE_UUID)?.getCharacteristic(WRITE_UUID)
                 ?: g.services.flatMap { it.characteristics }.firstOrNull { it.uuid == WRITE_UUID }
             if (ch == null) {
@@ -248,6 +282,8 @@ class GoveeController(
                     }
                 }
             }
+            connectTimeout?.cancel()
+            failures = 0
             _connection.value = Connection.CONNECTED
             scope.launch {
                 delay(400)
@@ -274,8 +310,12 @@ class GoveeController(
         }
     }
 
+    /** Zeitpunkt der letzten eigenen Änderung – kurz danach keine (veralteten) Statusmeldungen übernehmen. */
+    @Volatile private var lastLocalChange = 0L
+
     private fun handleStatus(v: ByteArray) {
         if (v.size < 3 || v[0] != 0xAA.toByte()) return
+        if (System.currentTimeMillis() - lastLocalChange < 2000) return
         val b2 = v[2].toInt() and 0xFF
         when (v[1].toInt() and 0xFF) {
             0x01 -> _power.value = b2 == 0x01
@@ -292,6 +332,7 @@ class GoveeController(
     }
 
     private fun enqueue(key: String, bytes: ByteArray) {
+        if (!key.startsWith("q_") && key != "keepalive") lastLocalChange = System.currentTimeMillis()
         synchronized(pending) { pending[key] = bytes }
         when (_connection.value) {
             Connection.CONNECTED -> wake.trySend(Unit)
@@ -308,17 +349,23 @@ class GoveeController(
                 val g = gatt
                 val ch = writeChar
                 if (g == null || ch == null || _connection.value != Connection.CONNECTED) break
-                val item = synchronized(pending) {
-                    val key = pending.keys.firstOrNull()
-                    if (key == null) null else pending.remove(key)
+                val (key, item) = synchronized(pending) {
+                    val k = pending.keys.firstOrNull()
+                    if (k == null) null else k to pending.remove(k)!!
                 } ?: break
                 val ack = CompletableDeferred<Unit>()
                 writeAck = ack
                 ch.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
                 ch.value = item
                 val ok = runCatching { g.writeCharacteristic(ch) }.getOrDefault(false)
-                if (ok) withTimeoutOrNull(800) { ack.await() } else delay(60)
-                delay(25)
+                if (ok) {
+                    withTimeoutOrNull(800) { ack.await() }
+                    delay(20)
+                } else {
+                    // Stack beschäftigt (z. B. Descriptor-Write): später erneut, außer ein neuerer Wert kam schon
+                    synchronized(pending) { if (key != "keepalive" && !pending.containsKey(key)) pending[key] = item }
+                    delay(120)
+                }
             }
         }
     }
@@ -344,7 +391,7 @@ class GoveeController(
         stopScan()
         _found.value = emptyList()
         _scanning.value = true
-        hub.add(scanListener)
+        hub.add(scanListener, fast = true)
         scanStopJob = scope.launch {
             delay(15000)
             stopScan()

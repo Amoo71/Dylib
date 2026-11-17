@@ -89,6 +89,8 @@ data class ThemeSettings(
 
 class ThemeStore(context: Context) {
     private val sp = context.getSharedPreferences("room_theme", Context.MODE_PRIVATE)
+    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val save = Runnable { sp.edit().putString("theme", _settings.value.toJson()).apply() }
     private val _settings = MutableStateFlow(ThemeSettings.fromJson(sp.getString("theme", null)))
     val settings: StateFlow<ThemeSettings> = _settings.asStateFlow()
 
@@ -97,9 +99,10 @@ class ThemeStore(context: Context) {
     val imageVersion: StateFlow<Int> = _imageVersion.asStateFlow()
 
     fun update(transform: (ThemeSettings) -> ThemeSettings) {
-        val next = transform(_settings.value)
-        _settings.value = next
-        sp.edit().putString("theme", next.toJson()).apply()
+        _settings.value = transform(_settings.value)
+        // Slider ändern sehr oft – gespeichert wird erst, wenn Ruhe ist.
+        handler.removeCallbacks(save)
+        handler.postDelayed(save, 500)
     }
 
     fun bumpImageVersion() {

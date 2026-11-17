@@ -1,15 +1,21 @@
 package com.amoo.roomlauncher.ui
 
 import android.annotation.SuppressLint
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothManager
+import android.content.Context
+import android.content.Intent
+import android.provider.Settings
 import android.view.Gravity
 import android.view.View
 import android.widget.FrameLayout
-import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import com.amoo.roomlauncher.BtPerms
 import com.amoo.roomlauncher.MainActivity
 import com.amoo.roomlauncher.RoomApp
 import com.amoo.roomlauncher.apps.AppEntry
+import com.amoo.roomlauncher.ble.BleHub
 import com.amoo.roomlauncher.board.BoardItem
 import com.amoo.roomlauncher.board.BoardLayout
 import com.amoo.roomlauncher.board.Cell
@@ -39,17 +45,25 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
     private val boardScroll = object : ScrollView(activity) {
         override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
             super.onSizeChanged(w, h, oldw, oldh)
-            board.viewportHeight = h
+            post { board.viewportHeight = h }
+        }
+
+        override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) {
+            super.onScrollChanged(l, t, oldl, oldt)
+            Backdrop.invalidateAll()
         }
     }
-    private val dock = BoardLayout(activity, columns = 1, rows = 1, fixedCellDp = 58).apply { gap = dp(18) }
+    private val dock = BoardLayout(activity, columns = 1, rows = 1, fixedCellDp = 60).apply { gap = dp(18) }
     private val dockBar = LinearLayout(activity)
+    private val dockDivider = View(activity)
     private val editBar = LinearLayout(activity)
+    private val banner = LinearLayout(activity)
     private val overlayHost = FrameLayout(activity)
 
     private var appMap: Map<String, AppEntry> = emptyMap()
-    private var lastAppsVersion = 0
     private var appsVersion = 0
+    private var boardAppsVersion = -1
+    private var dockAppsVersion = -1
     private var lastTheme: ThemeSettings? = null
 
     var editMode = false
@@ -60,26 +74,27 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
         addView(bgView, LayoutParams(MATCH, MATCH))
 
         // ---- Board + Dock
-        val content = context.column().apply { setPadding(dp(30), dp(30), dp(30), dp(14)) }
+        val content = context.column().apply { setPadding(dp(30), dp(28), dp(30), dp(14)) }
         boardScroll.isVerticalScrollBarEnabled = false
         boardScroll.overScrollMode = View.OVER_SCROLL_NEVER
         boardScroll.isFillViewport = true
+        boardScroll.clipToPadding = false
         boardScroll.addView(board, LayoutParams(MATCH, WRAP))
         content.addView(boardScroll, lp(MATCH, 0, 1f))
 
         dockBar.orientation = LinearLayout.HORIZONTAL
         dockBar.gravity = Gravity.CENTER_VERTICAL
-        dockBar.background = GlassDrawable(activity, 32f, 1.1f)
+        dockBar.background = GlassDrawable(activity, 34f, 1.15f)
         dockBar.setPadding(dp(18), dp(12), dp(18), dp(12))
         dockBar.addView(dock, lp(WRAP, WRAP))
-        val divider = View(activity).apply { setBackgroundColor(C.white(0.22f)) }
-        dockBar.addView(divider, lp(dp(1), dp(42)).margins(l = dp(18), r = dp(18)))
+        dockDivider.setBackgroundColor(C.white(0.22f))
+        dockBar.addView(dockDivider, lp(dp(1), dp(44)).margins(l = dp(18), r = dp(18)))
         val allApps = FrameLayout(activity).apply {
             background = GlassDrawable(activity, 18f, 1.3f)
             addView(IconView(activity, Glyph.GRID), LayoutParams(dp(24), dp(24), Gravity.CENTER))
             pressable { showOverlay(context.appsSheet(app) { closeOverlay() }) }
         }
-        dockBar.addView(allApps, lp(dp(58), dp(58)))
+        dockBar.addView(allApps, lp(dp(60), dp(60)))
         content.addView(dockBar, lp(WRAP, WRAP).apply {
             gravity = Gravity.CENTER_HORIZONTAL
             topMargin = dp(14)
@@ -92,12 +107,19 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
         editBar.addView(context.glassButton("+ App") { openSettings(SettingsTab.APPS) }, lp(WRAP, WRAP).margins(l = dp(12)))
         editBar.addView(context.glassButton("Fertig", true) { setEdit(false) }, lp(WRAP, WRAP).margins(l = dp(12)))
         editBar.visibility = View.GONE
-        addView(editBar, LayoutParams(WRAP, WRAP, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = dp(4) })
+        addView(editBar, LayoutParams(WRAP, WRAP, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = dp(6) })
+
+        // ---- Hinweise (Berechtigung / Standort / Bluetooth)
+        banner.orientation = LinearLayout.HORIZONTAL
+        banner.gravity = Gravity.CENTER_VERTICAL
+        banner.background = GlassDrawable(activity, 22f, 1.2f, 0x80201508.toInt())
+        banner.setPadding(dp(18), dp(8), dp(8), dp(8))
+        banner.visibility = View.GONE
+        addView(banner, LayoutParams(WRAP, WRAP, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = dp(6) })
 
         // ---- Einstellungen unten rechts
-        val settings = context.glassIconButton(Glyph.GEAR, 46) { openSettings(SettingsTab.BACKGROUND) }
-        settings.alpha = 0.75f
-        addView(settings, LayoutParams(dp(46), dp(46), Gravity.BOTTOM or Gravity.END).apply { setMargins(0, 0, dp(12), dp(12)) })
+        val settings = context.glassIconButton(Glyph.GEAR, 46, frosted = true) { openSettings(SettingsTab.BACKGROUND) }
+        addView(settings, LayoutParams(dp(46), dp(46), Gravity.BOTTOM or Gravity.END).apply { setMargins(0, 0, dp(14), dp(14)) })
 
         addView(overlayHost, LayoutParams(MATCH, MATCH))
 
@@ -113,6 +135,7 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
             override fun onEnterEdit() = setEdit(true)
             override fun onMove(id: String, toIndex: Int) = app.board.moveInDock(id, toIndex)
             override fun onRemove(id: String) = app.board.removeFromDock(id)
+            override fun onEmptyTap() = setEdit(false)
         }
 
         // ---- Daten beobachten
@@ -131,7 +154,16 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
             }
         }
         scope.launch {
+            app.iconStyle.collect {
+                appsVersion++
+                renderBoard()
+                renderDock()
+            }
+        }
+        scope.launch { app.smooth.collect { bgView.smooth = it } }
+        scope.launch {
             app.theme.settings.collect { t ->
+                Backdrop.enabled = t.glassBlur
                 bgView.theme = t
                 val prev = lastTheme
                 lastTheme = t
@@ -162,8 +194,9 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
                 is BoardItem.App -> Cell(item.id, 1, 1)
             }
         }
-        val recreateApps = lastAppsVersion != appsVersion
-        lastAppsVersion = appsVersion
+        val recreateApps = boardAppsVersion != appsVersion
+        boardAppsVersion = appsVersion
+        val style = app.iconStyle.value
         board.setCells(
             cells,
             factory = { cell ->
@@ -175,7 +208,7 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
                     )
                     is BoardItem.App -> {
                         val entry = appMap[item.component]
-                        context.appIcon(entry) { if (!editMode && entry != null) app.apps.launch(entry) }
+                        context.appIcon(entry, style) { if (!editMode && entry != null) app.apps.launch(entry) }
                     }
                 }
             },
@@ -183,25 +216,49 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
         )
     }
 
-    private var lastDockAppsVersion = 0
-
     private fun renderDock() {
-        val recreate = lastDockAppsVersion != appsVersion
-        lastDockAppsVersion = appsVersion
+        val recreate = dockAppsVersion != appsVersion
+        dockAppsVersion = appsVersion
+        val style = app.iconStyle.value
+        val comps = app.board.dock.value
         dock.setCells(
-            app.board.dock.value.map { Cell(it, 1, 1) },
+            comps.map { Cell(it, 1, 1) },
             factory = { cell ->
                 val entry = appMap[cell.id]
-                ImageView(context).apply {
-                    scaleType = ImageView.ScaleType.FIT_CENTER
-                    if (entry != null) setImageBitmap(entry.icon) else background = GlassDrawable(context, 16f)
+                AppIconTile(context, entry?.icon, style).apply {
                     pressable { if (!editMode && entry != null) app.apps.launch(entry) }
                 }
             },
             recreate = { recreate },
         )
-        // Trenner nur zeigen, wenn Apps im Dock sind
-        dockBar.getChildAt(1)?.visibility = if (app.board.dock.value.isEmpty()) View.GONE else View.VISIBLE
+        dockDivider.visibility = if (comps.isEmpty()) View.GONE else View.VISIBLE
+    }
+
+    // ---------------------------------------------------------------- Hinweise
+
+    /** Prüft Berechtigung, Bluetooth und Standort und zeigt bei Bedarf einen Hinweis mit Knopf. */
+    fun refreshBanner() {
+        val ctx: Context = context
+        val adapter = (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
+        val (text, action, onAction) = when {
+            !BtPerms.granted(ctx) -> Triple("Bluetooth-Berechtigung fehlt", "Erlauben") { activity.requestBtPermissions() }
+            adapter != null && !adapter.isEnabled -> Triple("Bluetooth ist aus", "Einschalten") {
+                runCatching { activity.startActivity(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)) }
+                Unit
+            }
+            !BleHub.locationEnabled(ctx) -> Triple("Standort ist aus – Licht & AirPods-Akku brauchen ihn", "Einschalten") {
+                activity.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+            }
+            else -> Triple(null, null, null)
+        }
+        banner.removeAllViews()
+        if (text == null || editMode) {
+            banner.visibility = View.GONE
+            return
+        }
+        banner.addView(ctx.label(text, 14f, C.ORANGE, bold = true))
+        banner.addView(ctx.glassButton(action!!, true) { onAction?.invoke() }, lp(WRAP, WRAP).margins(l = dp(14)))
+        banner.visibility = View.VISIBLE
     }
 
     // ---------------------------------------------------------------- Zustand
@@ -211,7 +268,18 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
         editMode = on
         board.editMode = on
         dock.editMode = on
-        editBar.visibility = if (on) View.VISIBLE else View.GONE
+        if (on) {
+            banner.visibility = View.GONE
+            editBar.visibility = View.VISIBLE
+            editBar.alpha = 0f
+            editBar.translationY = -dp(20).toFloat()
+            editBar.animate().alpha(1f).translationY(0f).setDuration(260).setInterpolator(SPRING).start()
+        } else {
+            editBar.animate().alpha(0f).translationY(-dp(20).toFloat()).setDuration(160).withEndAction {
+                editBar.visibility = View.GONE
+                refreshBanner()
+            }.start()
+        }
     }
 
     private fun openSettings(tab: SettingsTab) {
@@ -225,17 +293,16 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
         )
     }
 
-    private fun showOverlay(v: View) {
+    private fun showOverlay(v: Sheet) {
         overlayHost.removeAllViews()
-        v.alpha = 0f
         overlayHost.addView(v, LayoutParams(MATCH, MATCH))
-        v.animate().alpha(1f).setDuration(160).start()
+        v.animateIn()
     }
 
     fun closeOverlay(): Boolean {
-        if (overlayHost.childCount == 0) return false
-        app.govee.stopScan()
-        overlayHost.removeAllViews()
+        val current = overlayHost.getChildAt(overlayHost.childCount - 1) as? Sheet ?: return false
+        current.animateOut { overlayHost.removeView(current) }
+        refreshBanner()
         return true
     }
 

@@ -13,7 +13,9 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewGroup
-import kotlin.math.abs
+import android.view.animation.DecelerateInterpolator
+import android.view.animation.OvershootInterpolator
+import com.amoo.roomlauncher.ui.Backdrop
 import kotlin.math.hypot
 import kotlin.math.max
 
@@ -90,6 +92,7 @@ class BoardLayout(
         }
 
     private var cells: List<Cell> = emptyList()
+    private var populated = false
     private var placements: List<Placement> = emptyList()
     private val views = HashMap<String, View>()
     private val lastPos = HashMap<String, IntArray>()
@@ -101,19 +104,31 @@ class BoardLayout(
     fun setCells(newCells: List<Cell>, factory: (Cell) -> View, recreate: (Cell) -> Boolean = { false }) {
         val ids = newCells.map { it.id }.toSet()
         views.keys.filter { it !in ids }.forEach { id ->
-            removeView(views.remove(id))
+            val gone = views.remove(id) ?: return@forEach
             lastPos.remove(id)
+            // Entfernen: kurz zusammenschrumpfen, dann raus
+            gone.animate().scaleX(0.5f).scaleY(0.5f).alpha(0f).setDuration(180).setInterpolator(EASE)
+                .withEndAction { removeView(gone) }.start()
         }
         for (c in newCells) {
             val existing = views[c.id]
             val old = cells.firstOrNull { it.id == c.id }
-            if (existing == null || recreate(c) || (old != null && (old.w != c.w || old.h != c.h))) {
+            val resized = old != null && (old.w != c.w || old.h != c.h)
+            if (existing == null || recreate(c) || resized) {
                 if (existing != null) removeView(existing)
                 val v = factory(c)
                 views[c.id] = v
                 addView(v)
+                if (populated && (existing == null || resized)) {
+                    // Neu oder Größe geändert: sanft aufploppen
+                    v.scaleX = 0.85f
+                    v.scaleY = 0.85f
+                    v.alpha = 0f
+                    v.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(280).setInterpolator(SPRING).start()
+                }
             }
         }
+        populated = true
         cells = newCells
         requestLayout()
         invalidate()
@@ -171,7 +186,8 @@ class BoardLayout(
                 if (prev != null && (prev[0] != left || prev[1] != top)) {
                     v.translationX = (prev[0] - left).toFloat() + v.translationX
                     v.translationY = (prev[1] - top).toFloat() + v.translationY
-                    v.animate().translationX(0f).translationY(0f).setDuration(220).start()
+                    v.animate().translationX(0f).translationY(0f).setDuration(320).setInterpolator(SPRING)
+                        .withEndAction { Backdrop.invalidateAll() }.start()
                 }
             }
             lastPos[id] = intArrayOf(left, top)
@@ -249,6 +265,11 @@ class BoardLayout(
         }
     }
 
+    override fun requestDisallowInterceptTouchEvent(disallowIntercept: Boolean) {
+        if (disallowIntercept) mainHandler.removeCallbacks(longPress)
+        super.requestDisallowInterceptTouchEvent(disallowIntercept)
+    }
+
     override fun onInterceptTouchEvent(e: MotionEvent): Boolean {
         if (editMode) return true
         trackLongPress(e)
@@ -300,6 +321,7 @@ class BoardLayout(
                 dragTop = startTop + (y - downY)
                 v.translationX = dragLeft - v.left
                 v.translationY = dragTop - v.top
+                v.invalidate() // Milchglas folgt dem Finger
                 checkReorder(id)
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
@@ -333,7 +355,8 @@ class BoardLayout(
     private fun endDrag() {
         val id = dragId ?: return
         dragId = null
-        views[id]?.animate()?.translationX(0f)?.translationY(0f)?.scaleX(1f)?.scaleY(1f)?.setDuration(200)?.start()
+        views[id]?.animate()?.translationX(0f)?.translationY(0f)?.scaleX(1f)?.scaleY(1f)?.setDuration(300)
+            ?.setInterpolator(SPRING)?.withEndAction { Backdrop.invalidateAll() }?.start()
     }
 
     private fun placementAt(x: Float, y: Float): Placement? = placements.firstOrNull { p ->
@@ -426,5 +449,5 @@ class BoardLayout(
     private fun dp(v: Number): Int = (v.toFloat() * resources.displayMetrics.density + 0.5f).toInt()
 }
 
-@Suppress("unused")
-private fun absDiff(a: Float, b: Float) = abs(a - b)
+private val EASE = DecelerateInterpolator(2f)
+private val SPRING = OvershootInterpolator(1.2f)

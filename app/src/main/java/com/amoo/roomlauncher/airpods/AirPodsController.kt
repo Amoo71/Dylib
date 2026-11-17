@@ -117,23 +117,28 @@ class AirPodsController(
     private var controlJob: Job? = null
     private var retries = 0
 
+    private val profileListener = object : BluetoothProfile.ServiceListener {
+        override fun onServiceConnected(profile: Int, proxy: BluetoothProfile) {
+            if (profile == BluetoothProfile.A2DP) a2dp = proxy else headset = proxy
+            refreshConnectionState()
+        }
+
+        override fun onServiceDisconnected(profile: Int) {
+            if (profile == BluetoothProfile.A2DP) a2dp = null else headset = null
+        }
+    }
+
+    /** Audio-Profile anfordern – auch erneut, wenn Bluetooth beim Start noch aus war. */
+    private fun bindProfiles() {
+        val a = adapter ?: return
+        if (a2dp == null) runCatching { a.getProfileProxy(context, profileListener, BluetoothProfile.A2DP) }
+        if (headset == null) runCatching { a.getProfileProxy(context, profileListener, BluetoothProfile.HEADSET) }
+    }
+
     fun start() {
         if (started) return
         started = true
-        val a = adapter ?: return
-        val listener = object : BluetoothProfile.ServiceListener {
-            override fun onServiceConnected(profile: Int, proxy: BluetoothProfile) {
-                if (profile == BluetoothProfile.A2DP) a2dp = proxy else headset = proxy
-                refreshConnectionState()
-            }
-
-            override fun onServiceDisconnected(profile: Int) {
-                if (profile == BluetoothProfile.A2DP) a2dp = null else headset = null
-            }
-        }
-        runCatching { a.getProfileProxy(context, listener, BluetoothProfile.A2DP) }
-        runCatching { a.getProfileProxy(context, listener, BluetoothProfile.HEADSET) }
-
+        bindProfiles()
         context.registerSystemReceiver(
             object : BroadcastReceiver() {
                 override fun onReceive(c: Context, intent: Intent) = refreshConnectionState()
@@ -158,6 +163,7 @@ class AirPodsController(
     }
 
     fun onBluetoothOn() {
+        bindProfiles()
         startBatteryScan()
         refreshConnectionState()
     }
@@ -456,10 +462,7 @@ class AirPodsController(
         )
     }
 
-    private fun startBatteryScan() {
-        hub.add(advertListener)
-        hub.ensureRunning()
-    }
+    private fun startBatteryScan() = hub.add(advertListener)
 
     companion object {
         private const val APPLE_ID = 0x004C

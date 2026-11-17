@@ -16,6 +16,7 @@ import com.amoo.roomlauncher.theme.ThemeStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
 import org.lsposed.hiddenapibypass.HiddenApiBypass
 
 class RoomApp : Application() {
@@ -36,6 +37,14 @@ class RoomApp : Application() {
     lateinit var theme: ThemeStore
         private set
 
+    /** Darstellung der App-Icons (Original / Glas / Klar) – live änderbar. */
+    lateinit var iconStyle: MutableStateFlow<Int>
+        private set
+
+    /** 60 fps (true) oder 30 fps (false) für animierte Hintergründe. */
+    lateinit var smooth: MutableStateFlow<Boolean>
+        private set
+
     private var bluetoothStarted = false
 
     override fun onCreate() {
@@ -50,6 +59,8 @@ class RoomApp : Application() {
         apps = AppRepository(this, appScope)
         board = BoardStore(this)
         theme = ThemeStore(this)
+        iconStyle = MutableStateFlow(prefs.iconStyle)
+        smooth = MutableStateFlow(prefs.smooth)
         apps.start()
     }
 
@@ -64,7 +75,7 @@ class RoomApp : Application() {
                     when (intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, -1)) {
                         BluetoothAdapter.STATE_ON -> {
                             ble.restart()
-                            govee.connect()
+                            govee.reconnectNow()
                             airpods.onBluetoothOn()
                         }
                         BluetoothAdapter.STATE_OFF -> ble.stop()

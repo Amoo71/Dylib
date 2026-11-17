@@ -1,11 +1,7 @@
 package com.amoo.roomlauncher
 
-import android.annotation.SuppressLint
 import android.app.Activity
-import android.bluetooth.BluetoothAdapter
-import android.bluetooth.BluetoothManager
 import android.content.Intent
-import android.os.Build
 import android.os.Bundle
 import android.view.View
 import android.view.WindowManager
@@ -23,7 +19,6 @@ class MainActivity : Activity() {
     private val app get() = application as RoomApp
     private lateinit var root: LauncherRoot
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-    private var askedEnableBt = false
     private var imageCallback: ((Boolean) -> Unit)? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -32,17 +27,15 @@ class MainActivity : Activity() {
         root = LauncherRoot(this, app)
         setContentView(root)
         hideSystemBars()
-
-        if (BtPerms.granted(this)) {
-            startBluetooth()
-        } else if (Build.VERSION.SDK_INT >= 23) {
-            requestPermissions(BtPerms.required(), REQ_PERMS)
-        }
+        if (BtPerms.granted(this)) app.startBluetooth() else requestBtPermissions()
     }
+
+    fun requestBtPermissions() = requestPermissions(BtPerms.required(), REQ_PERMS)
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == REQ_PERMS && BtPerms.granted(this)) startBluetooth()
+        if (requestCode == REQ_PERMS && BtPerms.granted(this)) app.startBluetooth()
+        root.refreshBanner()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -62,6 +55,8 @@ class MainActivity : Activity() {
         super.onResume()
         hideSystemBars()
         app.apps.refresh()
+        if (BtPerms.granted(this)) app.startBluetooth()
+        root.refreshBanner()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -78,16 +73,6 @@ class MainActivity : Activity() {
     fun applyKeepScreenOn(on: Boolean) {
         if (on) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-    }
-
-    @SuppressLint("MissingPermission")
-    fun startBluetooth() {
-        app.startBluetooth()
-        val adapter = (getSystemService(BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter ?: return
-        if (!adapter.isEnabled && !askedEnableBt) {
-            askedEnableBt = true
-            runCatching { startActivity(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)) }
-        }
     }
 
     /** Bild/GIF auswählen und als eigenen Hintergrund speichern. */
@@ -110,11 +95,13 @@ class MainActivity : Activity() {
         scope.launch {
             val ok = withContext(Dispatchers.IO) {
                 runCatching {
+                    // Erst in eine Temp-Datei, damit ein Abbruch das alte Bild nicht zerstört
                     val target = BgImage.file(this@MainActivity)
+                    val tmp = java.io.File(target.parentFile, target.name + ".tmp")
                     contentResolver.openInputStream(uri)?.use { input ->
-                        target.outputStream().use { out -> input.copyTo(out) }
+                        tmp.outputStream().use { out -> input.copyTo(out) }
                     } ?: return@runCatching false
-                    target.length() > 0
+                    tmp.length() > 0 && tmp.renameTo(target)
                 }.getOrDefault(false)
             }
             cb(ok)
