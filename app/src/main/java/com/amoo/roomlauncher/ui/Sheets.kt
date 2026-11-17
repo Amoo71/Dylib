@@ -49,12 +49,12 @@ class Sheet(context: Context, title: String, fillHeight: Boolean, val onDismiss:
         isClickable = true
         setOnClickListener { onDismiss() }
         panel = context.column().apply {
-            background = GlassDrawable(context, 34f, 1.2f, 0xB80E1016.toInt())
+            background = GlassDrawable(context, 34f, 1.2f, 0xB80E1016.toInt(), adaptive = false)
             setPadding(dp(26), dp(24), dp(26), dp(22))
             isClickable = true
         }
         val header = context.row(
-            context.label(title, 26f, bold = true).also { it.layoutParams = lp(0, WRAP, 1f) },
+            context.label(title, 26f, display = true).also { it.layoutParams = lp(0, WRAP, 1f) },
             context.glassIconButton(Glyph.CLOSE, 40) { onDismiss() },
         )
         panel.addView(header)
@@ -93,6 +93,7 @@ private fun LinearLayout.section(text: String) {
 
 private fun Context.searchField(hint: String, onChange: (String) -> Unit): EditText = EditText(this).apply {
     this.hint = hint
+    typeface = Fonts.regular
     setHintTextColor(C.TEXT3)
     setTextColor(C.TEXT)
     textSize = 16f
@@ -392,6 +393,12 @@ private fun MainActivity.backgroundTab(app: RoomApp): View {
             "Widgets, Dock und Panels zeigen den Hintergrund verschwommen – wie bei iOS. Aus = klares Glas, spart Leistung.",
         ) { on -> update { it.copy(glassBlur = on) } },
     )
+    root.addView(
+        sliderRow("Glas-Deckkraft", theme().glassOpacity, { "${(it * 100).roundToInt()} %" }) { v ->
+            update { it.copy(glassOpacity = v) }
+        },
+    )
+    root.addView(label("Niedrig = klares, sehr durchsichtiges Glas · hoch = stärker getönt.", 12.5f, C.TEXT3, lines = 2))
     root.addView(spacer(20))
     return root
 }
@@ -576,10 +583,72 @@ private fun Context.dockTab(app: RoomApp): View {
 private fun Context.devicesTab(app: RoomApp, onOpenGovee: () -> Unit, onOpenAirPods: () -> Unit): View = column().apply {
     locationHint()?.let { addView(it, lp().margins(b = dp(14))) }
     val light = app.govee.deviceName.value
-    addView(listItem("Govee-Licht", light ?: "nicht eingerichtet", "Einrichten ›", C.BLUE, light != null, onOpenGovee))
+    addView(listItem("Govee-Licht", light ?: "nicht eingerichtet", "Öffnen ›", C.BLUE, light != null, onOpenGovee))
     addView(spacer(10))
     val pods = app.airpods.deviceName.value
-    addView(listItem("AirPods", pods ?: "nicht ausgewählt", "Einrichten ›", C.BLUE, pods != null, onOpenAirPods))
+    addView(listItem("AirPods", pods ?: "nicht ausgewählt", "Öffnen ›", C.BLUE, pods != null, onOpenAirPods))
+
+    // ---- Diagnose: zeigt live, ob Bluetooth, Licht und AirPods laufen
+    section("Diagnose")
+    val diag = label("", 13.5f, C.TEXT2, lines = 12).apply { setLineSpacing(dpf(4), 1f) }
+    addView(diag)
+    val update = object : Runnable {
+        override fun run() {
+            diag.text = diagnosis(app)
+            diag.postDelayed(this, 1000)
+        }
+    }
+    diag.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+        override fun onViewAttachedToWindow(v: View) = update.run()
+        override fun onViewDetachedFromWindow(v: View) {
+            v.removeCallbacks(update)
+        }
+    })
+    addView(
+        row(
+            glassButton("Alles neu verbinden") {
+                app.ble.restart()
+                app.govee.reconnectNow()
+                app.airpods.resync()
+                toast("Verbindungen werden neu aufgebaut")
+            },
+            glassButton("Bluetooth neu starten") {
+                if (app.ble.resetBluetooth()) toast("Bluetooth startet neu …") else toast("Bitte Bluetooth manuell aus- und einschalten")
+            },
+            spacingDp = 12,
+        ),
+        lp().margins(t = dp(14)),
+    )
+    addView(
+        label(
+            "Die App repariert sich selbst: hängender Scan → Neustart, Licht antwortet nicht → neu verbinden, " +
+                "wiederholte Bluetooth-Fehler → Bluetooth-Neustart (höchstens alle 30 min).",
+            12.5f, C.TEXT3, lines = 4,
+        ),
+        lp().margins(t = dp(12)),
+    )
+}
+
+private fun Context.diagnosis(app: RoomApp): String {
+    val adapter = (getSystemService(Context.BLUETOOTH_SERVICE) as? android.bluetooth.BluetoothManager)?.adapter
+    fun ok(b: Boolean) = if (b) "✓" else "✗"
+    val now = System.currentTimeMillis()
+    val last = app.ble.lastResultAt
+    val age = if (last == 0L) "noch keine" else "vor ${((now - last) / 1000).coerceAtLeast(0)} s"
+    val g = app.govee.connection.value
+    val a = app.airpods
+    return buildString {
+        appendLine("${ok(adapter?.isEnabled == true)}  Bluetooth ${if (adapter?.isEnabled == true) "an" else "aus"}")
+        appendLine("${ok(BleHub.locationEnabled(this@diagnosis))}  Standort (nötig für Bluetooth-Suche)")
+        appendLine("${ok(app.ble.scanning)}  Bluetooth-Suche läuft · letztes Signal $age")
+        app.ble.lastError?.let { appendLine("    ↳ $it") }
+        appendLine("${ok(g == GoveeController.Connection.CONNECTED)}  Licht: ${g.name.lowercase()}${app.govee.deviceName.value?.let { " ($it)" } ?: ""}")
+        app.govee.lastError.value?.let { appendLine("    ↳ $it") }
+        appendLine("${ok(a.audioConnected.value)}  AirPods Audio ${if (a.audioConnected.value) "verbunden" else "nicht verbunden"}")
+        appendLine("${ok(a.battery.value != null)}  AirPods Akku-Signal ${if (a.battery.value != null) "empfangen" else "keins"}")
+        append("${ok(a.controlReady.value)}  AirPods Steuerkanal: ${a.controlStatus.value}")
+        com.amoo.roomlauncher.CrashLog.read(this@diagnosis)?.let { append("\n⚠  Letzter Fehler: $it") }
+    }
 }
 
 // ---- Allgemein
@@ -648,41 +717,80 @@ private fun MainActivity.generalTab(app: RoomApp, onDismiss: () -> Unit): View {
     return root
 }
 
-// ------------------------------------------------------------------ Govee einrichten
+// ------------------------------------------------------------------ Licht-Panel (Steuerung + Einrichtung)
 
 fun Context.goveeSheet(govee: GoveeController, prefs: Prefs, onDismiss: () -> Unit): Sheet {
-    val sheet = Sheet(this, "Govee-Licht einrichten", true, onDismiss)
+    val sheet = Sheet(this, "Licht", true, onDismiss)
     val root = column()
     locationHint()?.let { root.addView(it, lp().margins(b = dp(14))) }
+
+    // ---- Steuerung (nur wenn ein Licht eingerichtet ist)
+    val control = column()
+    val pct = label("", 15f, C.TEXT2, display = true)
+    pct.bind(govee.brightness) { pct.text = "${(it * 100).roundToInt()}%" }
+    val bright = column().apply {
+        addView(pct)
+        addView(brightnessSlider(govee, 48), lp().margins(t = dp(8)))
+    }
+    control.addView(row(powerButton(govee, 76), bright.also { it.layoutParams = lp(0, WRAP, 1f) }, spacingDp = 18))
+    control.section("Farbe")
+    val hue = hueSlider(govee, 38)
+    control.addView(hue)
+    control.addView(presetRow(govee, 40, hue), lp().margins(t = dp(14)))
+    control.section("Szenen")
+    control.addView(hScroll(*GoveeController.SCENES.map { (id, l) -> Chip(this, l) { govee.setScene(id) } }.toTypedArray()))
+    control.section("Musik-Modus (Mikrofon am Controller)")
+    control.addView(hScroll(*GoveeController.MUSIC_MODES.map { (id, l) -> Chip(this, l) { govee.setMusicMode(id) } }.toTypedArray()))
+    root.addView(control)
+    control.bind(govee.connection) { c -> control.visibility = if (c == GoveeController.Connection.NOT_CONFIGURED) View.GONE else View.VISIBLE }
+
+    // ---- Status
+    root.section("Gerät")
     val current = label("", 15f, C.TEXT2)
-    current.bind(govee.deviceName) { current.text = "Aktuell: ${it ?: "keins"}" }
+    fun refreshCurrent() {
+        current.text = "Aktuell: ${govee.deviceName.value ?: "keins"} · " + when (govee.connection.value) {
+            GoveeController.Connection.CONNECTED -> "verbunden"
+            GoveeController.Connection.CONNECTING -> "verbinde…"
+            GoveeController.Connection.DISCONNECTED -> "getrennt"
+            GoveeController.Connection.NOT_CONFIGURED -> "nicht eingerichtet"
+        }
+    }
+    current.bind(govee.deviceName) { refreshCurrent() }
+    current.bind(govee.connection) { refreshCurrent() }
     root.addView(current)
-    root.addView(
-        label("Wichtig: Govee-App auf dem Handy schließen – das Licht erlaubt nur eine Bluetooth-Verbindung gleichzeitig.", 13f, C.TEXT3, lines = 2),
-        lp().margins(t = dp(4)),
-    )
-    val head = label("Suche Geräte…", 17f, bold = true).apply { layoutParams = lp(0, WRAP, 1f) }
-    head.bind(govee.scanning) { head.text = if (it) "Suche Geräte…" else "Gefundene Geräte" }
-    root.addView(row(head, glassButton("Neu suchen") { govee.startScan() }), lp().margins(t = dp(16)))
-    val err = label("", 13f, C.RED, lines = 2)
+    val err = label("", 13f, C.ORANGE, lines = 2)
     err.bind(govee.lastError) {
         err.text = it.orEmpty()
         err.visibility = if (it == null) View.GONE else View.VISIBLE
     }
     root.addView(err, lp().margins(t = dp(6)))
+    root.addView(
+        row(glassButton("Neu verbinden") { govee.reconnectNow() }, glassButton("Licht suchen") { govee.startScan() }, spacingDp = 12),
+        lp().margins(t = dp(10)),
+    )
+    root.addView(
+        label("Wichtig: Govee-App auf dem Handy schließen – das Licht erlaubt nur eine Bluetooth-Verbindung gleichzeitig.", 13f, C.TEXT3, lines = 2),
+        lp().margins(t = dp(10)),
+    )
+
+    // ---- Suchergebnisse
+    val head = label("", 16f, bold = true)
+    head.bind(govee.scanning) { head.text = if (it) "Suche Geräte…" else if (govee.found.value.isEmpty()) "" else "Gefundene Geräte" }
+    root.addView(head, lp().margins(t = dp(14)))
     val list = column()
-    root.addView(list, lp().margins(t = dp(10)))
+    root.addView(list, lp().margins(t = dp(8)))
     list.bind(govee.found) { found ->
         list.removeAllViews()
-        if (found.isEmpty()) list.addView(label("Noch nichts gefunden. Ist das Licht an und in der Nähe?", 14f, C.TEXT3, lines = 2))
+        if (found.isEmpty() && govee.scanning.value) list.addView(label("Ist das Licht an und in der Nähe?", 14f, C.TEXT3, lines = 2))
         found.take(25).forEach { f ->
             val item = listItem(f.name, "${f.address} · ${f.rssi} dBm", if (f.likelyGovee) "Govee" else null, C.GREEN, f.likelyGovee) {
                 govee.select(f)
-                sheet.onDismiss()
+                toast("${f.name} wird verbunden")
             }
             list.addView(item, lp().margins(b = dp(8)))
         }
     }
+
     root.section("Farb-Befehl (modellabhängig)")
     val modes = listOf(0x02 to "Standard (02)", 0x0D to "Neuere H6xxx (0D)", 0x0B to "0B", 0x15 to "Segmente (15)")
     root.addView(chipGroup(modes.map { it.second }, modes.indexOfFirst { it.first == prefs.goveeColorMode }) { i ->
@@ -698,24 +806,56 @@ fun Context.goveeSheet(govee: GoveeController, prefs: Prefs, onDismiss: () -> Un
         label("Reagiert die Farbe nicht, anderen Farb-Befehl probieren. Ist die Helligkeit nur ganz hell/dunkel, Skala wechseln.", 13f, C.TEXT3, lines = 2),
         lp().margins(t = dp(12)),
     )
+    root.addView(spacer(16))
     sheet.body.addView(scroll(root), lp(MATCH, 0, 1f))
     sheet.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
-        override fun onViewAttachedToWindow(v: View) = govee.startScan()
+        // Noch kein Licht eingerichtet → gleich suchen
+        override fun onViewAttachedToWindow(v: View) {
+            if (govee.connection.value == GoveeController.Connection.NOT_CONFIGURED) govee.startScan()
+        }
         override fun onViewDetachedFromWindow(v: View) = govee.stopScan()
     })
     return sheet
 }
 
-// ------------------------------------------------------------------ AirPods einrichten
+// ------------------------------------------------------------------ AirPods-Panel (Steuerung + Einrichtung)
 
 fun Context.airPodsSheet(airpods: AirPodsController, prefs: Prefs, onDismiss: () -> Unit): Sheet {
-    val sheet = Sheet(this, "AirPods einrichten", true, onDismiss)
+    val sheet = Sheet(this, "AirPods", true, onDismiss)
     val root = column()
+    locationHint()?.let { root.addView(it, lp().margins(b = dp(14))) }
+
+    root.addView(ringRow(airpods, 80))
+    val ctrl = glassButton("Steuerung verbinden") { airpods.openControl() }
+    ctrl.bind(airpods.controlReady) { ctrl.visibility = if (it) View.GONE else View.VISIBLE }
+    root.addView(row(connectButton(airpods, highlighted = true), ctrl, spacingDp = 12), lp().margins(t = dp(18)))
+
+    root.section("Geräuschkontrolle")
+    root.addView(noiseSelector(airpods, short = false))
+    val strengthLabel = label("", 13f, C.TEXT2)
+    val strength = GlassSlider(this, 34) { airpods.setAdaptiveStrength((it * 100).roundToInt()) }
+    val strengthBox = column().apply {
+        addView(strengthLabel)
+        addView(strength, lp().margins(t = dp(6)))
+    }
+    strengthBox.bind(airpods.adaptiveStrength) {
+        strength.value = (it ?: 50) / 100f
+        strengthLabel.text = "Adaptives Audio: ${it ?: 50} %  (weniger ↔ mehr Geräuschreduzierung)"
+    }
+    strengthBox.bind(airpods.noise) {
+        strengthBox.visibility = if (it == AirPodsController.Noise.ADAPTIVE) View.VISIBLE else View.GONE
+    }
+    root.addView(strengthBox, lp().margins(t = dp(14)))
+    root.addView(toggleRow("Gesprächserkennung", airpods.conversationAwareness, airpods.controlReady) { airpods.setConversationAwareness(it) }, lp().margins(t = dp(8)))
+    root.addView(toggleRow("Automatische Ohrerkennung", airpods.earDetection, airpods.controlReady) { airpods.setEarDetection(it) })
+    root.addView(toggleRow("ANC mit einem AirPod", airpods.oneBudAnc, airpods.controlReady) { airpods.setOneBudAnc(it) })
+    val status = label("", 12.5f, C.TEXT3, lines = 3)
+    status.bind(airpods.controlStatus) { status.text = "Steuerkanal: $it" }
+    root.addView(status, lp().margins(t = dp(8)))
+
+    root.section("Gerät auswählen")
     root.addView(
-        label(
-            "AirPods einmalig in den Android-Bluetooth-Einstellungen koppeln (Case öffnen, Knopf hinten gedrückt halten). Danach hier auswählen.",
-            15f, C.TEXT2, lines = 3,
-        ),
+        label("Einmalig in den Android-Bluetooth-Einstellungen koppeln (Case öffnen, Knopf hinten halten), dann hier auswählen.", 14f, C.TEXT2, lines = 2),
     )
     val list = column()
     fun fill() {
@@ -726,7 +866,7 @@ fun Context.airPodsSheet(airpods: AirPodsController, prefs: Prefs, onDismiss: ()
             val sel = d.address == prefs.airpodsAddress
             val item = listItem(d.name, d.address, if (sel) "Ausgewählt" else null, C.BLUE, sel) {
                 airpods.selectDevice(d.address)
-                onDismiss()
+                fill()
             }
             list.addView(item, lp().margins(b = dp(8)))
         }
@@ -739,20 +879,11 @@ fun Context.airPodsSheet(airpods: AirPodsController, prefs: Prefs, onDismiss: ()
             glassButton("Liste aktualisieren") { fill() },
             spacingDp = 12,
         ),
-        lp().margins(t = dp(14)),
+        lp().margins(t = dp(12)),
     )
-    root.section("Gekoppelte Geräte")
-    root.addView(list)
-    root.addView(
-        label(
-            "Akku und „im Ohr“ kommen aus Bluetooth-LE-Signalen (dafür muss der Standort an sein). " +
-                "ANC/Transparenz nutzt Apples AAP-Protokoll – ob der Bluetooth-Stack von Android 7 diesen Kanal zulässt, " +
-                "zeigt der Status im großen AirPods-Widget.",
-            13f, C.TEXT3, lines = 5,
-        ),
-        lp().margins(t = dp(14)),
-    )
+    root.addView(list, lp().margins(t = dp(12)))
     fill()
+    root.addView(spacer(16))
     sheet.body.addView(scroll(root), lp(MATCH, 0, 1f))
     return sheet
 }

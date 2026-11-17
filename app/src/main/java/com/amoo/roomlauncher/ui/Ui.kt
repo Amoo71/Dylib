@@ -73,11 +73,29 @@ fun LinearLayout.LayoutParams.margins(l: Int = 0, t: Int = 0, r: Int = 0, b: Int
 val EASE_OUT = DecelerateInterpolator(2f)
 val SPRING = OvershootInterpolator(1.4f)
 
+/**
+ * Schriften im Nothing-OS-Stil (freie Nachbauten, OFL-lizenziert):
+ *  - [display]: Doto – Punktmatrix wie Nothings NDot (Uhr, Titel, Zahlen)
+ *  - [regular]/[medium]/[light]: Space Grotesk – klare Grotesk wie NType
+ */
 object Fonts {
-    val regular: Typeface = Typeface.create("sans-serif", Typeface.NORMAL)
-    val medium: Typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-    val light: Typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
-    val thin: Typeface = Typeface.create("sans-serif-thin", Typeface.NORMAL)
+    var regular: Typeface = Typeface.DEFAULT
+        private set
+    var medium: Typeface = Typeface.DEFAULT_BOLD
+        private set
+    var light: Typeface = Typeface.DEFAULT
+        private set
+    var display: Typeface = Typeface.MONOSPACE
+        private set
+
+    fun init(context: Context) {
+        fun load(name: String, fallback: Typeface) =
+            runCatching { Typeface.createFromAsset(context.assets, "fonts/$name") }.getOrDefault(fallback)
+        regular = load("spacegrotesk_regular.ttf", Typeface.DEFAULT)
+        medium = load("spacegrotesk_medium.ttf", Typeface.DEFAULT_BOLD)
+        light = load("spacegrotesk_light.ttf", Typeface.DEFAULT)
+        display = load("doto_bold.ttf", Typeface.MONOSPACE)
+    }
 }
 
 // ------------------------------------------------------------------ Flows an Views binden
@@ -113,6 +131,15 @@ object Backdrop {
         set(v) {
             field = v
             invalidateAll()
+        }
+
+    /** Wie "dicht" das Glas ist: 0 = fast unsichtbar, 1 = kräftig getönt. */
+    var opacity = 0.3f
+        set(v) {
+            if (field != v) {
+                field = v
+                invalidateAll()
+            }
         }
 
     var bitmap: Bitmap? = null
@@ -151,6 +178,8 @@ class GlassDrawable(
     private val baseColor: Int = 0x330A0C14,
     /** true = zeigt den verschwommenen Hintergrund (für Karten, Dock, Panels). */
     private val frosted: Boolean = true,
+    /** true = Dichte folgt der Einstellung "Glas-Deckkraft" (Panels bleiben für Lesbarkeit fest). */
+    private val adaptive: Boolean = true,
 ) : Drawable() {
     var strength: Float = strength
         set(v) {
@@ -201,6 +230,11 @@ class GlassDrawable(
 
     override fun draw(canvas: Canvas) {
         val r = min(radius, min(rect.width(), rect.height()) / 2f)
+        val o = if (adaptive) Backdrop.opacity else 1f
+        // Milchglas: je durchsichtiger, desto mehr scheint der scharfe Hintergrund durch
+        frost.alpha = (255 * (0.18f + 0.72f * o)).toInt().coerceIn(0, 255)
+        base.alpha = (Color.alpha(baseColor) * (if (adaptive) 0.25f + 1.2f * o else 1f)).toInt().coerceIn(0, 255)
+        fill.alpha = (255 * (if (adaptive) 0.25f + 1.1f * o else 1f)).toInt().coerceIn(0, 255)
         if (frosted && Backdrop.enabled) drawFrost(canvas, r)
         canvas.drawRoundRect(rect, r, r, base)
         canvas.drawRoundRect(rect, r, r, fill)
@@ -282,7 +316,8 @@ fun Context.label(
     color: Int = C.TEXT,
     bold: Boolean = false,
     light: Boolean = false,
-    thin: Boolean = false,
+    /** Punktmatrix-Schrift (Nothing-Stil) für Uhr, Titel und Zahlen. */
+    display: Boolean = false,
     lines: Int = 1,
 ): TextView = TextView(this).apply {
     this.text = text
@@ -290,8 +325,8 @@ fun Context.label(
     setTextColor(color)
     includeFontPadding = false
     typeface = when {
+        display -> Fonts.display
         bold -> Fonts.medium
-        thin -> Fonts.thin
         light -> Fonts.light
         else -> Fonts.regular
     }

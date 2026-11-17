@@ -11,13 +11,12 @@ import java.util.UUID
 enum class WidgetSize(val w: Int, val h: Int, val label: String) {
     S(2, 2, "Klein"),
     M(4, 2, "Mittel"),
-    L(4, 4, "Groß"),
 }
 
 enum class WidgetKind(val title: String, val sizes: List<WidgetSize>) {
     CLOCK("Uhr", listOf(WidgetSize.S, WidgetSize.M)),
-    LIGHT("Licht", listOf(WidgetSize.S, WidgetSize.M, WidgetSize.L)),
-    AIRPODS("AirPods", listOf(WidgetSize.S, WidgetSize.M, WidgetSize.L)),
+    LIGHT("Licht", listOf(WidgetSize.S, WidgetSize.M)),
+    AIRPODS("AirPods", listOf(WidgetSize.S, WidgetSize.M)),
 }
 
 sealed class BoardItem {

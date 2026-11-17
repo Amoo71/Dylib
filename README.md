@@ -7,11 +7,13 @@ mit drei Glas-Widgets: **Licht**, **AirPods** und **Apps**.
 
 - **Home-Launcher**: Als Standard-Startbildschirm landet die Home-Taste immer hier. Zurück-Taste verlässt ihn nicht.
 - **Launcherboard** (8×4-Raster, wie iOS): Widgets und Apps frei anordnen.
-  Gedrückt halten → Bearbeiten: alles wackelt, **ziehen** zum Verschieben, **„–“** entfernen, **„⤡“** Größe (Klein/Mittel/Groß).
-- **Widgets**: Uhr · Licht (Govee) · AirPods – jeweils in mehreren Größen.
+  Gedrückt halten → Bearbeiten: alles wackelt, **ziehen** zum Verschieben, **„–“** entfernen, **„Größe“** (Klein/Mittel).
+- **Widgets**: Uhr · Licht (Govee) · AirPods – klein oder mittel. Tipp auf ein Widget öffnet das Detail-Panel mit allen Funktionen (Szenen, Musikmodi, ANC/Transparenz/Adaptiv, Gesprächserkennung …).
 - **Dock** unten (Liquid Glass): an/aus, Apps hinzufügen, per Gedrückthalten sortieren/entfernen.
 - **Einstellungen** (Zahnrad unten rechts): Hintergrund, Widgets, Apps, Dock, Geräte, Allgemein (inkl. Launcher verlassen).
-- **Liquid Glass mit Milchglas**: Widgets, Dock, Icons und Panels zeigen den animierten Hintergrund verschwommen (abschaltbar).
+- **Liquid Glass mit Milchglas**: Widgets, Dock, Icons und Panels zeigen den animierten Hintergrund verschwommen – Glas-Deckkraft per Regler einstellbar.
+- **Nothing-OS-Look**: Punktmatrix-Schrift für Uhr, Titel und Zahlen, klare Grotesk für Text.
+- **Selbstreparatur**: hängender Bluetooth-Scan wird neu gestartet, ein stummes Licht neu verbunden, bei wiederholten Bluetooth-Fehlern startet die App Bluetooth neu. Live-Diagnose unter Einstellungen → Geräte.
 - **App-Icons** im Stil Original, Glas-Kachel oder Klar (einfarbig auf Glas).
 - **Hintergründe**:
   - *Regen*: dünne Tropfen mit Wind-Böen (Stärke, Wind, Tempo einstellbar)
@@ -25,7 +27,7 @@ mit drei Glas-Widgets: **Licht**, **AirPods** und **Apps**.
 
 ## Installation
 
-1. APK laden: GitHub → *Releases* → **Room Launcher v2.1.0** (neueste) → `RoomLauncher.apk`.
+1. APK laden: GitHub → *Releases* → **Room Launcher v2.2.0** (neueste) → `RoomLauncher.apk`.
 2. Auf dem Tablet installieren („Unbekannte Quellen“ erlauben).
 3. App öffnen, Bluetooth-/Standortberechtigung erlauben und den **Standort einschalten** – ohne ihn findet Android 7 keine Bluetooth-LE-Geräte (Licht, AirPods-Akku). Der Launcher zeigt oben einen Hinweis, falls etwas fehlt.
 4. Home-Taste drücken → **Room Launcher** als Standard wählen („Immer“).
@@ -57,3 +59,11 @@ Lokal: Android SDK installieren, dann `./gradlew assembleRelease`.
 
 Die APK ist mit einem im Repo liegenden Schlüssel (`keystore/`) signiert, damit Updates sich drüber installieren lassen.
 Nur für den privaten Gebrauch gedacht.
+
+## Schriften
+
+Nothings eigene Schriften (NDot, NType) sind nicht frei verfügbar. Verwendet werden freie Nachbauten unter der
+SIL Open Font License 1.1 (Lizenztexte liegen in `app/src/main/assets/fonts/`):
+
+- **Doto** – Punktmatrix-Schrift (Copyright The Doto Project Authors)
+- **Space Grotesk** – Grotesk (Copyright The Space Grotesk Project Authors)

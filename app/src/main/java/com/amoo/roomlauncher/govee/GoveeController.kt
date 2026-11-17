@@ -87,6 +87,7 @@ class GoveeController(
     private var reconnectJob: Job? = null
     private var connectTimeout: Job? = null
     private var failures = 0
+    private var silentWrites = 0
     private var scanStopJob: Job? = null
 
     fun start() {
@@ -224,15 +225,18 @@ class GoveeController(
         }
     }
 
-    /** Sofort neu verbinden (z. B. Knopf "Jetzt verbinden"). */
+    /** Sofort (neu) verbinden – z. B. Knopf "Neu verbinden" oder Selbstheilung. */
     fun reconnectNow() {
         failures = 0
         reconnectJob?.cancel()
-        if (_connection.value != Connection.CONNECTED) {
-            disconnectInternal()
-            _connection.value = Connection.DISCONNECTED
-            connect()
+        connectTimeout?.cancel()
+        disconnectInternal()
+        if (prefs.goveeAddress == null) {
+            _connection.value = Connection.NOT_CONFIGURED
+            return
         }
+        _connection.value = Connection.DISCONNECTED
+        connect()
     }
 
     private val gattCallback = object : BluetoothGattCallback() {
@@ -359,7 +363,16 @@ class GoveeController(
                 ch.value = item
                 val ok = runCatching { g.writeCharacteristic(ch) }.getOrDefault(false)
                 if (ok) {
-                    withTimeoutOrNull(800) { ack.await() }
+                    val acked = withTimeoutOrNull(800) { ack.await() } != null
+                    // Mehrere Schreibvorgänge ohne Antwort = Verbindung hängt → neu verbinden
+                    if (acked) {
+                        silentWrites = 0
+                    } else if (++silentWrites >= 4) {
+                        silentWrites = 0
+                        _lastError.value = "Licht antwortet nicht mehr – verbinde neu"
+                        reconnectNow()
+                        break
+                    }
                     delay(20)
                 } else {
                     // Stack beschäftigt (z. B. Descriptor-Write): später erneut, außer ein neuerer Wert kam schon

@@ -21,6 +21,7 @@ import com.amoo.roomlauncher.apps.AppEntry
 import com.amoo.roomlauncher.board.WidgetKind
 import com.amoo.roomlauncher.board.WidgetSize
 import com.amoo.roomlauncher.govee.GoveeController
+import kotlinx.coroutines.flow.StateFlow
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -41,34 +42,40 @@ private fun hueOf(argb: Int): Float {
     return hsv[0]
 }
 
+/** Baut das Widget. [onOpenLight]/[onOpenAirPods] öffnen das Detail-Panel (alle Funktionen + Einrichtung). */
 fun Context.widgetView(
     kind: WidgetKind,
     size: WidgetSize,
     govee: GoveeController,
     airpods: AirPodsController,
-    onSetupLight: () -> Unit,
-    onSetupAirPods: () -> Unit,
+    onOpenLight: () -> Unit,
+    onOpenAirPods: () -> Unit,
 ): View = when (kind) {
     WidgetKind.CLOCK -> clockWidget(size)
-    WidgetKind.LIGHT -> lightWidget(size, govee, onSetupLight)
-    WidgetKind.AIRPODS -> airPodsWidget(size, airpods, onSetupAirPods)
+    WidgetKind.LIGHT -> lightWidget(size, govee, onOpenLight)
+    WidgetKind.AIRPODS -> airPodsWidget(size, airpods, onOpenAirPods)
 }
 
-/** Kopfzeile eines Widgets: Titel, Status-Punkt + Text, optional Zahnrad. */
-private class Header(context: Context, title: String, onSetup: (() -> Unit)?) : LinearLayout(context) {
-    val title: TextView = context.label(title, 20f, bold = true)
+/**
+ * Kopfzeile eines Widgets: [icon], Titel (Punktmatrix), Status-Punkt + Text, optional Zahnrad.
+ * Ein Tipp auf die Kopfzeile öffnet das Detail-Panel.
+ */
+private class Header(context: Context, title: String, icon: View?, gear: Boolean, onOpen: () -> Unit) : LinearLayout(context) {
+    val title: TextView = context.label(title, 19f, display = true)
     val status: TextView = context.label("", 12.5f, C.TEXT2)
-    val dot: View = context.dot(C.TEXT3, 8)
+    val dot: View = context.dot(C.TEXT3, 7)
 
     init {
         orientation = HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
+        if (icon != null) addView(icon, (icon.layoutParams as? LayoutParams ?: lp(dp(30), dp(30))).margins(r = dp(10)))
         val col = context.column().apply {
             addView(this@Header.title)
-            addView(context.row(dot, status, spacingDp = 6), lp().margins(t = dp(4)))
+            addView(context.row(dot, status, spacingDp = 6), lp().margins(t = dp(5)))
         }
         addView(col, lp(0, WRAP, 1f))
-        if (onSetup != null) addView(context.glassIconButton(Glyph.GEAR, 36, onClick = onSetup))
+        if (gear) addView(context.glassIconButton(Glyph.GEAR, 36, onClick = onOpen))
+        pressable(onClick = onOpen)
     }
 
     fun setStatus(text: String, color: Int) {
@@ -84,24 +91,24 @@ private val DAY = SimpleDateFormat("EEEE", Locale.GERMANY)
 private val TIME = SimpleDateFormat("HH:mm", Locale.GERMANY)
 private val DATE = SimpleDateFormat("d. MMMM yyyy", Locale.GERMANY)
 
+/** Uhr ohne Kasten – Punktmatrix-Ziffern schweben frei über dem Hintergrund. */
 fun Context.clockWidget(size: WidgetSize): View {
     val small = size == WidgetSize.S
-    // Kein Glas-Kasten – die Uhr schwebt frei über dem Hintergrund (Schatten für Lesbarkeit)
     val card = column().apply {
         gravity = Gravity.CENTER_VERTICAL
         setPadding(dp(8), dp(8), dp(8), dp(8))
     }
-    fun TextView.shadow() = apply { setShadowLayer(dpf(10), 0f, dpf(2), 0x80000000.toInt()) }
-    val day = label("", if (small) 16f else 20f, C.RED, bold = true).shadow()
-    val time = label("", if (small) 62f else 104f, thin = true).shadow()
-    val date = label("", if (small) 14f else 18f, C.TEXT2).shadow()
+    fun TextView.shadow() = apply { setShadowLayer(dpf(10), 0f, dpf(2), 0x8C000000.toInt()) }
+    val day = label("", if (small) 15f else 18f, C.RED, bold = true).shadow()
+    val time = label("", if (small) 66f else 112f, display = true).shadow()
+    val date = label("", if (small) 14f else 17f, C.TEXT2).shadow()
     card.addView(day)
-    card.addView(time, lp().margins(t = dp(2), b = dp(4)))
+    card.addView(time, lp().margins(t = dp(4), b = dp(6)))
     card.addView(date)
     val tick = object : Runnable {
         override fun run() {
             val now = Date()
-            day.text = DAY.format(now)
+            day.text = DAY.format(now).uppercase(Locale.GERMANY)
             time.text = TIME.format(now)
             date.text = DATE.format(now)
             card.removeCallbacks(this)
@@ -141,15 +148,18 @@ private class GlowDot(context: Context) : View(context) {
     override fun onDraw(canvas: Canvas) {
         val c = width / 2f
         val col = if (on) color else 0xFF3A3A3C.toInt()
-        p.shader = RadialGradient(c, c, c, intArrayOf(col, Color.argb(if (on) 90 else 0, Color.red(col), Color.green(col), Color.blue(col)), 0), floatArrayOf(0.3f, 0.55f, 1f), Shader.TileMode.CLAMP)
+        p.shader = RadialGradient(
+            c, c, c,
+            intArrayOf(col, Color.argb(if (on) 90 else 0, Color.red(col), Color.green(col), Color.blue(col)), 0),
+            floatArrayOf(0.3f, 0.55f, 1f), Shader.TileMode.CLAMP,
+        )
         canvas.drawCircle(c, c, c, p)
     }
 }
 
-private fun Context.lightHeader(govee: GoveeController, onSetup: (() -> Unit)?): View {
-    val h = Header(this, "Licht", onSetup)
+private fun Context.lightHeader(govee: GoveeController, gear: Boolean, onOpen: () -> Unit): View {
     val glow = GlowDot(this)
-    h.addView(glow, 0, lp(dp(30), dp(30)).margins(r = dp(10)))
+    val h = Header(this, "Licht", glow, gear, onOpen)
     fun refresh() {
         val c = govee.connection.value
         h.setStatus(
@@ -157,7 +167,7 @@ private fun Context.lightHeader(govee: GoveeController, onSetup: (() -> Unit)?):
                 GoveeController.Connection.NOT_CONFIGURED -> "nicht eingerichtet"
                 GoveeController.Connection.CONNECTED -> govee.deviceName.value ?: "verbunden"
                 GoveeController.Connection.CONNECTING -> "verbinde…"
-                GoveeController.Connection.DISCONNECTED -> "getrennt"
+                GoveeController.Connection.DISCONNECTED -> "getrennt – verbinde neu"
             },
             when (c) {
                 GoveeController.Connection.CONNECTED -> C.GREEN
@@ -174,20 +184,20 @@ private fun Context.lightHeader(govee: GoveeController, onSetup: (() -> Unit)?):
     return h
 }
 
-private fun Context.powerButton(govee: GoveeController, sizeDp: Int): PowerButton {
+internal fun Context.powerButton(govee: GoveeController, sizeDp: Int): PowerButton {
     val b = PowerButton(this, sizeDp) { govee.setPower(!govee.power.value) }
     b.bind(govee.power) { b.on = it }
     b.bind(govee.color) { b.ringColor = it }
     return b
 }
 
-private fun Context.brightnessSlider(govee: GoveeController, h: Int): GlassSlider {
+internal fun Context.brightnessSlider(govee: GoveeController, h: Int): GlassSlider {
     val s = GlassSlider(this, h, glyph = Glyph.SUN) { govee.setBrightness(it) }
     s.bind(govee.brightness) { s.value = it }
     return s
 }
 
-private fun Context.hueSlider(govee: GoveeController, h: Int): GlassSlider {
+internal fun Context.hueSlider(govee: GoveeController, h: Int): GlassSlider {
     val s = GlassSlider(this, h, RAINBOW) { v ->
         govee.setColor(Color.HSVToColor(floatArrayOf((v * 360f).coerceIn(0f, 359.9f), 1f, 1f)))
     }
@@ -195,7 +205,7 @@ private fun Context.hueSlider(govee: GoveeController, h: Int): GlassSlider {
     return s
 }
 
-private fun Context.presetRow(govee: GoveeController, sizeDp: Int, hue: GlassSlider?): View {
+internal fun Context.presetRow(govee: GoveeController, sizeDp: Int, hue: GlassSlider?): View {
     val swatches = PRESETS.map { c ->
         View(this).apply {
             background = RoundDrawable(context, sizeDp / 2f, c, C.white(0.35f))
@@ -209,82 +219,40 @@ private fun Context.presetRow(govee: GoveeController, sizeDp: Int, hue: GlassSli
     return hScroll(*swatches.toTypedArray(), spacingDp = 8)
 }
 
-private fun Context.notConfigured(onSetup: () -> Unit): View = column().apply {
-    addView(label("Noch kein Licht verbunden.", 14f, C.TEXT2, lines = 2))
-    addView(glassButton("Licht einrichten", true, onSetup), lp(WRAP, WRAP).margins(t = dp(10)))
-}
-
-fun Context.lightWidget(size: WidgetSize, govee: GoveeController, onSetup: () -> Unit): View {
-    val card = glassCard(if (size == WidgetSize.S) 16 else 20)
-    card.addView(lightHeader(govee, if (size == WidgetSize.S) null else onSetup))
+fun Context.lightWidget(size: WidgetSize, govee: GoveeController, onOpen: () -> Unit): View {
+    val small = size == WidgetSize.S
+    val card = glassCard(if (small) 16 else 20)
+    card.addView(lightHeader(govee, gear = !small, onOpen = onOpen))
+    card.addView(flexSpace())
     val body = column()
-    val setup = notConfigured(onSetup)
-    card.addView(flexSpaceIf(size != WidgetSize.L))
-    card.addView(body, if (size == WidgetSize.L) lp(MATCH, 0, 1f).margins(t = dp(12)) else lp())
-    card.addView(setup, lp().margins(t = dp(8)))
-    card.addView(flexSpaceIf(size != WidgetSize.L))
+    val setup = column().apply {
+        addView(label("Noch kein Licht verbunden.", 14f, C.TEXT2, lines = 2))
+        addView(glassButton("Licht einrichten", true, onOpen), lp(WRAP, WRAP).margins(t = dp(10)))
+    }
+    card.addView(body)
+    card.addView(setup)
+    card.addView(flexSpace())
     body.bind(govee.connection) { c ->
         val none = c == GoveeController.Connection.NOT_CONFIGURED
         body.visibility = if (none) View.GONE else View.VISIBLE
         setup.visibility = if (none) View.VISIBLE else View.GONE
     }
-    when (size) {
-        WidgetSize.S -> {
-            val pct = label("", 22f, light = true)
-            pct.bind(govee.brightness) { pct.text = "${(it * 100).roundToInt()} %" }
-            body.addView(row(powerButton(govee, 54), pct, spacingDp = 12))
-            body.addView(brightnessSlider(govee, 38), lp().margins(t = dp(12)))
+    if (small) {
+        val pct = label("", 26f, display = true)
+        pct.bind(govee.brightness) { pct.text = "${(it * 100).roundToInt()}%" }
+        body.addView(row(powerButton(govee, 54), pct, spacingDp = 14))
+        body.addView(brightnessSlider(govee, 38), lp().margins(t = dp(14)))
+    } else {
+        val hue = hueSlider(govee, 30)
+        val sliders = column().apply {
+            addView(brightnessSlider(govee, 40))
+            addView(hue, lp().margins(t = dp(10)))
         }
-        WidgetSize.M -> {
-            val hue = hueSlider(govee, 30)
-            val sliders = column().apply {
-                addView(brightnessSlider(govee, 40))
-                addView(hue, lp().margins(t = dp(10)))
-            }
-            body.addView(row(powerButton(govee, 66), sliders.also { it.layoutParams = lp(0, WRAP, 1f) }, spacingDp = 16))
-            body.addView(presetRow(govee, 30, hue), lp().margins(t = dp(14)))
-        }
-        WidgetSize.L -> {
-            val content = column()
-            val pct = label("", 14f, C.TEXT2, bold = true)
-            pct.bind(govee.brightness) { pct.text = "Helligkeit ${(it * 100).roundToInt()} %" }
-            val bright = column().apply {
-                addView(pct)
-                addView(brightnessSlider(govee, 48), lp().margins(t = dp(8)))
-            }
-            content.addView(row(powerButton(govee, 76), bright.also { it.layoutParams = lp(0, WRAP, 1f) }, spacingDp = 18))
-            content.addView(label("Farbe", 14f, C.TEXT2, bold = true), lp().margins(t = dp(20)))
-            val hue = hueSlider(govee, 38)
-            content.addView(hue, lp().margins(t = dp(8)))
-            content.addView(presetRow(govee, 40, hue), lp().margins(t = dp(14)))
-            content.addView(label("Szenen", 14f, C.TEXT2, bold = true), lp().margins(t = dp(20)))
-            content.addView(
-                hScroll(*GoveeController.SCENES.map { (id, l) -> Chip(this, l) { govee.setScene(id) } }.toTypedArray()),
-                lp().margins(t = dp(8)),
-            )
-            content.addView(label("Musik-Modus (Mikrofon am Controller)", 14f, C.TEXT2, bold = true), lp().margins(t = dp(16)))
-            content.addView(
-                hScroll(*GoveeController.MUSIC_MODES.map { (id, l) -> Chip(this, l) { govee.setMusicMode(id) } }.toTypedArray()),
-                lp().margins(t = dp(8)),
-            )
-            val error = label("", 12.5f, C.ORANGE, lines = 2)
-            error.bind(govee.lastError) {
-                error.text = it.orEmpty()
-                error.visibility = if (it == null) View.GONE else View.VISIBLE
-            }
-            content.addView(error, lp().margins(t = dp(14)))
-            val reconnect = glassButton("Jetzt verbinden") { govee.reconnectNow() }
-            reconnect.bind(govee.connection) {
-                reconnect.visibility = if (it == GoveeController.Connection.DISCONNECTED) View.VISIBLE else View.GONE
-            }
-            content.addView(reconnect, lp(WRAP, WRAP).margins(t = dp(10)))
-            body.addView(scroll(content), lp(MATCH, MATCH))
-        }
+        body.addView(row(powerButton(govee, 66), sliders.also { it.layoutParams = lp(0, WRAP, 1f) }, spacingDp = 16))
+        body.addView(presetRow(govee, 30, hue), lp().margins(t = dp(14)))
     }
     return card
 }
-
-private fun Context.flexSpaceIf(flex: Boolean): View = if (flex) flexSpace() else spacer(0)
 
 // ------------------------------------------------------------------ AirPods
 
@@ -295,32 +263,22 @@ private val SHORT_NOISE = mapOf(
     AirPodsController.Noise.ANC to "ANC",
 )
 
-/** Kopfzeile: AirPods-Symbol, Name und Verbindungsstatus. */
-private fun Context.airPodsHeader(airpods: AirPodsController, onSetup: (() -> Unit)?, compact: Boolean): View {
-    val title = label("AirPods", if (compact) 17f else 20f, bold = true)
-    val status = label("", 12f, C.TEXT2)
-    val dot = dot(C.TEXT3, 7)
-    val text = column().apply {
-        addView(title)
-        addView(row(dot, status, spacingDp = 5), lp().margins(t = dp(3)))
-    }
-    val h = row(
-        AirPodsGlyph(this).apply { layoutParams = lp(dp(if (compact) 28 else 34), dp(if (compact) 28 else 34)) },
-        text.also { it.layoutParams = lp(0, WRAP, 1f).margins(l = dp(10)) },
-    )
-    if (onSetup != null) h.addView(glassIconButton(Glyph.GEAR, 36, onClick = onSetup))
+private fun Context.airPodsHeader(airpods: AirPodsController, gear: Boolean, onOpen: () -> Unit): View {
+    val icon = AirPodsGlyph(this).apply { layoutParams = lp(dp(30), dp(30)) }
+    val h = Header(this, "AirPods", icon, gear, onOpen)
     fun refresh() {
         val name = airpods.deviceName.value
         val model = airpods.model.value
-        title.text = name ?: model ?: "AirPods"
+        h.title.text = name ?: model ?: "AirPods"
         val c = airpods.audioConnected.value
-        status.text = when {
-            c -> if (model != null && model != name) "verbunden · $model" else "verbunden"
-            name == null -> "nicht gekoppelt"
-            else -> "nicht verbunden"
-        }
-        (dot.background as? RoundDrawable)?.color = if (c) C.GREEN else C.TEXT3
-        dot.invalidate()
+        h.setStatus(
+            when {
+                c -> if (model != null && model != name) "verbunden · $model" else "verbunden"
+                name == null -> "nicht gekoppelt"
+                else -> "nicht verbunden"
+            },
+            if (c) C.GREEN else C.TEXT3,
+        )
     }
     h.bind(airpods.deviceName) { refresh() }
     h.bind(airpods.audioConnected) { refresh() }
@@ -328,10 +286,10 @@ private fun Context.airPodsHeader(airpods: AirPodsController, onSetup: (() -> Un
     return h
 }
 
-/** Ein Akku-Ring mit Prozentzahl darunter. */
+/** Ein Akku-Ring mit Prozentzahl (Punktmatrix) darunter. */
 private fun Context.ringItem(part: BatteryRing.Part, ringDp: Int, airpods: AirPodsController): LinearLayout {
     val ring = BatteryRing(this, part)
-    val pct = label("–", 13.5f, C.TEXT2).apply { gravity = Gravity.CENTER }
+    val pct = label("–", 15f, C.TEXT2, display = true).apply { gravity = Gravity.CENTER }
     ring.bind(airpods.battery) { b ->
         val (p, ch) = when (part) {
             BatteryRing.Part.LEFT -> b?.left to (b?.chargingLeft == true)
@@ -340,7 +298,7 @@ private fun Context.ringItem(part: BatteryRing.Part, ringDp: Int, airpods: AirPo
         }
         ring.percent = p
         ring.charging = ch
-        pct.text = p?.let { "$it %" } ?: "–"
+        pct.text = p?.let { "$it%" } ?: "–"
         pct.setTextColor(if (p != null) C.TEXT else C.TEXT3)
     }
     if (part != BatteryRing.Part.CASE) {
@@ -349,17 +307,17 @@ private fun Context.ringItem(part: BatteryRing.Part, ringDp: Int, airpods: AirPo
     return column().apply {
         gravity = Gravity.CENTER_HORIZONTAL
         addView(ring, lp(dp(ringDp), dp(ringDp)))
-        addView(pct, lp(WRAP, WRAP).margins(t = dp(7)))
+        addView(pct, lp(WRAP, WRAP).margins(t = dp(8)))
     }
 }
 
-private fun Context.ringRow(airpods: AirPodsController, ringDp: Int): LinearLayout = LinearLayout(this).apply {
+internal fun Context.ringRow(airpods: AirPodsController, ringDp: Int): LinearLayout = LinearLayout(this).apply {
     orientation = LinearLayout.HORIZONTAL
     gravity = Gravity.CENTER_VERTICAL
     for (part in BatteryRing.Part.entries) addView(ringItem(part, ringDp, airpods), lp(0, WRAP, 1f))
 }
 
-private fun Context.noiseSelector(airpods: AirPodsController, short: Boolean): Segmented {
+internal fun Context.noiseSelector(airpods: AirPodsController, short: Boolean): Segmented {
     val modes = AirPodsController.Noise.entries
     val seg = Segmented(
         this,
@@ -372,7 +330,7 @@ private fun Context.noiseSelector(airpods: AirPodsController, short: Boolean): S
     return seg
 }
 
-private fun Context.connectButton(airpods: AirPodsController, highlighted: Boolean): TextView {
+internal fun Context.connectButton(airpods: AirPodsController, highlighted: Boolean): TextView {
     val b = glassButton("Verbinden", highlighted) {
         if (airpods.audioConnected.value) airpods.disconnectAudio() else airpods.connectAudio()
     }
@@ -380,78 +338,45 @@ private fun Context.connectButton(airpods: AirPodsController, highlighted: Boole
     return b
 }
 
-fun Context.airPodsWidget(size: WidgetSize, airpods: AirPodsController, onSetup: () -> Unit): View = when (size) {
-    WidgetSize.S -> glassCard(16).apply {
-        addView(airPodsHeader(airpods, null, compact = true))
-        addView(flexSpace())
-        addView(ringRow(airpods, 56))
-        addView(flexSpace())
-        // Verbunden: Geräuschmodus direkt wählbar, sonst ein Verbinden-Knopf
-        val bottom = FrameLayout(context)
-        val seg = noiseSelector(airpods, short = true)
-        val connect = glassButton("Verbinden", true) { airpods.connectAudio() }
-        bottom.addView(seg, FrameLayout.LayoutParams(MATCH, WRAP))
-        bottom.addView(connect, FrameLayout.LayoutParams(MATCH, WRAP))
-        bottom.bind(airpods.audioConnected) { c ->
-            seg.visibility = if (c) View.VISIBLE else View.GONE
-            connect.visibility = if (c) View.GONE else View.VISIBLE
+fun Context.airPodsWidget(size: WidgetSize, airpods: AirPodsController, onOpen: () -> Unit): View =
+    if (size == WidgetSize.S) {
+        glassCard(16).apply {
+            addView(airPodsHeader(airpods, gear = false, onOpen = onOpen))
+            addView(flexSpace())
+            addView(ringRow(airpods, 56))
+            addView(flexSpace())
+            // Verbunden: Geräuschmodus direkt wählbar, sonst ein Verbinden-Knopf
+            val bottom = FrameLayout(context)
+            val seg = noiseSelector(airpods, short = true)
+            val connect = glassButton("Verbinden", true) { airpods.connectAudio() }
+            bottom.addView(seg, FrameLayout.LayoutParams(MATCH, WRAP))
+            bottom.addView(connect, FrameLayout.LayoutParams(MATCH, WRAP))
+            bottom.bind(airpods.audioConnected) { c ->
+                seg.visibility = if (c) View.VISIBLE else View.GONE
+                connect.visibility = if (c) View.GONE else View.VISIBLE
+            }
+            addView(bottom, lp())
         }
-        addView(bottom, lp())
+    } else {
+        glassCard(20).apply {
+            addView(airPodsHeader(airpods, gear = true, onOpen = onOpen))
+            addView(flexSpace())
+            addView(
+                row(
+                    ringRow(airpods, 62).also { it.layoutParams = lp(0, WRAP, 1f) },
+                    connectButton(airpods, highlighted = false),
+                    spacingDp = 12,
+                ),
+            )
+            addView(flexSpace())
+            addView(noiseSelector(airpods, short = false))
+        }
     }
-    WidgetSize.M -> glassCard(20).apply {
-        addView(airPodsHeader(airpods, onSetup, compact = false))
-        addView(flexSpace())
-        addView(
-            row(
-                ringRow(airpods, 62).also { it.layoutParams = lp(0, WRAP, 1f) },
-                connectButton(airpods, highlighted = false),
-                spacingDp = 12,
-            ),
-        )
-        addView(flexSpace())
-        addView(noiseSelector(airpods, short = false))
-    }
-    WidgetSize.L -> {
-        val card = glassCard(20)
-        card.addView(airPodsHeader(airpods, onSetup, compact = false))
-        val content = column()
-        content.addView(ringRow(airpods, 76), lp().margins(t = dp(10)))
-        val ctrl = glassButton("Steuerung verbinden") { airpods.openControl() }
-        ctrl.bind(airpods.controlReady) { ctrl.visibility = if (it) View.GONE else View.VISIBLE }
-        content.addView(row(connectButton(airpods, highlighted = false), ctrl, spacingDp = 10), lp().margins(t = dp(18)))
-        content.addView(label("Geräuschkontrolle", 14f, C.TEXT2, bold = true), lp().margins(t = dp(18)))
-        content.addView(noiseSelector(airpods, short = false), lp().margins(t = dp(8)))
 
-        val strengthLabel = label("", 13f, C.TEXT2)
-        val strength = GlassSlider(this, 34) { airpods.setAdaptiveStrength((it * 100).roundToInt()) }
-        val strengthBox = column().apply {
-            addView(strengthLabel)
-            addView(strength, lp().margins(t = dp(6)))
-        }
-        strengthBox.bind(airpods.adaptiveStrength) {
-            strength.value = (it ?: 50) / 100f
-            strengthLabel.text = "Adaptives Audio: ${it ?: 50} %  (weniger ↔ mehr Geräuschreduzierung)"
-        }
-        strengthBox.bind(airpods.noise) {
-            strengthBox.visibility = if (it == AirPodsController.Noise.ADAPTIVE) View.VISIBLE else View.GONE
-        }
-        content.addView(strengthBox, lp().margins(t = dp(14)))
-
-        content.addView(toggleRow("Gesprächserkennung", airpods.conversationAwareness, airpods.controlReady) { airpods.setConversationAwareness(it) }, lp().margins(t = dp(10)))
-        content.addView(toggleRow("Automatische Ohrerkennung", airpods.earDetection, airpods.controlReady) { airpods.setEarDetection(it) })
-        content.addView(toggleRow("ANC mit einem AirPod", airpods.oneBudAnc, airpods.controlReady) { airpods.setOneBudAnc(it) })
-        val status = label("", 12f, C.TEXT3, lines = 3)
-        status.bind(airpods.controlStatus) { status.text = it }
-        content.addView(status, lp().margins(t = dp(8)))
-        card.addView(scroll(content), lp(MATCH, 0, 1f).margins(t = dp(12)))
-        card
-    }
-}
-
-private fun Context.toggleRow(
+internal fun Context.toggleRow(
     text: String,
-    value: kotlinx.coroutines.flow.StateFlow<Boolean?>,
-    enabled: kotlinx.coroutines.flow.StateFlow<Boolean>,
+    value: StateFlow<Boolean?>,
+    enabled: StateFlow<Boolean>,
     onChange: (Boolean) -> Unit,
 ): LinearLayout {
     val t = label(text, 15f)

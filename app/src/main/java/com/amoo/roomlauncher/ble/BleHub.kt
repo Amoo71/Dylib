@@ -37,6 +37,31 @@ class BleHub(private val context: Context) {
     private var runningFast = false
     private val starts = ArrayDeque<Long>()
 
+    // ---- Selbstüberwachung
+    @Volatile var lastResultAt = 0L
+        private set
+    @Volatile var scanning = false
+        private set
+    @Volatile var lastError: String? = null
+        private set
+    private var failures = 0
+    private var lastBtReset = 0L
+
+    /** Prüft jede Minute, ob der Scan noch lebt – Android 7 lässt ihn manchmal stillschweigend sterben. */
+    private val watchdog = object : Runnable {
+        override fun run() {
+            val now = System.currentTimeMillis()
+            if (callback != null && lastResultAt > 0 && now - lastResultAt > 3 * 60_000) {
+                lastError = "Keine Signale seit 3 min – Scan neu gestartet"
+                stopInternal()
+                sync()
+            } else if (callback == null && entries.isNotEmpty()) {
+                sync()
+            }
+            handler.postDelayed(this, 60_000)
+        }
+    }
+
     private val adapter: BluetoothAdapter?
         get() = (context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
 
@@ -49,6 +74,7 @@ class BleHub(private val context: Context) {
 
     init {
         handler.postDelayed(periodicRestart, RESTART_EVERY_MS)
+        handler.postDelayed(watchdog, 60_000)
     }
 
     /** [fast] = schneller Suchmodus (z. B. beim Einrichten), sonst stromsparend. */
@@ -94,6 +120,9 @@ class BleHub(private val context: Context) {
         val cb = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) = dispatch(result)
             override fun onBatchScanResults(results: MutableList<ScanResult>) = results.forEach { dispatch(it) }
+            override fun onScanFailed(errorCode: Int) {
+                handler.post { onFailed(errorCode) }
+            }
         }
         val settings = ScanSettings.Builder()
             .setScanMode(if (wantFast) ScanSettings.SCAN_MODE_LOW_LATENCY else ScanSettings.SCAN_MODE_LOW_POWER)
@@ -102,11 +131,48 @@ class BleHub(private val context: Context) {
             scanner.startScan(null, settings, cb)
             callback = cb
             runningFast = wantFast
-        } catch (_: Throwable) {
+            scanning = true
+            if (lastResultAt == 0L) lastResultAt = System.currentTimeMillis()
+        } catch (e: Throwable) {
+            lastError = "Scan-Start fehlgeschlagen: ${e.javaClass.simpleName}"
         }
     }
 
+    /**
+     * Android 7 meldet nach langer Laufzeit gern "APPLICATION_REGISTRATION_FAILED" (2) – dann hilft nur
+     * ein Bluetooth-Neustart. Den macht die App selbst (höchstens alle 30 Minuten).
+     */
+    private fun onFailed(code: Int) {
+        callback = null
+        scanning = false
+        failures++
+        lastError = "Scan-Fehler $code"
+        if (failures >= 3 && System.currentTimeMillis() - lastBtReset > 30 * 60_000L) {
+            failures = 0
+            resetBluetooth()
+        } else {
+            handler.postDelayed({ sync() }, 5_000L * failures)
+        }
+    }
+
+    /** Bluetooth aus- und wieder einschalten (Selbstreparatur, auch manuell aus den Einstellungen). */
+    @Suppress("DEPRECATION")
+    fun resetBluetooth(): Boolean {
+        val a = adapter ?: return false
+        if (Build.VERSION.SDK_INT >= 33) return false // ab Android 13 nicht mehr erlaubt
+        lastBtReset = System.currentTimeMillis()
+        lastError = "Bluetooth wird neu gestartet…"
+        stopInternal()
+        return runCatching {
+            a.disable()
+            handler.postDelayed({ runCatching { a.enable() } }, 3_000)
+            true
+        }.getOrDefault(false)
+    }
+
     private fun dispatch(r: ScanResult) {
+        lastResultAt = System.currentTimeMillis()
+        failures = 0
         val rec = r.scanRecord?.bytes
         for (e in entries) e.listener.onAdvert(r.device, r.rssi, rec)
     }
@@ -114,6 +180,7 @@ class BleHub(private val context: Context) {
     private fun stopInternal() {
         val cb = callback ?: return
         callback = null
+        scanning = false
         runCatching { adapter?.bluetoothLeScanner?.stopScan(cb) }
     }
 

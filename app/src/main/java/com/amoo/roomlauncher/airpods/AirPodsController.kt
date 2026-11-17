@@ -151,8 +151,19 @@ class AirPodsController(
         )
         startBatteryScan()
         scope.launch {
+            var n = 0
             while (isActive) {
                 delay(10_000)
+                // alle 30 s: Verbindungsstatus neu prüfen und Profile ggf. neu anfordern
+                if (++n % 3 == 0) {
+                    bindProfiles()
+                    refreshConnectionState()
+                    // Audio verbunden, Steuerkanal aber weg → still neu versuchen (max. alle 30 s)
+                    if (_audioConnected.value && !_controlReady.value && controlJob?.isActive != true && retries < 3) {
+                        retries++
+                        openControl()
+                    }
+                }
                 val now = System.currentTimeMillis()
                 if (_battery.value != null && now - lastBleSeen > 90_000 && now - lastAapBattery > 90_000 && !_controlReady.value) {
                     _battery.value = null
@@ -175,6 +186,15 @@ class AirPodsController(
             .map { PairedDevice(it.name ?: it.address, it.address) }
             .sortedByDescending { it.name.contains("AirPods", ignoreCase = true) || it.name.contains("Beats", true) }
     }.getOrDefault(emptyList())
+
+    /** Alles frisch: Steuerkanal schließen, Profile neu holen, Status neu lesen. */
+    fun resync() {
+        closeControl()
+        retries = 0
+        bindProfiles()
+        refreshConnectionState()
+        if (_audioConnected.value) openControl()
+    }
 
     fun selectDevice(address: String) {
         closeControl()

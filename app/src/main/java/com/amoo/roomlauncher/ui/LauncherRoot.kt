@@ -12,6 +12,7 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import com.amoo.roomlauncher.BtPerms
+import com.amoo.roomlauncher.CrashLog
 import com.amoo.roomlauncher.MainActivity
 import com.amoo.roomlauncher.RoomApp
 import com.amoo.roomlauncher.apps.AppEntry
@@ -163,6 +164,7 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
         scope.launch {
             app.theme.settings.collect { t ->
                 Backdrop.enabled = t.glassBlur
+                Backdrop.opacity = t.glassOpacity
                 bgView.theme = t
                 val prev = lastTheme
                 lastTheme = t
@@ -199,15 +201,24 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
         board.setCells(
             cells,
             factory = { cell ->
-                when (val item = items.first { it.id == cell.id }) {
-                    is BoardItem.Widget -> context.widgetView(
-                        item.kind, item.size, app.govee, app.airpods,
-                        onSetupLight = { showOverlay(context.goveeSheet(app.govee, app.prefs) { closeOverlay() }) },
-                        onSetupAirPods = { showOverlay(context.airPodsSheet(app.airpods, app.prefs) { closeOverlay() }) },
-                    )
-                    is BoardItem.App -> {
-                        val entry = appMap[item.component]
-                        context.appIcon(entry, style) { if (!editMode && entry != null) app.apps.launch(entry) }
+                // Ein fehlerhaftes Widget darf nie den ganzen Launcher abstürzen lassen
+                try {
+                    when (val item = items.first { it.id == cell.id }) {
+                        is BoardItem.Widget -> context.widgetView(
+                            item.kind, item.size, app.govee, app.airpods,
+                            onOpenLight = { if (!editMode) showOverlay(context.goveeSheet(app.govee, app.prefs) { closeOverlay() }) },
+                            onOpenAirPods = { if (!editMode) showOverlay(context.airPodsSheet(app.airpods, app.prefs) { closeOverlay() }) },
+                        )
+                        is BoardItem.App -> {
+                            val entry = appMap[item.component]
+                            context.appIcon(entry, style) { if (!editMode && entry != null) app.apps.launch(entry) }
+                        }
+                    }
+                } catch (e: Throwable) {
+                    CrashLog.write(context, e)
+                    context.glassCard(16).apply {
+                        addView(context.label("Widget-Fehler", 15f, C.ORANGE, bold = true))
+                        addView(context.label(e.javaClass.simpleName, 12f, C.TEXT3))
                     }
                 }
             },

@@ -5,7 +5,6 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
-import android.graphics.Typeface
 import android.os.Handler
 import android.os.Looper
 import android.view.HapticFeedbackConstants
@@ -410,7 +409,7 @@ class BoardLayout(
     private val badgeText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = 0xFFFFFFFF.toInt()
         textSize = dp(12).toFloat()
-        typeface = Typeface.DEFAULT_BOLD
+        typeface = com.amoo.roomlauncher.ui.Fonts.medium
     }
     private val tmp = RectF()
 

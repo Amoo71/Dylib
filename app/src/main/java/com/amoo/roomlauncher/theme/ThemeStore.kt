@@ -34,6 +34,8 @@ data class ThemeSettings(
     val ownDim: Float = 0.25f,
     // Glas
     val glassBlur: Boolean = true,
+    /** Dichte des Glases: 0 = fast unsichtbar, 1 = kräftig getönt. */
+    val glassOpacity: Float = 0.3f,
 ) {
     /** Welche Partikel-Effekte gerade aktiv sind. */
     val showRain: Boolean get() = type == BgType.RAIN || (type == BgType.OWN && ownEffect == BgEffect.RAIN)
@@ -56,6 +58,7 @@ data class ThemeSettings(
         put("ownEffect", ownEffect.name)
         put("ownDim", ownDim.toDouble())
         put("blur", glassBlur)
+        put("glassOpacity", glassOpacity.toDouble())
     }.toString()
 
     companion object {
@@ -81,6 +84,7 @@ data class ThemeSettings(
                     ownEffect = runCatching { BgEffect.valueOf(o.getString("ownEffect")) }.getOrDefault(d.ownEffect),
                     ownDim = o.optDouble("ownDim", d.ownDim.toDouble()).toFloat(),
                     glassBlur = o.optBoolean("blur", true),
+                    glassOpacity = o.optDouble("glassOpacity", 0.3).toFloat(),
                 )
             }.getOrDefault(ThemeSettings())
         }

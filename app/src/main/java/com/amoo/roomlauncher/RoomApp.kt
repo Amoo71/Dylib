@@ -52,6 +52,8 @@ class RoomApp : Application() {
         // Erlaubt ab Android 9 Reflection auf versteckte Bluetooth-APIs (AirPods-Steuerkanal).
         if (Build.VERSION.SDK_INT >= 28) runCatching { HiddenApiBypass.addHiddenApiExemptions("L") }
 
+        CrashLog.install(this)
+        com.amoo.roomlauncher.ui.Fonts.init(this)
         prefs = Prefs(this)
         ble = BleHub(this)
         govee = GoveeController(this, prefs, appScope, ble)
