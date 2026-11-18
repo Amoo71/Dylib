@@ -2,98 +2,81 @@ package com.amoo.roomlauncher.ui
 
 import android.animation.ValueAnimator
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.ColorFilter
 import android.graphics.LinearGradient
 import android.graphics.Matrix
 import android.graphics.Paint
-import android.graphics.Path
+import android.graphics.PixelFormat
 import android.graphics.RadialGradient
 import android.graphics.RectF
 import android.graphics.Shader
-import android.graphics.SweepGradient
+import android.graphics.drawable.Drawable
+import android.os.SystemClock
+import android.provider.Settings
+import android.view.Choreographer
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.widget.LinearLayout
+import java.util.Locale
+import java.util.WeakHashMap
+import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
+import kotlin.math.exp
+import kotlin.math.floor
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 import kotlin.math.sin
+import kotlin.math.sqrt
+
+/*
+ * Licht-Oberfläche nach der Lumen-Remote-Spezifikation (GOVEE_H617E_UI.md):
+ * 3D-LED-Ring auf geneigter Ebene, holografische Plattform, Power-Knopf, Mittenanzeige,
+ * Statuszeile mit Modus-Chip, HSV-Farbrad, Glow-Helligkeitsleiste und Akzent-Hintergrund.
+ * Alle Maße in dp (= pt der iOS-Vorlage).
+ */
 
 // ------------------------------------------------------------------ Farben
 
 object LightColors {
-    /** Geschlossener Farbring: Warm → Warmweiß → Weiß → Regenbogen → zurück zu Warm. */
-    val STOPS = intArrayOf(
-        0xFFFF8A2B.toInt(), 0xFFFFC890.toInt(), 0xFFFFFFFF.toInt(), 0xFFFF2B2B.toInt(), 0xFFFFE23A.toInt(),
-        0xFF35E05C.toInt(), 0xFF2EE3E6.toInt(), 0xFF2F6BFF.toInt(), 0xFFC23BFF.toInt(), 0xFFFF8A2B.toInt(),
-    )
-    val POS = floatArrayOf(0f, 0.07f, 0.14f, 0.23f, 0.36f, 0.49f, 0.61f, 0.74f, 0.88f, 1f)
-
-    val PRESETS = intArrayOf(
-        0xFFFFB46B.toInt(), 0xFFFFFFFF.toInt(), 0xFFFF3B30.toInt(), 0xFFFF9500.toInt(), 0xFFFFD60A.toInt(),
-        0xFF34C759.toInt(), 0xFF00C7BE.toInt(), 0xFF0A84FF.toInt(), 0xFF5E5CE6.toInt(), 0xFFBF5AF2.toInt(),
-        0xFFFF2D87.toInt(),
-    )
-
-    /** Mondlicht-Lila für den Nacht-Timer. */
+    val BG = 0xFF0A0414.toInt()
+    val MAGENTA = 0xFFC740FF.toInt()
+    val DARK_GLASS = 0xBF1F0A2E.toInt() // rgba(0.12, 0.04, 0.18, 0.75)
+    val WARM = 0xFFFFD180.toInt()
+    val WARM_DARK = 0xFF401F0D.toInt()
     val MOON = 0xFFB9A8FF.toInt()
 
-    fun colorAt(f: Float): Int {
-        val x = ((f % 1f) + 1f) % 1f
-        for (i in 0 until POS.size - 1) {
-            if (x <= POS[i + 1]) return blend(STOPS[i], STOPS[i + 1], (x - POS[i]) / (POS[i + 1] - POS[i]))
-        }
-        return STOPS.last()
-    }
-
-    /** Position (0..1) auf dem Ring, die der Farbe am nächsten kommt. */
-    fun fractionOf(argb: Int): Float {
-        var best = 0f
-        var bestD = Int.MAX_VALUE
-        for (i in 0 until 360) {
-            val f = i / 360f
-            val c = colorAt(f)
-            val dr = Color.red(c) - Color.red(argb)
-            val dg = Color.green(c) - Color.green(argb)
-            val db = Color.blue(c) - Color.blue(argb)
-            val d = dr * dr * 3 + dg * dg * 4 + db * db * 2
-            if (d < bestD) {
-                bestD = d
-                best = f
-            }
-        }
-        return best
-    }
-
-    fun name(argb: Int): String {
-        val hsv = FloatArray(3)
-        Color.colorToHSV(argb, hsv)
-        val h = hsv[0]
-        val s = hsv[1]
-        return when {
-            hsv[2] < 0.05f -> "Aus"
-            s < 0.12f -> "Weiß"
-            s < 0.62f && h in 15f..50f -> "Warmweiß"
-            h < 14f || h >= 340f -> "Rot"
-            h < 42f -> "Orange"
-            h < 68f -> "Gelb"
-            h < 160f -> "Grün"
-            h < 196f -> "Türkis"
-            h < 250f -> "Blau"
-            h < 290f -> "Lila"
-            else -> "Pink"
-        }
-    }
-
     fun withAlpha(c: Int, a: Int): Int = (c and 0xFFFFFF) or (a.coerceIn(0, 255) shl 24)
+    fun withAlpha(c: Int, a: Float): Int = withAlpha(c, (a * 255).roundToInt())
 
-    /** Durchschnittsfarbe der leuchtenden Segmente (für den Lichtschein), null = alle aus. */
+    /** Helligkeit (HSV-Wert) einer Farbe skalieren. */
+    fun value(c: Int, f: Float): Int {
+        val hsv = FloatArray(3)
+        Color.colorToHSV(c, hsv)
+        hsv[2] = (hsv[2] * f).coerceIn(0f, 1f)
+        return Color.HSVToColor(hsv)
+    }
+
+    /** Zweiter Hintergrund-Ton: Farbton +0,12, Helligkeit mindestens 0,5. */
+    fun shifted(c: Int): Int {
+        val hsv = FloatArray(3)
+        Color.colorToHSV(c, hsv)
+        hsv[0] = (hsv[0] + 0.12f * 360f) % 360f
+        hsv[2] = max(0.5f, hsv[2])
+        return Color.HSVToColor(hsv)
+    }
+
+    fun hex(c: Int) = String.format(Locale.ROOT, "#%06X", c and 0xFFFFFF)
+
+    /** Durchschnittsfarbe der leuchtenden Segmente, null = alle aus. */
     fun average(rgbs: List<Int>): Int? {
         var r = 0
         var g = 0
@@ -109,707 +92,1249 @@ object LightColors {
         if (n == 0) return null
         return Color.rgb(r / n, g / n, b / n)
     }
+
+    /** HSV → RGB ohne JNI (für das Farbrad-Bild). */
+    fun hsv(h: Float, s: Float, v: Float): Int {
+        val hh = ((h % 360f) + 360f) % 360f / 60f
+        val i = floor(hh).toInt()
+        val f = hh - i
+        val p = v * (1 - s)
+        val q = v * (1 - s * f)
+        val t = v * (1 - s * (1 - f))
+        val (r, g, b) = when (i) {
+            0 -> Triple(v, t, p)
+            1 -> Triple(q, v, p)
+            2 -> Triple(p, v, t)
+            3 -> Triple(p, q, v)
+            4 -> Triple(t, p, v)
+            else -> Triple(v, p, q)
+        }
+        return Color.rgb((r * 255).roundToInt(), (g * 255).roundToInt(), (b * 255).roundToInt())
+    }
 }
 
-// ------------------------------------------------------------------ Farbrad-Regler
+private fun easeOut(p: Float): Float {
+    val c = p.coerceIn(0f, 1f)
+    return 1f - (1f - c) * (1f - c) * (1f - c)
+}
+
+private fun easeInOut(p: Float): Float {
+    val c = p.coerceIn(0f, 1f)
+    return if (c < 0.5f) 4 * c * c * c else 1 - (-2 * c + 2).let { it * it * it } / 2
+}
+
+/** Gedämpfte Feder: Start bei [from], schwingt auf 1 ein (0,45 s). */
+private fun spring(from: Float, ms: Long): Float {
+    if (ms < 0) return from
+    val p = ms / 450f
+    if (p >= 1f) return 1f
+    return 1f + (from - 1f) * exp(-4.2f * p) * cos(3.4f * PI.toFloat() * p)
+}
+
+/** "Bewegung reduzieren": Animator-Dauer in den Entwickleroptionen auf 0. */
+private fun reducedMotion(context: Context): Boolean =
+    runCatching { Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }.getOrDefault(false)
+
+/** Glow-Nachbau ohne Software-Rendering: drei breitere, durchsichtige Striche (Breitenfaktor, Deckkraft). */
+private val GLOW_PASSES = arrayOf(1.0f to 0.16f, 0.6f to 0.24f, 0.28f to 0.36f)
+
+// ------------------------------------------------------------------ Bühne: 3D-LED-Ring
 
 /**
- * Der Licht-Regler:
- *  - außen ein Farbring (ziehen oder tippen wählt die Farbe),
- *  - innen ein Bogen für die Helligkeit (mit leichtem Einrasten alle 10 %),
- *  - in der Mitte die leuchtende Kugel: tippen = an/aus, halten = Reset,
- *  - optional ein Mondring für den Nacht-Timer.
- * Die Berührung gehört dem Regler – das Board springt dabei weder in Bearbeiten noch in die Vorschau.
+ * Der LED-Ring: 15 Segmente auf einer geneigten Ebene (Perspektive 650, Neigung 49°, beim Wischen 17°),
+ * je 4 Lagen (Unterseite, Seite, Oberfläche mit Glow, Glanz), darunter die holografische Plattform,
+ * in der Mitte der Power-Knopf bzw. kurz die Mittenanzeige.
+ *
+ * Effizienz: Jede Lage ist ein normaler Bogen, die Projektion steckt in einer Perspektiv-Matrix der
+ * Zeichenfläche – die GPU zeichnet, die Bögen selbst bleiben gleich und werden gecacht.
+ * Auf dem Board läuft die Animation mit höchstens 30 Bildern/s und pausiert, solange sie verdeckt ist.
  */
-class LightDial(context: Context) : View(context) {
-    var onColor: (Int) -> Unit = {}
-    var onBrightness: (Float) -> Unit = {}
+class LumenRing(context: Context, private val board: Boolean) : View(context) {
+
+    companion object {
+        private const val N = 15
+        private const val REST = 0.86f // 49°
+        private const val SWIPE = 0.30f // 17°
+        private const val SWAY = 0.14f // ±8°
+        private val live = WeakHashMap<LumenRing, Boolean>()
+
+        /** Board-Widgets pausieren (z. B. während ein Panel offen ist). */
+        var boardPaused = false
+            set(v) {
+                if (field == v) return
+                field = v
+                live.keys.toList().forEach { it.invalidate() }
+            }
+
+        /** 60 Bilder/s in der großen Ansicht (Einstellung "flüssig"), sonst 30. */
+        var smooth = true
+    }
+
+    // ---- Eingänge
+    var segments: List<Int> = List(N) { 0 }
+        set(v) {
+            field = v
+            invalidate()
+        }
+    var power = false
+        set(v) {
+            if (field == v) return
+            field = v
+            if (v && isAttachedToWindow && !reduced) powerOnAt = SystemClock.uptimeMillis()
+            invalidate()
+        }
+    var brightness = 1f
+        set(v) {
+            field = v.coerceIn(0f, 1f)
+            invalidate()
+        }
+    var accent = 0xFFFF2F5A.toInt()
+        set(v) {
+            field = v or 0xFF000000.toInt()
+            invalidate()
+        }
+    var single = false
+        set(v) {
+            if (field == v) return
+            field = v
+            if (isAttachedToWindow) wave()
+            invalidate()
+        }
+    var selected = -1
+        set(v) {
+            if (field != v) {
+                field = v
+                invalidate()
+            }
+        }
+
+    // ---- Ausgänge
+    var onCount: (Int) -> Unit = {}
+    var onSelect: (Int) -> Unit = {}
+    var onPaint: (Int) -> Unit = {}
+    var onClear: (Int) -> Unit = {}
     var onToggle: () -> Unit = {}
     var onReset: () -> Unit = {}
 
-    var color: Int = Color.WHITE
-        set(v) {
-            if (field == v) return
-            field = v
-            if (zone != Zone.RING) ringPos = LightColors.fractionOf(v)
-            updateOrb()
-            invalidate()
-        }
+    // ---- Zustand der Darstellung
+    private val act = FloatArray(N)
+    private val col = IntArray(N)
+    private val popAt = LongArray(N) { -1L }
+    private val popDur = IntArray(N) { 350 }
+    private val popAmp = FloatArray(N)
+    private val pops = FloatArray(N)
+    private var onT = 0f
+    private var shownAccent = accent
+    private var tilt = REST
+    private var tiltFrom = REST
+    private var tiltTo = REST
+    private var tiltAt = 0L
+    private var tiltDur = 0
+    private var swayAmp = 1f
+    private var swayTarget = 1f
+    private var powerOnAt = -1L
+    private val t0 = SystemClock.uptimeMillis()
+    private var lastStep = 0L
+    private var lastDraw = 0L
+    private var initialized = false
+    private val reduced = reducedMotion(context)
 
-    var brightness: Float = 1f
-        set(v) {
-            if (zone == Zone.ARC) return // während des Ziehens zählt der Finger
-            showBrightness(v)
-        }
+    // Mittenanzeige
+    private var midNum = ""
+    private var midCap = ""
+    private var midAlpha = 0f
+    private var midUntil = 0L
+    private var midPopAt = -1L
 
-    private fun showBrightness(v: Float) {
-        val c = v.coerceIn(0f, 1f)
-        if (brightnessShown != c) {
-            brightnessShown = c
-            invalidate()
-        }
-    }
+    // Power-Knopf
+    private var press = 1f
+    private var pressAnim: ValueAnimator? = null
 
-    private var brightnessShown = 1f
-
-    var on: Boolean = false
-        set(v) {
-            if (field == v) return
-            field = v
-            glowAnim?.cancel()
-            glowAnim = ValueAnimator.ofFloat(glow, if (v) 1f else 0f).apply {
-                duration = 320
-                interpolator = EASE_OUT
-                addUpdateListener {
-                    glow = it.animatedValue as Float
-                    invalidate()
-                }
-                start()
-            }
-        }
-
-    /** Nacht-Timer: verbleibender Anteil (1 → 0) oder null, und der Text in der Lücke unten. */
-    var sleep: Float? = null
-        set(v) {
-            if (field != v) {
-                field = v
-                invalidate()
-            }
-        }
-    var sleepText: String? = null
-        set(v) {
-            if (field != v) {
-                field = v
-                invalidate()
-            }
-        }
-
-    private enum class Zone { NONE, RING, ARC, ORB }
-
-    private var zone = Zone.NONE
-    private var ringPos = LightColors.fractionOf(Color.WHITE)
-    private var glow = 0f
-    private var glowAnim: ValueAnimator? = null
-    private var orbScale = 1f
-    private var held = false
-    private var lastTick = -1
-
-    // Geometrie
+    // ---- Geometrie
+    private val d1 = context.dpf(1)
+    private var rr = 0f // Radius R
     private var cx = 0f
     private var cy = 0f
-    private var s = 0f
-    private var ringW = 0f
-    private var rRing = 0f
-    private var arcW = 0f
-    private var rArc = 0f
-    private var rOrb = 0f
+    private var lw = 0f
+    private var r = 0f
+    private var capDeg = 0f
+    private var gapDeg = 0f
+    private var py = 0f
+    private var powerSize = 0f
+    private val camera = context.dpf(650)
 
+    // ---- Zeichenwerkzeuge
+    private val arc = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val glowP = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val haloP = Paint(Paint.ANTI_ALIAS_FLAG)
     private val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
-    private val ringEdge = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
-    private val thumbShadow = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x66000000 }
-    private val thumbFill = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val thumbRing = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        color = Color.WHITE
-    }
-    private val arcTrack = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeCap = Paint.Cap.ROUND
-        color = C.white(0.12f)
-    }
-    private val arcGlow = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeCap = Paint.Cap.ROUND
-    }
-    private val arcFill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeCap = Paint.Cap.ROUND
-    }
-    private val knob = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
-    private val halo = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val orbOn = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val orbOff = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = C.white(0.07f) }
-    private val orbEdge = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        color = C.white(0.18f)
-    }
     private val glyph = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
     }
-    private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        typeface = Fonts.display
+    private val num = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        typeface = Fonts.roundHeavy
         textAlign = Paint.Align.CENTER
+        color = Color.WHITE
     }
-    private val small = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        typeface = Fonts.medium
-        textAlign = Paint.Align.LEFT
+    private val capP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        typeface = Fonts.roundSemi
+        textAlign = Paint.Align.CENTER
+        color = C.white(0.7f)
     }
-    private val moonRing = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeCap = Paint.Cap.ROUND
-        color = LightColors.MOON
-    }
-    private val moonFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = LightColors.MOON }
-    private val moon = Path()
     private val oval = RectF()
-    private val tmpPath = Path()
+    private val m = Matrix()
+    private val vals = FloatArray(9)
+    private var glowKey = 0
+    private var haloKey = 0
 
-    private val hold = Runnable {
-        held = true
-        performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-        animateOrb(1.1f) { animateOrb(1f) }
-        onReset()
+    init {
+        contentDescription = "Segmente"
     }
-    private var orbAnim: ValueAnimator? = null
 
-    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        val w = MeasureSpec.getSize(widthMeasureSpec)
-        val h = MeasureSpec.getSize(heightMeasureSpec)
-        val wm = MeasureSpec.getMode(widthMeasureSpec)
-        val hm = MeasureSpec.getMode(heightMeasureSpec)
-        val fallback = dp(220)
-        when {
-            wm == MeasureSpec.EXACTLY && hm == MeasureSpec.EXACTLY -> setMeasuredDimension(w, h)
-            wm == MeasureSpec.EXACTLY -> setMeasuredDimension(w, if (hm == MeasureSpec.AT_MOST) min(w, h) else w)
-            hm == MeasureSpec.EXACTLY -> setMeasuredDimension(if (wm == MeasureSpec.AT_MOST) min(w, h) else h, h)
-            else -> {
-                val sz = if (wm == MeasureSpec.AT_MOST && hm == MeasureSpec.AT_MOST) min(w, h) else fallback
-                setMeasuredDimension(sz, sz)
-            }
-        }
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        if (board) live[this] = true
+    }
+
+    override fun onDetachedFromWindow() {
+        super.onDetachedFromWindow()
+        live.remove(this)
+        Choreographer.getInstance().removeFrameCallback(frame)
+        scheduled = false
+    }
+
+    override fun onWindowVisibilityChanged(visibility: Int) {
+        super.onWindowVisibilityChanged(visibility)
+        if (visibility == VISIBLE) invalidate()
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        rr = max(40 * d1, minOf(w * 0.42f, h * 0.55f, (h * 0.58f - 30 * d1) / 0.83f))
         cx = w / 2f
-        cy = h / 2f
-        s = min(w, h).toFloat()
-        val pad = dp(5)
-        ringW = s * 0.095f
-        rRing = s / 2 - pad - ringW / 2
-        arcW = s * 0.05f
-        rArc = rRing - ringW / 2 - s * 0.065f - arcW / 2
-        rOrb = rArc - arcW / 2 - s * 0.07f
-
-        ring.strokeWidth = ringW
-        ring.shader = SweepGradient(cx, cy, LightColors.STOPS, LightColors.POS).apply {
-            setLocalMatrix(Matrix().apply { setRotate(-90f, cx, cy) })
-        }
-        ringEdge.strokeWidth = dp(1).toFloat()
-        thumbRing.strokeWidth = max(2f, s * 0.012f)
-        arcTrack.strokeWidth = arcW
-        arcFill.strokeWidth = arcW
-        arcGlow.strokeWidth = arcW * 2.6f
-        orbEdge.strokeWidth = dp(1).toFloat()
-        text.textSize = rOrb * 0.36f
-        small.textSize = max(dp(10).toFloat(), s * 0.048f)
-        moonRing.strokeWidth = max(2f, s * 0.011f)
-        updateOrb()
+        cy = h * 0.42f
+        lw = max(12 * d1, rr * 0.14f)
+        r = rr - lw
+        capDeg = Math.toDegrees(((lw / 2) / r).toDouble()).toFloat()
+        gapDeg = Math.toDegrees(0.05).toFloat()
+        py = cy + rr * cos(REST) + 18 * d1
+        powerSize = min(92 * d1, rr * 0.84f)
+        val sc = (powerSize / (92 * d1)).coerceIn(0.6f, 1f)
+        num.textSize = 46 * d1 * sc
+        capP.textSize = 12 * d1 * sc.coerceAtLeast(0.8f)
+        num.setShadowLayer(10 * d1, 0f, 0f, C.white(0.6f))
+        glowKey = 0
+        haloKey = 0
     }
 
-    private fun updateOrb() {
-        if (s == 0f) return
-        val c = color or 0xFF000000.toInt()
-        halo.shader = RadialGradient(
-            cx, cy, rOrb * 1.55f,
-            intArrayOf(LightColors.withAlpha(c, 150), LightColors.withAlpha(c, 60), 0),
-            floatArrayOf(0.55f, 0.75f, 1f), Shader.TileMode.CLAMP,
-        )
-        orbOn.shader = RadialGradient(
-            cx, cy - rOrb * 0.25f, rOrb * 1.25f,
-            intArrayOf(blend(c, Color.WHITE, 0.7f), blend(c, Color.WHITE, 0.25f), c),
-            floatArrayOf(0f, 0.5f, 1f), Shader.TileMode.CLAMP,
-        )
+    // ---------------------------------------------------------------- Bildtakt
+
+    private var scheduled = false
+    private val frame = Choreographer.FrameCallback {
+        scheduled = false
+        if (canRun()) invalidate()
+    }
+
+    private fun canRun(): Boolean =
+        isAttachedToWindow && windowVisibility == VISIBLE && isShown && !(board && boardPaused)
+
+    private fun scheduleNext(now: Long) {
+        if (scheduled || !canRun()) return
+        scheduled = true
+        val minMs = if (board || !smooth) 33L else 16L
+        val wait = minMs - (now - lastDraw)
+        if (wait > 6) Choreographer.getInstance().postFrameCallbackDelayed(frame, wait) else Choreographer.getInstance().postFrameCallback(frame)
+    }
+
+    /** Alle Übergänge weiterrechnen. true = es bewegt sich noch etwas. */
+    private fun step(now: Long): Boolean {
+        val dt = if (lastStep == 0L) 1000f else (now - lastStep).coerceIn(0, 100).toFloat()
+        lastStep = now
+        var busy = false
+        val k = 1f - exp(-dt / 100f) // ≈ 0,3 s
+        for (i in 0 until N) {
+            val target = segments.getOrElse(i) { 0 } and 0xFFFFFF
+            val on = if (power && target != 0) 1f else 0f
+            act[i] = if (!initialized) on else act[i] + (on - act[i]) * k
+            if (abs(act[i] - on) > 0.01f) busy = true else act[i] = on
+            if (target != 0) {
+                col[i] = if (!initialized || col[i] == 0) target else (blend(col[i] or 0xFF000000.toInt(), target or 0xFF000000.toInt(), k) and 0xFFFFFF)
+                if (col[i] != target) busy = true
+            }
+            if (popAt[i] >= 0) busy = true
+        }
+        val onTarget = if (power) 1f else 0f
+        onT = if (!initialized) onTarget else onT + (onTarget - onT) * (1f - exp(-dt / 115f))
+        if (abs(onT - onTarget) > 0.01f) busy = true else onT = onTarget
+        if (shownAccent != accent) {
+            shownAccent = if (!initialized) accent else blend(shownAccent, accent, 1f - exp(-dt / 150f))
+            busy = true
+        }
+        if (tiltDur > 0) {
+            val p = (now - tiltAt) / tiltDur.toFloat()
+            tilt = tiltFrom + (tiltTo - tiltFrom) * easeOut(p)
+            if (p >= 1f) tiltDur = 0 else busy = true
+        }
+        swayAmp += (swayTarget - swayAmp) * (1f - exp(-dt / 220f))
+        val midTarget = if (now < midUntil) 1f else 0f
+        if (midAlpha != midTarget) {
+            midAlpha = if (midTarget > midAlpha) min(1f, midAlpha + dt / 150f) else max(0f, midAlpha - dt / 300f)
+            busy = true
+        }
+        if (powerOnAt >= 0) {
+            if (now - powerOnAt > 1200) powerOnAt = -1 else busy = true
+        }
+        if (midPopAt >= 0 && now - midPopAt > 450) midPopAt = -1
+        if (midUntil > now) busy = true
+        initialized = true
+        return busy
     }
 
     // ---------------------------------------------------------------- Zeichnen
 
     override fun onDraw(canvas: Canvas) {
-        if (s == 0f) return
-        val c = color or 0xFF000000.toInt()
+        if (rr == 0f) return
+        val now = SystemClock.uptimeMillis()
+        val busy = step(now)
+        lastDraw = now
+        val t = (now - t0) / 1000f
+        val motion = !reduced
+        val twoPi = 2 * PI.toFloat()
+        val floatY = if (motion) 5 * d1 * sin(twoPi * t / 6f) else 0f
+        val phi = if (motion) SWAY * swayAmp * sin(twoPi * t / 8.4f) else 0f
+        val breathe = if (motion) 0.825f + 0.175f * sin(twoPi * t / 6.8f) else 1f
+        val k = 0.3f + 0.7f * brightness
 
-        // Farbring mit feiner Glaskante
-        canvas.drawCircle(cx, cy, rRing, ring)
-        ringEdge.color = C.white(0.28f)
-        canvas.drawCircle(cx, cy, rRing + ringW / 2, ringEdge)
-        ringEdge.color = 0x40000000
-        canvas.drawCircle(cx, cy, rRing - ringW / 2, ringEdge)
-        val ta = Math.toRadians((ringPos * 360f - 90f).toDouble())
-        val tx = cx + rRing * cos(ta).toFloat()
-        val ty = cy + rRing * sin(ta).toFloat()
-        val tr = ringW * 0.68f
-        canvas.drawCircle(tx, ty + dp(1), tr + dp(1), thumbShadow)
-        thumbFill.color = LightColors.colorAt(ringPos)
-        canvas.drawCircle(tx, ty, tr, thumbFill)
-        canvas.drawCircle(tx, ty, tr, thumbRing)
+        drawPlatform(canvas, now, k, breathe)
+        drawRing(canvas, now, floatY, phi, k)
+        drawCenter(canvas, now)
 
-        // Helligkeits-Bogen: 135° → 405°, unten eine Lücke
-        oval.set(cx - rArc, cy - rArc, cx + rArc, cy + rArc)
-        canvas.drawArc(oval, 135f, 270f, false, arcTrack)
-        val sweep = 270f * brightnessShown
-        val lit = blend(c, Color.WHITE, 0.2f)
-        if (glow > 0.01f && sweep > 0.5f) {
-            arcGlow.color = LightColors.withAlpha(lit, (70 * glow).toInt())
-            canvas.drawArc(oval, 135f, sweep, false, arcGlow)
-        }
-        arcFill.color = blend(C.white(0.5f), lit, glow)
-        if (sweep > 0.5f) canvas.drawArc(oval, 135f, sweep, false, arcFill)
-        val ka = Math.toRadians((135f + sweep).toDouble())
-        canvas.drawCircle(cx + rArc * cos(ka).toFloat(), cy + rArc * sin(ka).toFloat(), arcW * 0.62f, knob)
+        if (canRun() && (motion || busy)) scheduleNext(now)
+    }
 
-        // Nacht-Timer: Mondring um die Kugel + Restzeit in der Lücke
-        sleep?.let { f ->
-            val rm = rOrb + s * 0.035f
-            oval.set(cx - rm, cy - rm, cx + rm, cy + rm)
-            moonRing.alpha = 60
-            canvas.drawCircle(cx, cy, rm, moonRing)
-            moonRing.alpha = 255
-            canvas.drawArc(oval, -90f, 360f * f.coerceIn(0f, 1f), false, moonRing)
-        }
-        sleepText?.let { t ->
-            val ty = cy + rArc + small.textSize * 0.35f
-            val mr = small.textSize * 0.55f
-            val tw = small.measureText(t)
-            val total = mr * 2 + dp(5) + tw
-            val left = cx - total / 2
-            drawMoon(canvas, left + mr, ty - small.textSize * 0.35f, mr)
-            small.color = LightColors.MOON
-            canvas.drawText(t, left + mr * 2 + dp(5), ty, small)
-        }
+    /** Perspektiv-Matrix der Ring-Ebene für eine Lage in Höhe [z] (erst Neigung um X, dann Drehung um Y, dann Perspektive). */
+    private fun plane(z: Float, phi: Float): Matrix {
+        val st = sin(tilt)
+        val ct = cos(tilt)
+        val sp = sin(phi)
+        val cp = cos(phi)
+        vals[0] = cp
+        vals[1] = st * sp
+        vals[2] = z * ct * sp
+        vals[3] = 0f
+        vals[4] = ct
+        vals[5] = -z * st
+        vals[6] = sp / camera
+        vals[7] = -st * cp / camera
+        vals[8] = 1f - z * ct * cp / camera
+        m.setValues(vals)
+        return m
+    }
 
-        // Kugel
-        val r = rOrb * orbScale
+    private inline fun inPlane(canvas: Canvas, z: Float, phi: Float, floatY: Float, block: () -> Unit) {
         canvas.save()
-        canvas.scale(orbScale, orbScale, cx, cy)
-        if (glow > 0.01f) {
-            halo.alpha = (255 * glow).toInt()
-            canvas.drawCircle(cx, cy, rOrb * 1.55f, halo)
-        }
-        canvas.drawCircle(cx, cy, rOrb, orbOff)
-        if (glow > 0.01f) {
-            orbOn.alpha = (255 * glow).toInt()
-            canvas.drawCircle(cx, cy, rOrb, orbOn)
-        }
-        canvas.drawCircle(cx, cy, rOrb, orbEdge)
+        canvas.translate(cx, cy + floatY)
+        canvas.concat(plane(z, phi))
+        block()
         canvas.restore()
-
-        // Power-Symbol + Helligkeit in Prozent
-        val ink = blend(C.TEXT, 0xD9101012.toInt(), glow)
-        glyph.color = ink
-        val g = r * 0.42f
-        glyph.strokeWidth = max(2f, g * 0.13f)
-        val gy = cy - r * 0.16f
-        oval.set(cx - g * 0.42f, gy - g * 0.34f, cx + g * 0.42f, gy + g * 0.5f)
-        canvas.drawArc(oval, -60f, 300f, false, glyph)
-        canvas.drawLine(cx, gy - g * 0.52f, cx, gy + g * 0.05f, glyph)
-        text.color = ink
-        text.textSize = r * 0.34f
-        canvas.drawText(if (on) "${(brightnessShown * 100).toInt().coerceAtLeast(1)}%" else "AUS", cx, cy + r * 0.52f, text)
     }
 
-    /** Kleine Mondsichel. */
-    private fun drawMoon(canvas: Canvas, x: Float, y: Float, r: Float) {
-        moon.reset()
-        moon.addCircle(x, y, r, Path.Direction.CW)
-        tmpPath.reset()
-        tmpPath.addCircle(x + r * 0.55f, y - r * 0.35f, r * 0.85f, Path.Direction.CW)
-        moon.op(tmpPath, Path.Op.DIFFERENCE)
-        canvas.drawPath(moon, moonFill)
+    private fun popZ(i: Int, now: Long): Float {
+        val at = popAt[i]
+        if (at < 0) return 0f
+        val p = (now - at) / popDur[i].toFloat()
+        if (p < 0f) return 0f
+        if (p >= 1f) {
+            popAt[i] = -1
+            return 0f
+        }
+        return sin(PI.toFloat() * p)
     }
 
-    // ---------------------------------------------------------------- Berührung
+    private fun segStart(i: Int) = -90f + i * 24f + capDeg + gapDeg / 2
+    private fun segSweep() = 24f - 2 * capDeg - gapDeg
+
+    private fun drawRing(canvas: Canvas, now: Long, floatY: Float, phi: Float, k: Float) {
+        val sweep = segSweep()
+        val tOn = if (powerOnAt >= 0) now - powerOnAt else -1L
+        for (i in 0 until N) pops[i] = popZ(i, now)
+
+        // 1) Unterseite und 2) Seite – dunkles Glas oder abgedunkelte Segmentfarbe
+        arc.strokeWidth = lw
+        for (layer in 0..1) {
+            val z = if (layer == 0) -lw * 0.75f else -lw * 0.38f
+            val f = if (layer == 0) 0.30f else 0.55f
+            inPlane(canvas, z, phi, floatY) {
+                oval.set(-r, -r, r, r)
+                for (i in 0 until N) {
+                    val c = col[i]
+                    val active = if (c == 0) LightColors.DARK_GLASS else LightColors.withAlpha(LightColors.value(c or 0xFF000000.toInt(), f), 0.9f)
+                    arc.color = blend(LightColors.DARK_GLASS, active, act[i])
+                    canvas.drawArc(oval, segStart(i), sweep, false, arc)
+                }
+            }
+        }
+
+        // 3) Oberfläche mit Glow (angehobene Segmente zuletzt)
+        for (pass in 0..1) {
+            for (i in 0 until N) {
+                val lifted = pops[i] != 0f
+                if ((pass == 0) == lifted) continue
+                inPlane(canvas, lw * popAmp[i] * pops[i], phi, floatY) {
+                    oval.set(-r, -r, r, r)
+                    val c = col[i]
+                    val a = act[i]
+                    val fade = if (tOn >= 0) 0.1f + 0.9f * easeOut((tOn - i * 35f) / 350f) else 1f
+                    val gr = (6 + (2 + 10 * k) * a + 14 * pops[i]) * d1
+                    val ga = ((if (power) 0.22f else 0.05f) * (1 - a) + 0.95f * k * a) * fade
+                    val gc = if (c == 0) LightColors.MAGENTA else blend(LightColors.MAGENTA, c or 0xFF000000.toInt(), a)
+                    for ((wf, af) in GLOW_PASSES) {
+                        arc.strokeWidth = lw + 2 * gr * wf
+                        arc.color = LightColors.withAlpha(gc, ga * af)
+                        canvas.drawArc(oval, segStart(i), sweep, false, arc)
+                    }
+                    arc.strokeWidth = lw
+                    val inactive = if (c != 0) LightColors.withAlpha(c, 0.16f) else LightColors.withAlpha(LightColors.MAGENTA, 0.12f)
+                    val activeC = if (c != 0) LightColors.withAlpha(c, (0.35f + 0.6f * k) * fade) else inactive
+                    arc.color = blend(inactive, activeC, a)
+                    canvas.drawArc(oval, segStart(i), sweep, false, arc)
+                }
+            }
+        }
+
+        // 4) Glanz an der Außenkante
+        for (i in 0 until N) {
+            inPlane(canvas, d1 + lw * popAmp[i] * pops[i], phi, floatY) {
+                val rg = r + lw * 0.26f
+                oval.set(-rg, -rg, rg, rg)
+                val sel = single && i == selected
+                arc.strokeWidth = if (sel) 3.5f * d1 else 2 * d1
+                arc.color = if (sel) C.white(0.95f) else blend(C.white(0.16f), C.white(0.45f), act[i])
+                canvas.drawArc(oval, segStart(i) + 1.146f, sweep - 2.29f, false, arc)
+            }
+        }
+
+        // Einschalten: Lichtimpuls einmal um den Ring
+        if (tOn in 0..900) {
+            val e = easeInOut(tOn / 700f)
+            val s = easeInOut((tOn - 200) / 700f)
+            if (e > s) {
+                inPlane(canvas, d1, phi, floatY) {
+                    oval.set(-r, -r, r, r)
+                    for ((wf, af) in GLOW_PASSES) {
+                        arc.strokeWidth = lw * 0.45f + 2 * 12 * d1 * wf
+                        arc.color = LightColors.withAlpha(shownAccent, 0.9f * af)
+                        canvas.drawArc(oval, -90f + 360f * s, 360f * (e - s), false, arc)
+                    }
+                    arc.strokeWidth = lw * 0.45f
+                    arc.color = C.white(0.9f)
+                    canvas.drawArc(oval, -90f + 360f * s, 360f * (e - s), false, arc)
+                }
+            }
+        }
+    }
+
+    /** Holografische Plattform: Glow-Fläche (atmet) + 3 Ellipsen, nicht geneigt. */
+    private fun drawPlatform(canvas: Canvas, now: Long, k: Float, breathe: Float) {
+        val a = shownAccent
+        val on = onT
+        val gw = rr * 2.3f
+        val gh = rr * 0.64f
+        val key = a xor (rr.toInt() shl 4) xor py.toInt()
+        if (key != glowKey) {
+            glowKey = key
+            glowP.shader = RadialGradient(cx, py, gw * 0.62f, a, LightColors.withAlpha(a, 0), Shader.TileMode.CLAMP).apply {
+                setLocalMatrix(Matrix().apply { setScale(1f, gh / gw, cx, py) })
+            }
+        }
+        glowP.alpha = ((0.06f + (0.5f * k - 0.06f) * on) * breathe * 255).roundToInt().coerceIn(0, 255)
+        oval.set(cx - gw * 0.62f, py - gh * 0.62f, cx + gw * 0.62f, py + gh * 0.62f)
+        canvas.drawOval(oval, glowP)
+
+        val tOn = if (powerOnAt >= 0) now - powerOnAt else -1L
+        for (e in 0..2) {
+            val w = rr * ELLIPSE_W[e]
+            val h = w * 0.19f
+            val sc = if (tOn >= 0) 0.8f + 0.2f * easeOut((tOn - 100 - e * 80f) / 600f) else 1f
+            ring.strokeWidth = ELLIPSE_STROKE[e] * d1
+            val onA = ELLIPSE_ON[e] * k
+            val offA = ELLIPSE_OFF[e]
+            ring.color = LightColors.withAlpha(a, offA + (onA - offA) * on)
+            oval.set(cx - w / 2 * sc, py - h / 2 * sc, cx + w / 2 * sc, py + h / 2 * sc)
+            canvas.drawOval(oval, ring)
+        }
+    }
+
+    /** Power-Knopf (bewegt sich nicht mit) bzw. die Mittenanzeige. */
+    private fun drawCenter(canvas: Canvas, now: Long) {
+        val vis = 1f - midAlpha
+        if (vis > 0.01f) {
+            val s = powerSize * press
+            val rad = s / 2
+            val scale = powerSize / (92 * d1)
+            val glowR = rad + 24 * d1 * scale
+            if (onT > 0.01f) {
+                val key = shownAccent xor (glowR * 10).toInt()
+                if (key != haloKey) {
+                    haloKey = key
+                    haloP.shader = RadialGradient(
+                        cx, cy, glowR,
+                        intArrayOf(shownAccent, shownAccent, LightColors.withAlpha(shownAccent, 0)),
+                        floatArrayOf(0f, rad / glowR, 1f), Shader.TileMode.CLAMP,
+                    )
+                }
+                haloP.alpha = (0.9f * onT * vis * 255).roundToInt()
+                canvas.drawCircle(cx, cy, glowR, haloP)
+            }
+            // Glas
+            fill.color = LightColors.withAlpha(0x1A1424, 0.85f * vis)
+            canvas.drawCircle(cx, cy, rad, fill)
+            fill.color = C.white(0.08f * vis)
+            canvas.drawCircle(cx, cy, rad, fill)
+            ring.strokeWidth = d1
+            ring.color = C.white(0.25f * vis)
+            canvas.drawCircle(cx, cy, rad - d1 / 2, ring)
+            // Kern
+            fill.color = blend(C.white(0.05f * vis), LightColors.withAlpha(shownAccent, 0.75f * vis), onT)
+            canvas.drawCircle(cx, cy, rad - 10 * d1 * scale * press, fill)
+            // Symbol (an: mit weißem Glow)
+            val g = 32 * d1 * scale * press
+            val gy = cy + g * 0.04f
+            for (pass in 0..1) {
+                if (pass == 0 && onT < 0.05f) continue
+                glyph.strokeWidth = if (pass == 0) g * 0.32f else g * 0.12f
+                glyph.color = if (pass == 0) C.white(0.22f * onT * vis) else C.white((0.5f + 0.5f * onT) * vis)
+                oval.set(cx - g * 0.42f, gy - g * 0.36f, cx + g * 0.42f, gy + g * 0.48f)
+                canvas.drawArc(oval, -60f, 300f, false, glyph)
+                canvas.drawLine(cx, gy - g * 0.5f, cx, gy + g * 0.02f, glyph)
+            }
+        }
+        if (midAlpha > 0.01f) {
+            val sc = if (midPopAt >= 0) spring(1.18f, now - midPopAt) else 1f
+            canvas.save()
+            canvas.scale(sc, sc, cx, cy)
+            num.alpha = (255 * midAlpha).roundToInt()
+            canvas.drawText(midNum, cx, cy + num.textSize * 0.2f, num)
+            canvas.restore()
+            capP.alpha = (255 * 0.7f * midAlpha).roundToInt()
+            canvas.drawText(midCap, cx, cy + num.textSize * 0.2f + capP.textSize * 1.6f, capP)
+        }
+    }
+
+    // ---------------------------------------------------------------- Animationen
+
+    private fun pop(i: Int, amp: Float = 0.9f, dur: Int = 350, delay: Long = 0) {
+        if (i !in 0 until N || reduced) return
+        popAt[i] = SystemClock.uptimeMillis() + delay
+        popAmp[i] = amp
+        popDur[i] = dur
+        invalidate()
+    }
+
+    /** Lichtwelle beim Moduswechsel: nacheinander anheben. */
+    private fun wave() {
+        for (i in 0 until N) pop(i, 0.8f, 400, i * 30L)
+    }
+
+    private fun tiltTo(target: Float, ms: Int) {
+        tiltFrom = tilt
+        tiltTo = target
+        tiltAt = SystemClock.uptimeMillis()
+        tiltDur = ms
+        invalidate()
+    }
+
+    private fun showMid(n: String, caption: String) {
+        val now = SystemClock.uptimeMillis()
+        if (n != midNum && midAlpha > 0.1f) midPopAt = now
+        midNum = n
+        midCap = caption
+        midUntil = now + 900
+        invalidate()
+    }
+
+    private fun animatePress(to: Float) {
+        pressAnim?.cancel()
+        pressAnim = ValueAnimator.ofFloat(press, to).apply {
+            duration = if (to < 1f) 150 else 450
+            interpolator = if (to < 1f) EASE_OUT else android.view.animation.OvershootInterpolator(2.2f)
+            addUpdateListener {
+                press = it.animatedValue as Float
+                invalidate()
+            }
+            start()
+        }
+    }
+
+    // ---------------------------------------------------------------- Gesten
+
+    private enum class G { NONE, POWER, RING }
+
+    private var g = G.NONE
+    private var downX = 0f
+    private var downY = 0f
+    private var swiping = false
+    private var pos = 0f
+    private var lastAngle = 0f
+    private var downSeg = 0
+    private var held = false
+    private var lastCount = -1
+    private var lastSel = -1
+    private val slop = ViewConfiguration.get(context).scaledTouchSlop
+
+    private val holdPower = Runnable {
+        held = true
+        performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+        animatePress(1f)
+        if (!reduced) powerOnAt = SystemClock.uptimeMillis()
+        onReset()
+    }
+    private val holdSeg = Runnable {
+        if (!swiping && single && g == G.RING) {
+            held = true
+            performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+            onClear(downSeg)
+            pop(downSeg)
+            showMid("${downSeg + 1}", "gelöscht")
+        }
+    }
+
+    /** Winkel (0° = oben, im Uhrzeigersinn) und ob der Punkt auf dem Ring liegt – bei Neigung [t]. */
+    private fun angleAt(x: Float, y: Float, t: Float): Pair<Float, Boolean> {
+        val qx = x - cx
+        val qy = (y - cy) / cos(t)
+        val d = sqrt(qx * qx + qy * qy)
+        val a = ((Math.toDegrees(atan2(qy, qx).toDouble()).toFloat() + 90f) % 360f + 360f) % 360f
+        return a to (d > 0.45f * rr && d < 1.4f * rr)
+    }
 
     override fun onTouchEvent(e: MotionEvent): Boolean {
         val x = e.x
         val y = e.y
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                val d = hypot(x - cx, y - cy)
-                zone = when {
-                    d > rRing + ringW * 0.9f -> Zone.NONE
-                    d >= rRing - ringW * 0.9f -> Zone.RING
-                    d >= rOrb + s * 0.02f -> Zone.ARC
-                    else -> Zone.ORB
+                held = false
+                swiping = false
+                downX = x
+                downY = y
+                if (hypot(x - cx, y - cy) <= powerSize / 2 && midAlpha < 0.05f) {
+                    g = G.POWER
+                    parent?.requestDisallowInterceptTouchEvent(true)
+                    animatePress(0.92f)
+                    postDelayed(holdPower, 700)
+                    return true
                 }
-                if (zone == Zone.NONE) return false // Ecken gehören der Karte (Halten → Vorschau)
+                val (a, ok) = angleAt(x, y, tilt)
+                if (!ok) return false // daneben: gehört der Karte (Halten → große Ansicht)
+                g = G.RING
                 parent?.requestDisallowInterceptTouchEvent(true)
-                lastTick = -1
-                when (zone) {
-                    Zone.RING -> pickRing(x, y)
-                    Zone.ARC -> pickArc(x, y, first = true)
-                    Zone.ORB -> {
-                        held = false
-                        animateOrb(0.9f)
-                        postDelayed(hold, 650)
-                    }
-                    Zone.NONE -> Unit
-                }
+                pos = a / 24f
+                lastAngle = a
+                downSeg = min(14, floor(a / 24f).toInt())
+                if (single) postDelayed(holdSeg, 600)
                 return true
             }
-            MotionEvent.ACTION_MOVE -> when (zone) {
-                Zone.RING -> pickRing(x, y)
-                Zone.ARC -> pickArc(x, y, first = false)
-                Zone.ORB -> if (hypot(x - cx, y - cy) > rOrb * 1.3f) {
-                    removeCallbacks(hold)
-                    animateOrb(1f)
+            MotionEvent.ACTION_MOVE -> if (g == G.RING) {
+                if (!swiping && hypot(x - downX, y - downY) > slop) {
+                    swiping = true
+                    removeCallbacks(holdSeg)
+                    tiltTo(SWIPE, 250)
+                    swayTarget = 0f
+                    lastAngle = angleAt(x, y, SWIPE).first
                 }
-                Zone.NONE -> Unit
+                if (swiping) {
+                    val a = angleAt(x, y, SWIPE).first
+                    var delta = a - lastAngle
+                    if (delta > 180f) delta -= 360f
+                    if (delta < -180f) delta += 360f
+                    lastAngle = a
+                    pos = (pos + delta / 24f).coerceIn(0f, 15f)
+                    if (!single) {
+                        val n = pos.roundToInt()
+                        if (n != lastCount) {
+                            lastCount = n
+                            onCount(n)
+                            performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                            if (n > 0) pop(n - 1)
+                            showMid("$n", "von 15")
+                        }
+                    } else {
+                        val s = min(14, floor(pos).toInt())
+                        if (s != lastSel) {
+                            lastSel = s
+                            onSelect(s)
+                            performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                            pop(s)
+                            showMid("${s + 1}", "Segment")
+                        }
+                    }
+                }
+            } else if (g == G.POWER && hypot(x - cx, y - cy) > powerSize) {
+                removeCallbacks(holdPower)
             }
             MotionEvent.ACTION_UP -> {
-                if (zone == Zone.ORB) {
-                    removeCallbacks(hold)
-                    if (!held) {
-                        animateOrb(1f)
-                        if (hypot(x - cx, y - cy) <= rOrb * 1.3f) onToggle()
+                when (g) {
+                    G.POWER -> {
+                        removeCallbacks(holdPower)
+                        if (!held) {
+                            animatePress(1f)
+                            if (hypot(x - cx, y - cy) <= powerSize) {
+                                performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                                onToggle()
+                            }
+                        }
                     }
-                } else if (zone == Zone.ARC) {
-                    onBrightness(brightnessShown.coerceIn(0.01f, 1f))
+                    G.RING -> {
+                        removeCallbacks(holdSeg)
+                        if (swiping) {
+                            tiltTo(REST, 450)
+                            swayTarget = 1f
+                        } else if (!held) {
+                            performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                            if (!single) {
+                                onCount(downSeg + 1)
+                                showMid("${downSeg + 1}", "von 15")
+                            } else {
+                                onSelect(downSeg)
+                                onPaint(downSeg)
+                                showMid("${downSeg + 1}", "Segment")
+                            }
+                            pop(downSeg)
+                        }
+                    }
+                    G.NONE -> Unit
                 }
-                zone = Zone.NONE
+                resetGesture()
             }
             MotionEvent.ACTION_CANCEL -> {
-                removeCallbacks(hold)
-                if (zone == Zone.ORB) animateOrb(1f)
-                zone = Zone.NONE
+                removeCallbacks(holdPower)
+                removeCallbacks(holdSeg)
+                if (g == G.POWER) animatePress(1f)
+                if (swiping) {
+                    tiltTo(REST, 450)
+                    swayTarget = 1f
+                }
+                resetGesture()
             }
         }
         return true
     }
 
-    private fun angle(x: Float, y: Float): Float {
-        val deg = Math.toDegrees(atan2((y - cy).toDouble(), (x - cx).toDouble())).toFloat()
-        return (deg + 360f) % 360f
-    }
-
-    private fun pickRing(x: Float, y: Float) {
-        val f = ((angle(x, y) + 90f) % 360f) / 360f
-        ringPos = f
-        val c = LightColors.colorAt(f)
-        val tick = (f * 24).toInt()
-        if (lastTick >= 0 && tick != lastTick) performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-        lastTick = tick
-        color = c // zone == RING → die Ring-Position bleibt, wo der Finger ist
-        invalidate()
-        onColor(c)
-    }
-
-    private fun pickArc(x: Float, y: Float, first: Boolean) {
-        val rel = (angle(x, y) - 135f + 360f) % 360f
-        var v = when {
-            rel <= 270f -> rel / 270f
-            rel < 315f -> 1f
-            else -> 0f
-        }
-        // Über die Lücke unten springen (100 % → 0 %) wird ignoriert
-        if (!first && abs(v - brightnessShown) > 0.5f) v = if (brightnessShown > 0.5f) 1f else 0f
-        v = v.coerceIn(0.01f, 1f)
-        val tick = (v * 10).toInt()
-        if (lastTick >= 0 && tick != lastTick) performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-        lastTick = tick
-        showBrightness(v)
-        onBrightness(v)
-    }
-
-    private fun animateOrb(to: Float, then: (() -> Unit)? = null) {
-        orbAnim?.cancel()
-        orbAnim = ValueAnimator.ofFloat(orbScale, to).apply {
-            duration = if (to < 1f) 110 else 300
-            interpolator = if (to < 1f) EASE_OUT else SPRING
-            addUpdateListener {
-                orbScale = it.animatedValue as Float
-                invalidate()
-            }
-            if (then != null) {
-                addListener(object : android.animation.AnimatorListenerAdapter() {
-                    override fun onAnimationEnd(animation: android.animation.Animator) = then()
-                })
-            }
-            start()
-        }
+    private fun resetGesture() {
+        g = G.NONE
+        swiping = false
+        lastCount = -1
+        lastSel = -1
     }
 }
 
-// ------------------------------------------------------------------ LED-Leiste
+private val ELLIPSE_W = floatArrayOf(1.80f, 1.38f, 0.96f)
+private val ELLIPSE_STROKE = floatArrayOf(2f, 1.2f, 1.2f)
+private val ELLIPSE_ON = floatArrayOf(0.55f, 0.35f, 0.20f)
+private val ELLIPSE_OFF = floatArrayOf(0.11f, 0.07f, 0.04f)
 
-/**
- * Die 15 Segmente als leuchtende LEDs in einer dunklen Glasschiene (0 = aus).
- *  - Modus "Alle":    Tippen/Ziehen setzt die Anzahl leuchtender Segmente (ganz links = 0).
- *  - Modus "Einzeln": Tippen/Wischen malt mit dem Pinsel, Halten löscht das Segment.
- */
-class LedStrip(context: Context, private val count: Int = 15) : View(context) {
-    var colors: List<Int> = List(count) { 0 }
+// ------------------------------------------------------------------ Modus-Chip
+
+/** Glas-Kapsel "Alle" (gestrichelter Kreis) / "Einzeln" (Tipp-Symbol). Tippen wechselt den Modus. */
+class ModeChip(context: Context, var onToggle: () -> Unit) : View(context) {
+    var single = false
         set(v) {
             if (field == v) return
             field = v
-            rebuild()
+            requestLayout()
+            popAt = SystemClock.uptimeMillis()
             invalidate()
         }
-    var dimmed = false
+    private var popAt = -1L
+    private val bg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = C.white(0.10f) }
+    private val edge = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        color = C.white(0.18f)
+        strokeWidth = context.dpf(1)
+    }
+    private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        typeface = Fonts.roundBold
+        color = C.TEXT
+        textSize = context.dpf(12.5f)
+    }
+    private val icon = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        color = C.TEXT
+        strokeWidth = context.dpf(1.6f)
+    }
+    private val rect = RectF()
+
+    private val label get() = if (single) "Einzeln" else "Alle"
+
+    init {
+        isClickable = true
+        setOnClickListener {
+            performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+            onToggle()
+        }
+        contentDescription = "Modus"
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val dp = context.dpf(1)
+        setMeasuredDimension((10 * dp + 14 * dp + 5 * dp + text.measureText(label) + 12 * dp).toInt(), (28 * dp).toInt())
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        val dp = context.dpf(1)
+        val now = SystemClock.uptimeMillis()
+        val sc = if (popAt >= 0) spring(1.15f, now - popAt) else 1f
+        if (popAt >= 0) {
+            if (now - popAt > 450) popAt = -1 else postInvalidateOnAnimation()
+        }
+        canvas.save()
+        canvas.scale(sc, sc, width / 2f, height / 2f)
+        rect.set(0f, 0f, width.toFloat(), height.toFloat())
+        rect.inset(dp / 2, dp / 2)
+        canvas.drawRoundRect(rect, height / 2f, height / 2f, bg)
+        canvas.drawRoundRect(rect, height / 2f, height / 2f, edge)
+        val ix = 17 * dp
+        val iy = height / 2f
+        if (!single) {
+            for (i in 0 until 8) canvas.drawArc(ix - 6 * dp, iy - 6 * dp, ix + 6 * dp, iy + 6 * dp, i * 45f, 26f, false, icon)
+        } else {
+            canvas.drawLine(ix, iy - 2 * dp, ix, iy + 6 * dp, icon)
+            canvas.drawCircle(ix, iy - 2.5f * dp, 1.6f * dp, icon)
+            canvas.drawArc(ix - 5.5f * dp, iy - 8 * dp, ix + 5.5f * dp, iy + 3 * dp, 200f, 140f, false, icon)
+        }
+        canvas.drawText(label, 29 * dp, iy - (text.descent() + text.ascent()) / 2, text)
+        canvas.restore()
+    }
+}
+
+/** Status-Punkt mit Glow in der eigenen Farbe. */
+class StatusDot(context: Context) : View(context) {
+    var color = C.TEXT3
         set(v) {
             if (field != v) {
                 field = v
                 invalidate()
             }
         }
-    var single = false
-    var onCount: (Int) -> Unit = {}
-    var onPaint: (Int) -> Unit = {}
-    var onClear: (Int) -> Unit = {}
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
 
-    private val rail = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x66000000 }
-    private val railEdge = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    override fun onDraw(canvas: Canvas) {
+        val c = min(width, height) / 2f
+        p.shader = RadialGradient(width / 2f, height / 2f, c, intArrayOf(color, color, LightColors.withAlpha(color, 0)), floatArrayOf(0f, 0.4f, 1f), Shader.TileMode.CLAMP)
+        canvas.drawCircle(width / 2f, height / 2f, c, p)
+    }
+}
+
+// ------------------------------------------------------------------ Farbrad
+
+/**
+ * HSV-Farbrad (Helligkeit 1): Farbton = Winkel (0° rechts, im Uhrzeigersinn), Sättigung = Abstand zur Mitte.
+ * Neon-Rand und Regler in der gewählten Farbe. Ziehen auch außerhalb des Rads möglich.
+ */
+class HueWheel(context: Context, private val wheelDp: Int, var onColor: (Int) -> Unit = {}) : View(context) {
+    private val pad = context.dpf(20)
+    private var hue = 0.97f * 360f
+    private var sat = 0.82f
+    private var dragging = false
+    private var knob = 1f
+    private var knobAnim: ValueAnimator? = null
+    private var bmp: Bitmap? = null
+    private val bmpPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
+    private val neon = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+    private val knobFill = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val knobRing = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        color = C.white(0.12f)
+        color = Color.WHITE
+        strokeWidth = context.dpf(3)
     }
-    private val offCell = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = C.white(0.07f) }
     private val glowP = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val cell = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val chip = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = C.white(0.75f) }
-    private val r = RectF()
-    private var shaders: Array<Shader?> = arrayOfNulls(count)
 
-    private val holdMs = ViewConfiguration.getLongPressTimeout().toLong()
-    private var downIndex = -1
-    private var lastIndex = -1
-    private var moved = false
-    private var held = false
-    private val hold = Runnable {
-        held = true
-        performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-        onClear(downIndex)
+    val current: Int get() = LightColors.hsv(hue, sat, 1f)
+
+    /** Farbe von außen setzen (nicht während des Ziehens). */
+    fun setColor(c: Int) {
+        if (dragging) return
+        val hsv = FloatArray(3)
+        Color.colorToHSV(c, hsv)
+        if (hsv[1] < 0.01f) hsv[0] = hue
+        if (abs(hsv[0] - hue) > 0.5f || abs(hsv[1] - sat) > 0.005f) {
+            hue = hsv[0]
+            sat = hsv[1]
+            invalidate()
+        }
     }
 
-    private val inset get() = height * 0.2f
-    private val gap get() = dp(3).toFloat()
-    private fun cellWidth(): Float = (width - inset * 2 - gap * (count - 1)) / count
-    private fun cellLeft(i: Int): Float = inset + i * (cellWidth() + gap)
-    private fun indexAt(x: Float): Int = ((x - inset) / (cellWidth() + gap)).toInt().coerceIn(0, count - 1)
-
-    /** Anzahl für Modus "Alle": bis einschließlich des berührten Segments, ganz links = 0. */
-    private fun countAt(x: Float): Int = if (x < inset + cellWidth() * 0.45f) 0 else indexAt(x) + 1
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val s = (context.dpf(wheelDp) + pad * 2).toInt()
+        setMeasuredDimension(s, s)
+    }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
-        railEdge.strokeWidth = dp(1).toFloat()
-        rebuild()
-    }
-
-    private fun rebuild() {
-        if (height == 0) return
-        val top = inset
-        val bottom = height - inset
-        shaders = Array(count) { i ->
-            val c = colors.getOrElse(i) { 0 } and 0xFFFFFF
-            if (c == 0) null else {
-                val full = 0xFF000000.toInt() or c
-                LinearGradient(0f, top, 0f, bottom, blend(full, Color.WHITE, 0.45f), full, Shader.TileMode.CLAMP)
-            }
+        val d = context.dpf(wheelDp).toInt().coerceAtLeast(8)
+        val b = Bitmap.createBitmap(d, d, Bitmap.Config.ARGB_8888)
+        val px = IntArray(d * d)
+        val half = d / 2f
+        for (y in 0 until d) for (x in 0 until d) {
+            val dx = x + 0.5f - half
+            val dy = y + 0.5f - half
+            val dist = sqrt(dx * dx + dy * dy)
+            if (dist > half) continue
+            val hh = (Math.toDegrees(atan2(dy, dx).toDouble()).toFloat() + 360f) % 360f
+            val c = LightColors.hsv(hh, (dist / half).coerceAtMost(1f), 1f)
+            px[y * d + x] = LightColors.withAlpha(c, (half - dist).coerceIn(0f, 1f)) // 1 px weicher Rand
         }
+        b.setPixels(px, 0, d, 0, 0, d, d)
+        bmp = b // altes Bild nicht recyceln – die GPU kann es noch zeichnen
     }
 
     override fun onDraw(canvas: Canvas) {
-        val h = height.toFloat()
-        r.set(0f, 0f, width.toFloat(), h)
-        canvas.drawRoundRect(r, h / 2, h / 2, rail)
-        r.inset(railEdge.strokeWidth / 2, railEdge.strokeWidth / 2)
-        canvas.drawRoundRect(r, h / 2, h / 2, railEdge)
-
-        val w = cellWidth()
-        val top = inset
-        val bottom = h - inset
-        val rad = min(w, bottom - top) * 0.38f
-        val alpha = if (dimmed) 70 else 255
-        // erst der Schein aller LEDs, dann die LEDs selbst
-        for (i in 0 until count) {
-            val c = colors.getOrElse(i) { 0 } and 0xFFFFFF
-            if (c == 0) continue
-            val left = cellLeft(i)
-            val spread = inset * 0.8f
-            r.set(left - spread * 0.4f, top - spread, left + w + spread * 0.4f, bottom + spread)
-            glowP.color = 0xFF000000.toInt() or c
-            glowP.alpha = if (dimmed) 25 else 85
-            canvas.drawRoundRect(r, rad + spread, rad + spread, glowP)
+        val dp = context.dpf(1)
+        val c = width / 2f
+        val rad = context.dpf(wheelDp) / 2
+        val cur = current
+        // Neon-Rand mit Glow
+        for ((wf, af) in GLOW_PASSES) {
+            neon.strokeWidth = 3 * dp + 2 * 10 * dp * wf
+            neon.color = LightColors.withAlpha(cur, 0.9f * af)
+            canvas.drawCircle(c, c, rad + 4 * dp, neon)
         }
-        for (i in 0 until count) {
-            val left = cellLeft(i)
-            r.set(left, top, left + w, bottom)
-            val sh = shaders.getOrNull(i)
-            if (sh == null) {
-                canvas.drawRoundRect(r, rad, rad, offCell)
-            } else {
-                cell.shader = sh
-                cell.alpha = alpha
-                canvas.drawRoundRect(r, rad, rad, cell)
-                if (!dimmed) {
-                    chip.alpha = 170
-                    canvas.drawCircle(r.centerX(), r.centerY() - (bottom - top) * 0.12f, min(w, bottom - top) * 0.13f, chip)
-                }
-            }
-        }
+        neon.strokeWidth = 3 * dp
+        neon.color = LightColors.withAlpha(cur, 0.9f)
+        canvas.drawCircle(c, c, rad + 4 * dp, neon)
+        bmp?.let { canvas.drawBitmap(it, c - it.width / 2f, c - it.height / 2f, bmpPaint) }
+        // Regler
+        val a = Math.toRadians(hue.toDouble())
+        val kx = c + cos(a).toFloat() * sat * rad
+        val ky = c + sin(a).toFloat() * sat * rad
+        val kr = 16 * dp * knob
+        glowP.shader = RadialGradient(kx, ky, kr + 10 * dp, intArrayOf(cur, cur, LightColors.withAlpha(cur, 0)), floatArrayOf(0f, kr / (kr + 10 * dp), 1f), Shader.TileMode.CLAMP)
+        canvas.drawCircle(kx, ky, kr + 10 * dp, glowP)
+        knobFill.color = cur
+        canvas.drawCircle(kx, ky, kr, knobFill)
+        canvas.drawCircle(kx, ky, kr - knobRing.strokeWidth / 2, knobRing)
     }
 
     override fun onTouchEvent(e: MotionEvent): Boolean {
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 parent?.requestDisallowInterceptTouchEvent(true)
-                downIndex = indexAt(e.x)
-                lastIndex = downIndex
-                moved = false
-                held = false
-                if (single) postDelayed(hold, holdMs) else onCount(countAt(e.x))
-                return true
+                dragging = true
+                animateKnob(1.3f)
+                pick(e.x, e.y)
             }
-            MotionEvent.ACTION_MOVE -> {
-                val i = indexAt(e.x)
-                if (single) {
-                    if (i != downIndex) {
-                        removeCallbacks(hold)
-                        if (!held) {
-                            if (!moved) onPaint(downIndex)
-                            moved = true
-                            if (i != lastIndex) onPaint(i)
-                        }
-                    }
-                } else {
-                    val n = countAt(e.x)
-                    onCount(n)
-                }
-                if (i != lastIndex) performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-                lastIndex = i
+            MotionEvent.ACTION_MOVE -> pick(e.x, e.y)
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                dragging = false
+                animateKnob(1f)
             }
-            MotionEvent.ACTION_UP -> {
-                removeCallbacks(hold)
-                if (single && !held && !moved) onPaint(downIndex)
-            }
-            MotionEvent.ACTION_CANCEL -> removeCallbacks(hold)
         }
         return true
     }
-}
 
-// ------------------------------------------------------------------ Karte mit Lichtschein
-
-/**
- * Glas-Karte, in der das Licht "scheint": ein weicher Schein in der LED-Farbe hinter dem Inhalt,
- * zentriert auf [anchor]. Ohne [glass] nur der Schein (z. B. im Panel).
- */
-class GlowCard(context: Context, radiusDp: Float = 30f, private val glass: Boolean = true) : LinearLayout(context) {
-    var anchor: View? = null
-
-    private val radius = context.dpf(radiusDp)
-    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val rect = RectF()
-    private var shownColor = Color.WHITE
-    private var level = 0f
-    private var anim: ValueAnimator? = null
-    private var key = 0L
-    private val loc = IntArray(2)
-    private val myLoc = IntArray(2)
-
-    init {
-        orientation = VERTICAL
-        if (glass) background = GlassDrawable(context, radiusDp)
-        setWillNotDraw(false)
+    private fun pick(x: Float, y: Float) {
+        val c = width / 2f
+        val rad = context.dpf(wheelDp) / 2
+        val dx = x - c
+        val dy = y - c
+        hue = (Math.toDegrees(atan2(dy, dx).toDouble()).toFloat() + 360f) % 360f
+        sat = (sqrt(dx * dx + dy * dy) / rad).coerceIn(0f, 1f)
+        invalidate()
+        onColor(current)
     }
 
-    /** Neue Lichtfarbe/-stärke – wird sanft übergeblendet. */
-    fun setLight(color: Int?, on: Boolean, brightness: Float) {
-        val toColor = color ?: shownColor
-        val toLevel = if (on && color != null) 0.45f + 0.55f * brightness.coerceIn(0f, 1f) else 0f
-        val fromColor = shownColor
-        val fromLevel = level
-        if (fromColor == toColor && fromLevel == toLevel) return
-        anim?.cancel()
-        anim = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 380
-            interpolator = EASE_OUT
+    private fun animateKnob(to: Float) {
+        knobAnim?.cancel()
+        knobAnim = ValueAnimator.ofFloat(knob, to).apply {
+            duration = 180
             addUpdateListener {
-                val t = it.animatedValue as Float
-                shownColor = blend(fromColor, toColor, t)
-                level = fromLevel + (toLevel - fromLevel) * t
+                knob = it.animatedValue as Float
                 invalidate()
             }
             start()
         }
     }
-
-    override fun onDraw(canvas: Canvas) {
-        super.onDraw(canvas)
-        if (level < 0.01f || width == 0) return
-        var ax = width / 2f
-        var ay = height / 2f
-        anchor?.let { a ->
-            if (a.width > 0) {
-                a.getLocationInWindow(loc)
-                getLocationInWindow(myLoc)
-                ax = loc[0] - myLoc[0] + a.width / 2f
-                ay = loc[1] - myLoc[1] + a.height / 2f
-            }
-        }
-        val rad = if (glass) max(width, height) * 0.8f else min(width, height) / 2f
-        val a = (95 * level).toInt()
-        val k = (ax.toInt().toLong() shl 48) xor (ay.toInt().toLong() shl 32) xor (shownColor.toLong() shl 8) xor a.toLong() xor rad.toLong()
-        if (k != key || p.shader == null) {
-            key = k
-            p.shader = RadialGradient(
-                ax, ay, rad,
-                intArrayOf(LightColors.withAlpha(shownColor, a), LightColors.withAlpha(shownColor, a * 2 / 5), 0),
-                floatArrayOf(0f, 0.45f, 1f), Shader.TileMode.CLAMP,
-            )
-        }
-        if (glass) {
-            rect.set(0f, 0f, width.toFloat(), height.toFloat())
-            rect.inset(dpf(1.5f), dpf(1.5f))
-            canvas.drawRoundRect(rect, radius, radius, p)
-        } else {
-            canvas.drawCircle(ax, ay, rad, p)
-        }
-    }
-
-    private fun dpf(v: Float) = context.dpf(v)
 }
 
-// ------------------------------------------------------------------ Farbtupfer
-
-/** Runder Farbtupfer mit Schein; ausgewählt = weißer Ring. */
-class Swatch(context: Context, val color: Int, sizeDp: Int, onPick: (Int) -> Unit) : View(context) {
-    var picked = false
+/** Runde Farbfläche mit Glow und weißem Rand (zeigt die gewählte Farbe). */
+class LumenSwatch(context: Context, private val sizeDp: Int) : View(context) {
+    var color = 0xFFFF2F5A.toInt()
         set(v) {
             if (field != v) {
                 field = v
                 invalidate()
             }
         }
-    private val haloP = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val disc = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val ringP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    private val glowP = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val edge = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        color = Color.WHITE
+        color = C.white(0.85f)
+        strokeWidth = context.dpf(2)
     }
 
-    init {
-        layoutParams = lp(dp(sizeDp), dp(sizeDp))
-        pressable { onPick(color) }
-    }
-
-    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
-        val c = min(w, h) / 2f
-        haloP.shader = RadialGradient(
-            w / 2f, h / 2f, c,
-            intArrayOf(LightColors.withAlpha(color, 120), 0), floatArrayOf(0.55f, 1f), Shader.TileMode.CLAMP,
-        )
-        disc.shader = RadialGradient(
-            w / 2f, h / 2f - c * 0.2f, c * 0.75f,
-            blend(color, Color.WHITE, 0.45f), color, Shader.TileMode.CLAMP,
-        )
-        ringP.strokeWidth = max(2f, c * 0.1f)
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val s = context.dpf(sizeDp + 28).toInt()
+        setMeasuredDimension(s, s)
     }
 
     override fun onDraw(canvas: Canvas) {
-        val c = min(width, height) / 2f
-        val x = width / 2f
-        val y = height / 2f
-        canvas.drawCircle(x, y, c, haloP)
-        canvas.drawCircle(x, y, c * 0.58f, disc)
-        if (picked) canvas.drawCircle(x, y, c * 0.82f, ringP)
+        val c = width / 2f
+        val rad = context.dpf(sizeDp) / 2
+        val gr = rad + context.dpf(14)
+        glowP.shader = RadialGradient(c, c, gr, intArrayOf(color, LightColors.withAlpha(color, 0.95f), LightColors.withAlpha(color, 0)), floatArrayOf(0f, rad / gr, 1f), Shader.TileMode.CLAMP)
+        canvas.drawCircle(c, c, gr, glowP)
+        p.color = color
+        canvas.drawCircle(c, c, rad, p)
+        canvas.drawCircle(c, c, rad - edge.strokeWidth / 2, edge)
+    }
+}
+
+// ------------------------------------------------------------------ Helligkeit
+
+/** Sonne in Warm mit Glow. */
+class SunIcon(context: Context) : View(context) {
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = LightColors.WARM
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val glowP = Paint(Paint.ANTI_ALIAS_FLAG)
+
+    override fun onDraw(canvas: Canvas) {
+        val s = min(width, height).toFloat()
+        val cx = width / 2f
+        val cy = height / 2f
+        glowP.shader = RadialGradient(cx, cy, s / 2, LightColors.withAlpha(LightColors.WARM, 0.55f), LightColors.withAlpha(LightColors.WARM, 0), Shader.TileMode.CLAMP)
+        canvas.drawCircle(cx, cy, s / 2, glowP)
+        p.style = Paint.Style.FILL
+        canvas.drawCircle(cx, cy, s * 0.17f, p)
+        p.style = Paint.Style.STROKE
+        p.strokeWidth = s * 0.08f
+        for (i in 0 until 8) {
+            val a = Math.toRadians(i * 45.0)
+            canvas.drawLine(
+                cx + cos(a).toFloat() * s * 0.27f, cy + sin(a).toFloat() * s * 0.27f,
+                cx + cos(a).toFloat() * s * 0.38f, cy + sin(a).toFloat() * s * 0.38f, p,
+            )
+        }
+    }
+}
+
+/** Glow-Leiste 1–100: Bahn dunkelwarm → Warm → Weiß, weißer Knopf mit warmem Kern und Glow. */
+class GlowBar(context: Context, var onChange: (Float) -> Unit = {}) : View(context) {
+    var value = 1f
+        set(v) {
+            if (dragging) return
+            val c = v.coerceIn(0.01f, 1f)
+            if (field != c) {
+                field = c
+                invalidate()
+            }
+        }
+    private var dragging = false
+    private var knob = 1f
+    private var knobAnim: ValueAnimator? = null
+    private val track = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val edge = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        color = C.white(0.18f)
+        strokeWidth = context.dpf(1)
+    }
+    private val knobP = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = C.white(0.95f) }
+    private val core = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = LightColors.WARM }
+    private val glowP = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val rect = RectF()
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        setMeasuredDimension(MeasureSpec.getSize(widthMeasureSpec), context.dpf(36).toInt())
+    }
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        track.shader = LinearGradient(0f, 0f, w.toFloat(), 0f, intArrayOf(LightColors.WARM_DARK, LightColors.WARM, Color.WHITE), null, Shader.TileMode.CLAMP)
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        val dp = context.dpf(1)
+        val cy = height / 2f
+        rect.set(dp, cy - 7 * dp, width - dp, cy + 7 * dp)
+        canvas.drawRoundRect(rect, 7 * dp, 7 * dp, track)
+        canvas.drawRoundRect(rect, 7 * dp, 7 * dp, edge)
+        val x = 15 * dp + (width - 30 * dp) * ((value * 100f - 1f) / 99f)
+        val kr = 15 * dp * knob
+        val gr = kr + (if (dragging) 16 else 10) * dp
+        glowP.shader = RadialGradient(x, cy, gr, intArrayOf(LightColors.WARM, LightColors.withAlpha(LightColors.WARM, 0.9f), LightColors.withAlpha(LightColors.WARM, 0)), floatArrayOf(0f, kr / gr, 1f), Shader.TileMode.CLAMP)
+        canvas.drawCircle(x, cy, gr, glowP)
+        canvas.drawCircle(x, cy, kr, knobP)
+        canvas.drawCircle(x, cy, 7 * dp * knob, core)
+    }
+
+    override fun onTouchEvent(e: MotionEvent): Boolean {
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                parent?.requestDisallowInterceptTouchEvent(true)
+                dragging = true
+                animateKnob(1.25f)
+                pick(e.x)
+            }
+            MotionEvent.ACTION_MOVE -> pick(e.x)
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                dragging = false
+                animateKnob(1f)
+            }
+        }
+        return true
+    }
+
+    private fun pick(x: Float) {
+        val dp = context.dpf(1)
+        val f = ((x - 15 * dp) / max(1f, width - 30 * dp)).coerceIn(0f, 1f)
+        val v = (1f + 99f * f).roundToInt() / 100f
+        val old = value
+        dragging = false
+        value = v
+        dragging = true
+        if ((old * 20).toInt() != (v * 20).toInt()) performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+        invalidate()
+        onChange(v)
+    }
+
+    private fun animateKnob(to: Float) {
+        knobAnim?.cancel()
+        knobAnim = ValueAnimator.ofFloat(knob, to).apply {
+            duration = 200
+            interpolator = android.view.animation.OvershootInterpolator(1.4f)
+            addUpdateListener {
+                knob = it.animatedValue as Float
+                invalidate()
+            }
+            start()
+        }
+    }
+}
+
+// ------------------------------------------------------------------ Hintergrund
+
+/**
+ * Akzent-Hintergrund der Licht-Oberfläche: Grundfarbe #0A0414 (optional) und zwei weiche Verläufe
+ * in der gewählten Farbe (oben) und einem verschobenen Ton (unten links). Farbwechsel blenden in 0,45 s.
+ */
+class LumenBackground(private val radius: Float, private val base: Boolean, private val strength: Float = 1f) : Drawable() {
+    private var shown = 0xFFFF2F5A.toInt()
+    private var anim: ValueAnimator? = null
+    private val baseP = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = LightColors.BG }
+    private val top = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val bottom = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val rect = RectF()
+    private var key = 0L
+    private var started = false
+
+    /** 0..1: wie stark der Schein ist (z. B. schwächer, wenn das Licht aus ist). */
+    var level = 1f
+        set(v) {
+            if (field != v) {
+                field = v
+                invalidateSelf()
+            }
+        }
+
+    fun setAccent(c: Int) {
+        val to = c or 0xFF000000.toInt()
+        if (to == shown) return
+        anim?.cancel()
+        if (!started) {
+            shown = to
+            started = true
+            invalidateSelf()
+            return
+        }
+        val from = shown
+        anim = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 450
+            addUpdateListener {
+                shown = blend(from, to, it.animatedValue as Float)
+                invalidateSelf()
+            }
+            start()
+        }
+    }
+
+    override fun draw(canvas: Canvas) {
+        val b = bounds
+        if (b.isEmpty) return
+        rect.set(b)
+        if (base) canvas.drawRoundRect(rect, radius, radius, baseP)
+        val w = b.width().toFloat()
+        val h = b.height().toFloat()
+        val k = (shown.toLong() and 0xFFFFFFFFL) xor (b.width().toLong() shl 32) xor (b.height().toLong() shl 48) xor ((level * 100).toLong() shl 20)
+        if (k != key) {
+            key = k
+            top.shader = ellipse(b.left + 0.5f * w, b.top + 0.25f * h, 0.885f * w, 0.885f * h, LightColors.withAlpha(shown, 0.55f * strength * level))
+            bottom.shader = ellipse(b.left + 0.1f * w, b.top + 1.0f * h, 1.055f * w, 1.055f * h, LightColors.withAlpha(LightColors.shifted(shown), 0.35f * strength * level))
+        }
+        canvas.drawRoundRect(rect, radius, radius, top)
+        canvas.drawRoundRect(rect, radius, radius, bottom)
+    }
+
+    private fun ellipse(x: Float, y: Float, rx: Float, ry: Float, c: Int): Shader =
+        RadialGradient(x, y, rx, c, LightColors.withAlpha(c, 0), Shader.TileMode.CLAMP).apply {
+            setLocalMatrix(Matrix().apply { setScale(1f, ry / rx, x, y) })
+        }
+
+    override fun setAlpha(alpha: Int) = Unit
+    override fun setColorFilter(colorFilter: ColorFilter?) = Unit
+
+    @Deprecated("Deprecated in Java")
+    override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+}
+
+/**
+ * Karte für das Licht-Widget: Glas und darüber der Akzent-Schein.
+ * Ohne Glas ([glass] = false) komplett durchsichtig – wie die Uhr.
+ */
+class LumenCard(context: Context, private val glass: Boolean, radiusDp: Float = 30f) : LinearLayout(context) {
+    val glow = LumenBackground(context.dpf(radiusDp), base = false, strength = 0.6f)
+
+    init {
+        orientation = VERTICAL
+        if (glass) background = GlassDrawable(context, radiusDp)
+        setWillNotDraw(!glass)
+        glow.callback = this
+    }
+
+    override fun verifyDrawable(who: Drawable): Boolean = who === glow || super.verifyDrawable(who)
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        glow.setBounds(0, 0, w, h)
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        if (glass) glow.draw(canvas)
+    }
+}
+
+/** Kleine Glas-Karte der Licht-Oberfläche (Radius 26, Rand Weiß 12 %, Innenabstand 14/18). */
+fun Context.lumenPanel(): LinearLayout = column().apply {
+    background = RoundDrawable(context, 26f, C.white(0.08f), C.white(0.12f))
+    setPadding(dp(18), dp(14), dp(18), dp(14))
+}
+
+/** Panel-Titel: 12, fett, Großbuchstaben, gesperrt. */
+fun Context.lumenTitle(text: String): android.widget.TextView = label(text.uppercase(Locale.GERMANY), 12f, C.white(0.6f)).apply {
+    typeface = Fonts.roundBold
+    letterSpacing = 0.15f
+}
+
+/** Text in der Rundschrift (Nunito). */
+fun Context.roundLabel(text: String, sp: Float, color: Int = C.TEXT, weight: Int = 700): android.widget.TextView = label(text, sp, color).apply {
+    typeface = when {
+        weight >= 900 -> Fonts.roundHeavy
+        weight >= 700 -> Fonts.roundBold
+        else -> Fonts.roundSemi
     }
 }

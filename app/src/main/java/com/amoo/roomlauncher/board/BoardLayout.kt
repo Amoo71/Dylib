@@ -20,48 +20,18 @@ import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.sin
 
-/** Ein Feld auf dem Board. [sizeLabel] != null -> Größe ist änderbar. */
-data class Cell(val id: String, val w: Int, val h: Int, val sizeLabel: String? = null)
+/**
+ * Ein Feld auf dem Board. [sizeLabel] != null -> Größe ist änderbar.
+ * [col]/[row] = fester Platz im Raster (Board); im Dock (eine Reihe) zählt nur die Reihenfolge.
+ */
+data class Cell(val id: String, val w: Int, val h: Int, val sizeLabel: String? = null, val col: Int = 0, val row: Int = 0)
 
 data class Placement(val cell: Cell, val col: Int, val row: Int)
 
-/** Legt Elemente der Reihe nach ins erste freie Feld (wie iOS, ohne Lücken). */
-fun pack(cells: List<Cell>, columns: Int): Pair<List<Placement>, Int> {
-    val occ = ArrayList<BooleanArray>()
-    fun ensure(r: Int) {
-        while (occ.size <= r) occ.add(BooleanArray(columns))
-    }
-    fun free(r: Int, c: Int, w: Int, h: Int): Boolean {
-        for (rr in r until r + h) {
-            ensure(rr)
-            for (cc in c until c + w) if (occ[rr][cc]) return false
-        }
-        return true
-    }
-    val out = ArrayList<Placement>()
-    for (cell in cells) {
-        val w = cell.w.coerceIn(1, columns)
-        val h = cell.h.coerceAtLeast(1)
-        var r = 0
-        var placed = false
-        while (!placed) {
-            for (c in 0..columns - w) {
-                if (free(r, c, w, h)) {
-                    for (rr in r until r + h) for (cc in c until c + w) occ[rr][cc] = true
-                    out += Placement(cell.copy(w = w, h = h), c, r)
-                    placed = true
-                    break
-                }
-            }
-            r++
-        }
-    }
-    return out to (out.maxOfOrNull { it.row + it.cell.h } ?: 0)
-}
-
 /**
  * Raster-Layout für Board und Dock.
- *  - Board: [columns] x [rows] sichtbar, Zellen füllen die Fläche.
+ *  - Board: [columns] x [rows] sichtbar, Zellen füllen die Fläche. Jedes Element hat einen festen Platz
+ *    und bleibt dort, wo es losgelassen wird (Lücken bleiben); ein Schatten zeigt beim Ziehen die Landestelle.
  *  - Dock: [fixedCellDp] > 0, eine Reihe, Breite passt sich an.
  * Leere Stelle (oder App) gedrückt halten -> Bearbeiten-Modus: wackeln, ziehen zum Verschieben, Badges zum Entfernen / Größe ändern.
  * Ein Widget gedrückt halten -> [Listener.onItemLongPress] (große Ansicht).
@@ -75,7 +45,10 @@ class BoardLayout(
 
     interface Listener {
         fun onEnterEdit()
-        fun onMove(id: String, toIndex: Int)
+        fun onMove(id: String, toIndex: Int) {}
+
+        /** Board: Element an [col]/[row] abgelegt. */
+        fun onDrop(id: String, col: Int, row: Int) {}
         fun onRemove(id: String)
         fun onResize(id: String) {}
         fun onEmptyTap() {}
@@ -162,8 +135,8 @@ class BoardLayout(
             }
             cellW = max(1, (totalW - gap * (columns - 1)) / columns)
             cellH = max(1, (viewport - gap * (rows - 1)) / rows)
-            val (pl, used) = pack(cells, columns)
-            placements = pl
+            placements = cells.map { Placement(it.copy(w = it.w.coerceIn(1, columns)), it.col.coerceIn(0, columns - it.w.coerceIn(1, columns)), it.row.coerceAtLeast(0)) }
+            val used = placements.maxOfOrNull { it.row + it.cell.h } ?: 0
             totalH = max(viewport, used * cellH + max(0, used - 1) * gap)
         }
         for (p in placements) {
@@ -346,7 +319,7 @@ class BoardLayout(
                 v.translationX = dragLeft - v.left
                 v.translationY = dragTop - v.top
                 v.invalidate() // Milchglas folgt dem Finger
-                checkReorder(id)
+                if (isFixed) checkReorder(id) else updateDropTarget(id)
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 val wasDrag = dragId != null
@@ -379,8 +352,53 @@ class BoardLayout(
     private fun endDrag() {
         val id = dragId ?: return
         dragId = null
-        views[id]?.animate()?.translationX(0f)?.translationY(0f)?.scaleX(1f)?.scaleY(1f)?.setDuration(300)
+        val v = views[id]
+        val target = dropTarget
+        dropTarget = null
+        invalidate()
+        val me = placements.firstOrNull { it.cell.id == id }
+        if (!isFixed && target != null && me != null && (target.first != me.col || target.second != me.row)) {
+            // Ablegen: die View bleibt, wo der Finger ist – das neue Layout lässt sie von dort an ihren Platz gleiten
+            v?.animate()?.scaleX(1f)?.scaleY(1f)?.setDuration(220)?.start()
+            listener?.onDrop(id, target.first, target.second)
+            // Sicherheitsnetz: falls sich nichts bewegt hat, zurückgleiten
+            postDelayed({
+                if (dragId == null && v != null && v.left == me.col * (cellW + gap) && v.top == me.row * (cellH + gap) &&
+                    (v.translationX != 0f || v.translationY != 0f) && v.animation == null
+                ) {
+                    v.animate().translationX(0f).translationY(0f).setDuration(300).setInterpolator(SPRING).start()
+                }
+            }, 120)
+            return
+        }
+        v?.animate()?.translationX(0f)?.translationY(0f)?.scaleX(1f)?.scaleY(1f)?.setDuration(300)
             ?.setInterpolator(SPRING)?.withEndAction { Backdrop.invalidateAll() }?.start()
+    }
+
+    // ---------------------------------------------------------------- Landestelle (Board)
+
+    private var dropTarget: Pair<Int, Int>? = null
+    private val ghostFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x1FFFFFFF }
+    private val ghostStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        color = 0x66FFFFFF
+        strokeWidth = dp(1.5f).toFloat()
+        pathEffect = android.graphics.DashPathEffect(floatArrayOf(dp(8).toFloat(), dp(6).toFloat()), 0f)
+    }
+
+    /** Wo würde das gezogene Element landen? Nächster freier Platz zur Fingerposition. */
+    private fun updateDropTarget(id: String) {
+        val me = placements.firstOrNull { it.cell.id == id } ?: return
+        val stepX = (cellW + gap).toFloat()
+        val stepY = (cellH + gap).toFloat()
+        val wantCol = Math.round(dragLeft / stepX)
+        val wantRow = Math.round(dragTop / stepY)
+        val slots = placements.map { Slot(it.cell.id, it.col, it.row, it.cell.w, it.cell.h) }
+        val t = Grid.nearestFree(slots, id, wantCol, wantRow, me.cell.w, me.cell.h, columns, rows)
+        if (t != dropTarget) {
+            dropTarget = t
+            invalidate()
+        }
     }
 
     private fun placementAt(x: Float, y: Float): Placement? = placements.firstOrNull { p ->
@@ -455,6 +473,19 @@ class BoardLayout(
     }
 
     override fun dispatchDraw(canvas: Canvas) {
+        // Schatten der Landestelle hinter allem
+        val t = dropTarget
+        val id = dragId
+        if (t != null && id != null) {
+            placements.firstOrNull { it.cell.id == id }?.let { p ->
+                val l = t.first * (cellW + gap).toFloat()
+                val tp = t.second * (cellH + gap).toFloat()
+                tmp.set(l, tp, l + p.cell.w * cellW + (p.cell.w - 1) * gap, tp + p.cell.h * cellH + (p.cell.h - 1) * gap)
+                val r = if (p.cell.w * p.cell.h > 1) dp(30).toFloat() else dp(18).toFloat()
+                canvas.drawRoundRect(tmp, r, r, ghostFill)
+                canvas.drawRoundRect(tmp, r, r, ghostStroke)
+            }
+        }
         super.dispatchDraw(canvas)
         if (!editMode) return
         for (p in placements) {

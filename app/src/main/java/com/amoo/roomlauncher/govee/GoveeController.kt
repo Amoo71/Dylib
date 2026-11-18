@@ -90,6 +90,14 @@ class GoveeController(
     /** Anzahl leuchtender Segmente im Modus "Alle". */
     val count: StateFlow<Int> = _count.asStateFlow()
 
+    private val _selected = MutableStateFlow(-1)
+    /** Gewähltes Segment im Modus "Einzeln" (-1 = keins) – wird hervorgehoben. */
+    val selected: StateFlow<Int> = _selected.asStateFlow()
+
+    fun selectSegment(i: Int) {
+        _selected.value = i.coerceIn(-1, GoveeProtocol.SEGMENTS - 1)
+    }
+
     /** Segment-Modell: 15 RGB-Farben (0 = aus). */
     private val segModel = IntArray(GoveeProtocol.SEGMENTS).also { m ->
         val saved = prefs.goveeSegments
@@ -209,8 +217,6 @@ class GoveeController(
                 restoreBrightness = null
                 enqueue("bright", GoveeProtocol.brightness(it, prefs.goveeBrightness100), 35)
             }
-        } else if (!fading && _sleepAt.value != 0L) {
-            setSleepTimer(0) // von Hand ausgeschaltet → Timer erledigt
         }
     }
 
@@ -340,9 +346,13 @@ class GoveeController(
 
     // ================================================================ Nacht-Timer
 
+    /** Wird am Ende des Nacht-Timers aufgerufen (Bildschirm aus, Apps schließen …). */
+    var onSleepEnd: (() -> Unit)? = null
+
     /**
-     * Nacht-Timer: Nach [minutes] Minuten geht das Licht aus. In der letzten Minute dimmt es sanft herunter.
-     * 0 = Timer aus. Übersteht auch einen Neustart der App (Zeitpunkt wird gespeichert).
+     * Nacht-Timer: Nach [minutes] Minuten geht das Licht aus (in der letzten Minute dimmt es sanft herunter),
+     * danach [onSleepEnd] (Bildschirm aus, Apps schließen). Läuft auch weiter, wenn das Licht vorher von Hand
+     * ausgeschaltet wurde. 0 = Timer aus. Übersteht einen Neustart der App (Zeitpunkt wird gespeichert).
      */
     fun setSleepTimer(minutes: Int) {
         sleepJob?.cancel()
@@ -365,7 +375,6 @@ class GoveeController(
         prefs.goveeSleepMinutes = minutes
         prefs.goveeSleepAt = at
         _sleepAt.value = at
-        if (!_power.value) setPower(true)
         com.amoo.roomlauncher.L.i("Nacht-Timer: $minutes min")
         armSleep()
     }
@@ -394,14 +403,19 @@ class GoveeController(
                 }
                 val rest = at - System.currentTimeMillis()
                 if (rest > 0) delay(rest)
-                setPower(false)
+                if (_power.value) setPower(false)
                 _brightness.value = from // Anzeige zeigt die gewohnte Helligkeit fürs nächste Einschalten
                 fading = false
+            } else {
+                val rest = at - System.currentTimeMillis()
+                if (rest > 0) delay(rest)
             }
             _sleepAt.value = 0L
             prefs.goveeSleepAt = 0L
             sleepJob = null
             com.amoo.roomlauncher.L.i("Nacht-Timer abgelaufen – Licht aus")
+            // Nur wenn der Timer wirklich gerade abgelaufen ist (nicht Stunden später nach einem Neustart)
+            if (System.currentTimeMillis() - at < 5 * 60_000L) onSleepEnd?.invoke()
         }
     }
 
@@ -727,8 +741,6 @@ class GoveeController(
                 if (now - lastPowerCmd > 1_000) {
                     _power.value = st.on
                     prefs.lastPower = st.on
-                    // Per Fernbedienung/App ausgeschaltet → Nacht-Timer hat sich erledigt
-                    if (!st.on && !fading && _sleepAt.value != 0L) scope.launch { setSleepTimer(0) }
                 }
                 if (!powerKnown) {
                     powerKnown = true

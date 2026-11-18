@@ -63,6 +63,7 @@ class RoomApp : Application() {
         }
         prefs.goveeDefaultApplied = true
         govee = GoveeController(this, prefs, appScope, ble)
+        govee.onSleepEnd = { SleepActions.run(this) }
         airpods = AirPodsController(this, prefs, appScope)
         apps = AppRepository(this, appScope)
         board = BoardStore(this)

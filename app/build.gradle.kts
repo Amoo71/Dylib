@@ -11,8 +11,8 @@ android {
         applicationId = "com.amoo.roomlauncher"
         minSdk = 25
         targetSdk = 35
-        versionCode = 15
-        versionName = "2.6.0"
+        versionCode = 16
+        versionName = "2.7.0"
     }
 
     // Fester Schlüssel im Repo, damit neue APKs sich über alte installieren lassen.

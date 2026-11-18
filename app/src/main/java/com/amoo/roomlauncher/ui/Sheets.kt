@@ -39,7 +39,7 @@ import kotlin.math.roundToInt
 // ------------------------------------------------------------------ Grundgerüst
 
 /** Modales Milchglas-Panel über abgedunkeltem Hintergrund, mit Ein-/Ausblend-Animation. */
-class Sheet(context: Context, title: String, fillHeight: Boolean, val onDismiss: () -> Unit) : FrameLayout(context) {
+class Sheet(context: Context, title: String, fillHeight: Boolean, val onDismiss: () -> Unit, maxWidthDp: Int = 880) : FrameLayout(context) {
     val body: LinearLayout
     private val panel: LinearLayout
     private var closing = false
@@ -61,9 +61,14 @@ class Sheet(context: Context, title: String, fillHeight: Boolean, val onDismiss:
         body = context.column()
         panel.addView(body, lp(MATCH, if (fillHeight) 0 else WRAP, if (fillHeight) 1f else 0f).margins(t = dp(16)))
         val dm = resources.displayMetrics
-        val w = minOf(dp(880), (dm.widthPixels * 0.94f).toInt())
+        val w = minOf(dp(maxWidthDp), (dm.widthPixels * 0.94f).toInt())
         val h = if (fillHeight) (dm.heightPixels * 0.9f).toInt() else WRAP
         addView(panel, LayoutParams(w, h, Gravity.CENTER))
+    }
+
+    /** Eigener Panel-Hintergrund (z. B. der dunkle Lumen-Hintergrund der Licht-Ansicht). */
+    fun panelBackground(d: android.graphics.drawable.Drawable) {
+        panel.background = d
     }
 
     /** Einblenden. Mit [origin] wächst das Panel aus dieser View heraus (Vorschau beim Gedrückthalten eines Widgets). */
@@ -503,6 +508,22 @@ private fun Context.widgetsTab(app: RoomApp): View {
         }
         root.addView(r, lp().margins(t = dp(12)))
     }
+    // Pro Widget auf dem Board: Glas-Container an/aus
+    val onBoard = column()
+    root.section("Auf deinem Board")
+    root.addView(onBoard)
+    onBoard.bind(app.board.items) { items ->
+        onBoard.removeAllViews()
+        val widgets = items.filterIsInstance<BoardItem.Widget>()
+        if (widgets.isEmpty()) onBoard.addView(label("Noch keine Widgets.", 14f, C.TEXT3))
+        widgets.forEach { w ->
+            onBoard.addView(
+                switchRow("${w.kind.title} · ${w.size.label}", w.glass, if (w.glass) "Glas-Container" else "ohne Container – durchsichtig wie die Uhr") {
+                    app.board.setGlass(w.id, it)
+                },
+            )
+        }
+    }
     root.addView(
         label(
             "Tipp: Leere Stelle auf dem Board gedrückt halten → alles wackelt: ziehen zum Verschieben, „Größe“ zum Ändern, „–“ zum Entfernen. " +
@@ -790,6 +811,17 @@ private fun MainActivity.exitTab(app: RoomApp, onDismiss: () -> Unit): View {
         ),
         lp().margins(t = dp(12)),
     )
+    if (com.amoo.roomlauncher.SleepActions.canLock(this)) {
+        root.section("Deinstallieren")
+        root.addView(label("Room Launcher darf für den Nacht-Timer den Bildschirm ausschalten. Vor dem Deinstallieren dieses Recht entfernen.", 14f, C.TEXT2, lines = 3))
+        root.addView(
+            glassButton("Bildschirm-Recht entfernen") {
+                com.amoo.roomlauncher.SleepActions.removeLock(this)
+                toast("Recht entfernt – die App kann jetzt deinstalliert werden")
+            },
+            lp(WRAP, WRAP).margins(t = dp(10)),
+        )
+    }
     root.addView(spacer(16))
     return root
 }
@@ -800,38 +832,23 @@ private val SLEEP_OPTIONS = listOf(0 to "Aus", 30 to "30 min", 60 to "1 Std", 12
 private val CLOCK_FMT = java.text.SimpleDateFormat("HH:mm", java.util.Locale.GERMANY)
 
 fun Context.goveeSheet(govee: GoveeController, prefs: Prefs, onDismiss: () -> Unit): Sheet {
-    val sheet = Sheet(this, "Licht", true, onDismiss)
+    val sheet = Sheet(this, "Licht", true, onDismiss, maxWidthDp = 1120)
+    // Dunkler Lumen-Hintergrund mit Akzent-Verläufen statt Milchglas
+    val bg = LumenBackground(dpf(34), base = true)
+    sheet.panelBackground(bg)
+    bindLumenGlow(sheet, bg, govee)
 
-    // ---- Links: großer Farbrad-Regler im Lichtschein
-    val left = GlowCard(this, 30f, glass = false).apply { gravity = Gravity.CENTER }
-    bindGlow(left, govee)
-    val dial = lightDial(govee)
-    left.anchor = dial
-    left.addView(dial, lp(MATCH, WRAP))
-    val bigName = label("", 15f, C.TEXT2, bold = true).apply { gravity = Gravity.CENTER }
-    fun refreshName() {
-        bigName.text = if (!govee.power.value) "aus" else LightColors.name(
-            if (govee.segmented.value && govee.segMode.value == GoveeController.SegMode.SINGLE) govee.brush.value else govee.color.value,
-        )
-    }
-    bigName.bind(govee.power) { refreshName() }
-    bigName.bind(govee.color) { refreshName() }
-    bigName.bind(govee.brush) { refreshName() }
-    bigName.bind(govee.segMode) { refreshName() }
-    left.addView(bigName, lp().margins(t = dp(8)))
-    left.addView(label("Ring = Farbe · Bogen = Helligkeit · Mitte tippen = an/aus, halten = Reset", 11.5f, C.TEXT3, lines = 2).apply {
-        gravity = Gravity.CENTER
-    }, lp().margins(t = dp(6)))
+    // ---- Links: die Bühne (3D-LED-Ring, Plattform, Power, Statuszeile)
+    val left = lumenStage(govee, board = false)
 
-    // ---- Rechts: alles Weitere
+    // ---- Rechts: Karten
     val root = column()
-    root.addView(lightStatus(govee, 14f))
     val err = label("", 13f, C.ORANGE, lines = 2)
     err.bind(govee.lastError) {
         err.text = it.orEmpty()
         err.visibility = if (it == null) View.GONE else View.VISIBLE
     }
-    root.addView(err, lp().margins(t = dp(4)))
+    root.addView(err, lp().margins(b = dp(8)))
     // Funkt die Leiste? – sekündlich aktualisiert, solange sie nicht verbunden ist
     val signal = label("", 12.5f, C.TEXT3, lines = 2)
     signal.everyWhileAttached(1000) {
@@ -840,66 +857,32 @@ fun Context.goveeSheet(govee: GoveeController, prefs: Prefs, onDismiss: () -> Un
         signal.visibility = if (!connected && configured) View.VISIBLE else View.GONE
         if (signal.visibility == View.VISIBLE) signal.text = "Signal: " + govee.signalInfo()
     }
-    root.addView(signal, lp().margins(t = dp(4)))
+    root.addView(signal, lp().margins(b = dp(8)))
 
     val control = column()
-    // Segmente
-    val segBox = column()
-    segBox.section("Segmente")
-    val segInfo = label("", 12.5f, C.TEXT3)
-    fun refreshSegInfo() {
-        segInfo.text = if (govee.segMode.value == GoveeController.SegMode.ALL) {
-            "${govee.count.value}/15 leuchten · tippen/ziehen"
-        } else {
-            "Farbe wählen, dann tippen = malen · halten = löschen"
-        }
-    }
-    segInfo.bind(govee.count) { refreshSegInfo() }
-    segInfo.bind(govee.segMode) { refreshSegInfo() }
-    segBox.addView(row(segInfo.also { it.layoutParams = lp(0, WRAP, 1f) }, segModeSwitch(govee, 36, 13f).also { it.layoutParams = lp(dp(190), WRAP) }))
-    segBox.addView(ledStrip(govee), lp(MATCH, dp(44)).margins(t = dp(12)))
-    segBox.bind(govee.segmented) { segBox.visibility = if (it) View.VISIBLE else View.GONE }
-    control.addView(segBox)
-
-    // Farben
-    control.section("Farben")
-    control.addView(swatchRow(govee, 42, 8))
-
-    // Nacht-Timer
-    control.section("Nacht-Timer")
-    val timer = Segmented(this, SLEEP_OPTIONS.map { it.second }, textSp = 14f, heightDp = 46) { i ->
-        govee.setSleepTimer(SLEEP_OPTIONS[i].first)
-        if (i > 0) toast("Licht geht in ${SLEEP_OPTIONS[i].second} sanft aus")
-    }
-    val timerInfo = label("", 13f, C.TEXT3, lines = 2)
-    fun refreshTimer() {
-        val at = govee.sleepAt.value
-        timer.selected = if (at == 0L) 0 else SLEEP_OPTIONS.indexOfFirst { it.first == govee.sleepMinutes }
-        timerInfo.text = if (at == 0L) {
-            "Das Licht geht nach der gewählten Zeit aus – in der letzten Minute dimmt es sanft herunter."
-        } else {
-            "Geht um ${CLOCK_FMT.format(java.util.Date(at))} aus · noch ${sleepLeft(at)}"
-        }
-        timerInfo.setTextColor(if (at == 0L) C.TEXT3 else LightColors.MOON)
-    }
-    timer.bind(govee.sleepAt) { refreshTimer() }
-    timerInfo.everyWhileAttached(10_000) { refreshTimer() }
-    control.addView(timer)
-    control.addView(timerInfo, lp().margins(t = dp(8)))
+    control.addView(colorCard(govee, 150, 52))
+    control.addView(brightnessCard(govee), lp().margins(t = dp(12)))
+    control.addView(sleepCard(govee, prefs), lp().margins(t = dp(12)))
 
     // Szenen & Musik: eingeklappt
+    val moreCard = lumenPanel()
     val more = column().apply { visibility = View.GONE }
-    more.section("Szenen")
+    more.addView(lumenTitle("Szenen"), lp().margins(t = dp(12), b = dp(8)))
     more.addView(hScroll(*GoveeController.SCENES.map { (id, l) -> Chip(this, l) { govee.setScene(id) } }.toTypedArray()))
-    more.section("Musik (Mikrofon am Controller)")
+    more.addView(lumenTitle("Musik (Mikrofon am Controller)"), lp().margins(t = dp(14), b = dp(8)))
     more.addView(hScroll(*GoveeController.MUSIC_MODES.map { (id, l) -> Chip(this, l) { govee.setMusicMode(id) } }.toTypedArray()))
-    val moreToggle = Chip(this, "Szenen & Musik ▾") { c ->
+    val moreHead = row(
+        lumenTitle("Szenen & Musik").also { it.layoutParams = lp(0, WRAP, 1f) },
+        roundLabel("▾", 15f, C.white(0.6f)),
+    )
+    moreHead.pressable {
         val open = more.visibility != View.VISIBLE
         more.visibility = if (open) View.VISIBLE else View.GONE
-        c.text = if (open) "Szenen & Musik ▴" else "Szenen & Musik ▾"
+        (moreHead.getChildAt(1) as? TextView)?.text = if (open) "▴" else "▾"
     }
-    control.addView(moreToggle, lp(WRAP, WRAP).margins(t = dp(20)))
-    control.addView(more)
+    moreCard.addView(moreHead)
+    moreCard.addView(more)
+    control.addView(moreCard, lp().margins(t = dp(12)))
     root.addView(control)
 
     // ---- Einrichtung / anderes Licht (nur bei Bedarf sichtbar)
@@ -991,8 +974,8 @@ fun Context.goveeSheet(govee: GoveeController, prefs: Prefs, onDismiss: () -> Un
     root.addView(spacer(16))
 
     val content = row(
-        left.also { it.layoutParams = lp(dp(340), MATCH) },
-        scroll(root).also { it.layoutParams = lp(0, MATCH, 1f).margins(l = dp(28)) },
+        left.also { it.layoutParams = lp(0, MATCH, 1f) },
+        scroll(root).also { it.layoutParams = lp(dp(400), MATCH).margins(l = dp(20)) },
         center = false,
     )
     sheet.body.addView(content, lp(MATCH, 0, 1f))
@@ -1002,6 +985,58 @@ fun Context.goveeSheet(govee: GoveeController, prefs: Prefs, onDismiss: () -> Un
     })
     return sheet
 }
+
+/**
+ * Nacht-Timer: Aus · 30 min · 1 Std · 2 Std. Am Ende: Licht dimmt aus, dann (einstellbar)
+ * Bildschirm aus und offene Apps schließen.
+ */
+private fun Context.sleepCard(govee: GoveeController, prefs: Prefs): LinearLayout {
+    val card = lumenPanel()
+    card.addView(lumenTitle("Nacht-Timer"))
+    val timer = Segmented(this, SLEEP_OPTIONS.map { it.second }, textSp = 14f, heightDp = 44) { i ->
+        govee.setSleepTimer(SLEEP_OPTIONS[i].first)
+        if (i > 0) {
+            toast("In ${SLEEP_OPTIONS[i].second}: Licht aus" + (if (prefs.sleepScreenOff) ", Bildschirm aus" else "") + (if (prefs.sleepCloseApps) ", Apps zu" else ""))
+            if (prefs.sleepScreenOff && !com.amoo.roomlauncher.SleepActions.canLock(this)) com.amoo.roomlauncher.SleepActions.requestLock(this)
+        }
+    }
+    val info = roundLabel("", 13f, C.white(0.6f), 600).apply { maxLines = 2 }
+    fun refresh() {
+        val at = govee.sleepAt.value
+        timer.selected = if (at == 0L) 0 else SLEEP_OPTIONS.indexOfFirst { it.first == govee.sleepMinutes }
+        info.text = if (at == 0L) {
+            "Am Ende dimmt das Licht in der letzten Minute sanft aus."
+        } else {
+            "Um ${CLOCK_FMT.format(java.util.Date(at))} ist Schluss · noch ${sleepLeft(at)}"
+        }
+        info.setTextColor(if (at == 0L) C.white(0.6f) else LightColors.MOON)
+    }
+    timer.bind(govee.sleepAt) { refresh() }
+    info.everyWhileAttached(10_000) { refresh() }
+    card.addView(timer, lp().margins(t = dp(10)))
+    card.addView(info, lp().margins(t = dp(8)))
+
+    val hint = label("", 12.5f, C.ORANGE, lines = 2)
+    fun refreshHint() {
+        val need = prefs.sleepScreenOff && !com.amoo.roomlauncher.SleepActions.canLock(this)
+        hint.visibility = if (need) View.VISIBLE else View.GONE
+        hint.text = "Bildschirm-aus braucht einmal das Recht „Bildschirm sperren“ – hier tippen."
+    }
+    hint.pressable { com.amoo.roomlauncher.SleepActions.requestLock(this) }
+    hint.everyWhileAttached(2000) { refreshHint() }
+    card.addView(
+        switchRow("Bildschirm ausschalten", prefs.sleepScreenOff, "Wenn der Timer abläuft") {
+            prefs.sleepScreenOff = it
+            if (it && !com.amoo.roomlauncher.SleepActions.canLock(this)) com.amoo.roomlauncher.SleepActions.requestLock(this)
+            refreshHint()
+        },
+        lp().margins(t = dp(6)),
+    )
+    card.addView(hint)
+    card.addView(switchRow("Offene Apps schließen", prefs.sleepCloseApps, "Musik pausieren und alle Apps beenden") { prefs.sleepCloseApps = it })
+    return card
+}
+
 
 // ------------------------------------------------------------------ AirPods (schlank: Name, Status, Verbinden, Gerät wählen)
 

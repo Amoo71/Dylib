@@ -88,6 +88,14 @@ object Fonts {
     var display: Typeface = Typeface.MONOSPACE
         private set
 
+    /** Nunito (abgerundet, wie SF Pro Rounded) – für die Licht-Oberfläche. */
+    var roundSemi: Typeface = Typeface.DEFAULT_BOLD
+        private set
+    var roundBold: Typeface = Typeface.DEFAULT_BOLD
+        private set
+    var roundHeavy: Typeface = Typeface.DEFAULT_BOLD
+        private set
+
     fun init(context: Context) {
         fun load(name: String, fallback: Typeface) =
             runCatching { Typeface.createFromAsset(context.assets, "fonts/$name") }.getOrDefault(fallback)
@@ -95,6 +103,9 @@ object Fonts {
         medium = load("spacegrotesk_medium.ttf", Typeface.DEFAULT_BOLD)
         light = load("spacegrotesk_light.ttf", Typeface.DEFAULT)
         display = load("doto_bold.ttf", Typeface.MONOSPACE)
+        roundSemi = load("nunito_semibold.ttf", Typeface.DEFAULT_BOLD)
+        roundBold = load("nunito_bold.ttf", Typeface.DEFAULT_BOLD)
+        roundHeavy = load("nunito_black.ttf", Typeface.DEFAULT_BOLD)
     }
 }
 

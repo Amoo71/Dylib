@@ -42,7 +42,7 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     private val bgView = BackgroundView(activity)
-    private val board = BoardLayout(activity, columns = 8, rows = 4)
+    private val board = BoardLayout(activity, columns = com.amoo.roomlauncher.board.BoardStore.COLUMNS, rows = com.amoo.roomlauncher.board.BoardStore.ROWS)
     private val boardScroll = object : ScrollView(activity) {
         override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
             super.onSizeChanged(w, h, oldw, oldh)
@@ -67,6 +67,7 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
     private var boardAppsVersion = -1
     private var dockAppsVersion = -1
     private var lastTheme: ThemeSettings? = null
+    private val widgetGlass = HashMap<String, Boolean>()
 
     var editMode = false
         private set
@@ -78,7 +79,9 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
         // ---- Oben: AirPods-Abzeichen (rechts) · Board · Dock
         val content = context.column().apply { setPadding(dp(30), dp(10), dp(30), dp(14)) }
         val topBar = FrameLayout(activity)
-        topBar.addView(airPodsBadge(), LayoutParams(WRAP, WRAP, Gravity.END or Gravity.CENTER_VERTICAL))
+        // Zwei Mini-Widgets: AirPods links, Licht rechts
+        topBar.addView(airPodsBadge(), LayoutParams(WRAP, WRAP, Gravity.START or Gravity.CENTER_VERTICAL))
+        topBar.addView(lightBadge(), LayoutParams(WRAP, WRAP, Gravity.END or Gravity.CENTER_VERTICAL))
         content.addView(topBar, lp(MATCH, dp(38)).margins(b = dp(10)))
         boardScroll.isVerticalScrollBarEnabled = false
         boardScroll.overScrollMode = View.OVER_SCROLL_NEVER
@@ -129,7 +132,7 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
         // ---- Listener
         board.listener = object : BoardLayout.Listener {
             override fun onEnterEdit() = setEdit(true)
-            override fun onMove(id: String, toIndex: Int) = app.board.move(id, toIndex)
+            override fun onDrop(id: String, col: Int, row: Int) = app.board.place(id, col, row)
             override fun onRemove(id: String) = app.board.remove(id)
             override fun onResize(id: String) = app.board.cycleSize(id)
             override fun onEmptyTap() = setEdit(false)
@@ -164,7 +167,12 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
                 renderDock()
             }
         }
-        scope.launch { app.smooth.collect { bgView.smooth = it } }
+        scope.launch {
+            app.smooth.collect {
+                bgView.smooth = it
+                LumenRing.smooth = it
+            }
+        }
         // Bluetooth an/aus → Hinweisleiste sofort aktualisieren (auch über die Schnelleinstellungen)
         scope.launch { app.bluetoothOn.collect { refreshBanner() } }
         scope.launch {
@@ -197,8 +205,8 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
         val items = app.board.items.value
         val cells = items.map { item ->
             when (item) {
-                is BoardItem.Widget -> Cell(item.id, item.w, item.h, if (item.kind.sizes.size > 1) item.size.label else null)
-                is BoardItem.App -> Cell(item.id, 1, 1)
+                is BoardItem.Widget -> Cell(item.id, item.w, item.h, if (item.kind.sizes.size > 1) item.size.label else null, item.col, item.row)
+                is BoardItem.App -> Cell(item.id, 1, 1, null, item.col, item.row)
             }
         }
         val recreateApps = boardAppsVersion != appsVersion
@@ -210,7 +218,7 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
                 // Ein fehlerhaftes Widget darf nie den ganzen Launcher abstürzen lassen
                 try {
                     when (val item = items.first { it.id == cell.id }) {
-                        is BoardItem.Widget -> context.widgetView(item.kind, item.size, app.govee) {
+                        is BoardItem.Widget -> context.widgetView(item.kind, item.size, app.govee, item.glass) {
                             if (!editMode) showOverlay(context.goveeSheet(app.govee, app.prefs) { closeOverlay() })
                         }
                         is BoardItem.App -> {
@@ -226,8 +234,17 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
                     }
                 }
             },
-            recreate = { cell -> recreateApps && items.firstOrNull { it.id == cell.id } is BoardItem.App },
+            recreate = { cell ->
+                when (val item = items.firstOrNull { it.id == cell.id }) {
+                    is BoardItem.App -> recreateApps
+                    // Glas-Container umgeschaltet → Widget neu bauen
+                    is BoardItem.Widget -> (widgetGlass[item.id] ?: item.glass) != item.glass
+                    null -> false
+                }
+            },
         )
+        widgetGlass.clear()
+        items.filterIsInstance<BoardItem.Widget>().forEach { widgetGlass[it.id] = it.glass }
     }
 
     private fun renderDock() {
@@ -325,6 +342,7 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
         overlayHost.removeAllViews()
         overlayHost.addView(v, LayoutParams(MATCH, MATCH))
         v.animateIn(origin)
+        LumenRing.boardPaused = true // Board-Animationen ruhen, solange ein Panel offen ist
     }
 
     /** Widget gedrückt halten → große Ansicht, die aus dem Widget herauswächst. Apps → Bearbeiten. */
@@ -345,7 +363,69 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
         return true
     }
 
-    /** Mini-Abzeichen oben rechts: AirPods-Symbol, Name, verbunden oder nicht. Tippen = kleines AirPods-Panel. */
+    /**
+     * Mini-Widget Licht (oben rechts): leuchtender Punkt in der Lichtfarbe, Status mit Helligkeit,
+     * Mond + Restzeit beim Nacht-Timer und ein kleiner Power-Knopf. Tippen = große Licht-Ansicht.
+     */
+    private fun lightBadge(): View {
+        val ctx: Context = context
+        val g = app.govee
+        val glow = MiniGlow(ctx)
+        val title = ctx.label("Licht", 13.5f, bold = true)
+        val state = ctx.label("", 12.5f, C.TEXT2)
+        val moon = IconView(ctx, Glyph.MOON, 0xFFB9A8FF.toInt())
+        val moonText = ctx.label("", 12f, 0xFFB9A8FF.toInt(), bold = true)
+        val moonBox = ctx.row(moon.also { it.layoutParams = lp(dp(12), dp(12)) }, moonText, spacingDp = 4)
+        val powerIcon = IconView(ctx, Glyph.POWER)
+        val powerBg = RoundDrawable(ctx, 14f, C.white(0.12f), C.white(0.2f))
+        val power = FrameLayout(ctx).apply {
+            background = powerBg
+            addView(powerIcon, LayoutParams(dp(13), dp(13), Gravity.CENTER))
+            pressable { g.togglePower() }
+        }
+        val badge = ctx.row(
+            glow.also { it.layoutParams = lp(dp(18), dp(18)) },
+            title,
+            state,
+            moonBox,
+            power.also { it.layoutParams = lp(dp(28), dp(28)).margins(l = dp(4)) },
+            spacingDp = 8,
+        ).apply {
+            background = GlassDrawable(ctx, 19f, 1.1f)
+            setPadding(dp(12), dp(5), dp(5), dp(5))
+            pressable { showOverlay(ctx.goveeSheet(app.govee, app.prefs) { closeOverlay() }, this) }
+        }
+        fun refresh() {
+            val on = g.power.value
+            val c = g.connection.value
+            state.text = when (c) {
+                com.amoo.roomlauncher.govee.GoveeController.Connection.NOT_CONFIGURED -> "nicht eingerichtet"
+                com.amoo.roomlauncher.govee.GoveeController.Connection.CONNECTED ->
+                    if (on) "an · ${(g.brightness.value * 100).toInt().coerceAtLeast(1)}%" else "aus"
+                else -> "sucht…"
+            }
+            state.setTextColor(if (on && c == com.amoo.roomlauncher.govee.GoveeController.Connection.CONNECTED) C.TEXT else C.TEXT2)
+            val col = if (g.segmented.value) LightColors.average(g.segments.value) ?: g.color.value else g.color.value
+            glow.set(col, on)
+            powerBg.color = if (on) C.white(0.92f) else C.white(0.12f)
+            powerIcon.color = if (on) 0xFF101012.toInt() else C.TEXT
+            power.invalidate()
+            powerIcon.invalidate()
+            val at = g.sleepAt.value
+            moonBox.visibility = if (at == 0L) View.GONE else View.VISIBLE
+            if (at != 0L) moonText.text = sleepLeft(at)
+        }
+        badge.bind(g.power) { refresh() }
+        badge.bind(g.brightness) { refresh() }
+        badge.bind(g.connection) { refresh() }
+        badge.bind(g.color) { refresh() }
+        badge.bind(g.segments) { refresh() }
+        badge.bind(g.sleepAt) { refresh() }
+        badge.everyWhileAttached(15_000) { refresh() }
+        return badge
+    }
+
+    /** Mini-Abzeichen oben links: AirPods-Symbol, Name, verbunden oder nicht. Tippen = kleines AirPods-Panel. */
     private fun airPodsBadge(): View {
         val ctx: Context = context
         val name = ctx.label("AirPods", 13.5f, bold = true)
@@ -383,7 +463,10 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
 
     fun closeOverlay(): Boolean {
         val current = overlayHost.getChildAt(overlayHost.childCount - 1) as? Sheet ?: return false
-        current.animateOut { overlayHost.removeView(current) }
+        current.animateOut {
+            overlayHost.removeView(current)
+            if (overlayHost.childCount == 0) LumenRing.boardPaused = false
+        }
         refreshBanner()
         return true
     }
@@ -400,4 +483,38 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
     }
 
     fun dispose() = scope.cancel()
+}
+
+/** Kleiner leuchtender Punkt in der Lichtfarbe (aus = dunkel). */
+private class MiniGlow(context: Context) : View(context) {
+    private val p = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+    private var color = android.graphics.Color.WHITE
+    private var on = false
+
+    fun set(c: Int, isOn: Boolean) {
+        if (c == color && isOn == on) return
+        color = c
+        on = isOn
+        p.shader = null
+        invalidate()
+    }
+
+    override fun onDraw(canvas: android.graphics.Canvas) {
+        val r = minOf(width, height) / 2f
+        val cx = width / 2f
+        val cy = height / 2f
+        val col = if (on) color or 0xFF000000.toInt() else 0xFF3A3A3C.toInt()
+        if (p.shader == null) {
+            p.shader = android.graphics.RadialGradient(
+                cx, cy, r,
+                intArrayOf(col, LightColors.withAlpha(col, if (on) 110 else 0), 0),
+                floatArrayOf(0.35f, 0.6f, 1f), android.graphics.Shader.TileMode.CLAMP,
+            )
+        }
+        canvas.drawCircle(cx, cy, r, p)
+    }
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        p.shader = null
+    }
 }

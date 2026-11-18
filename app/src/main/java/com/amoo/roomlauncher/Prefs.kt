@@ -101,6 +101,16 @@ class Prefs(context: Context) {
         get() = sp.getInt("govee_sleep_minutes", 0)
         set(v) = sp.edit().putInt("govee_sleep_minutes", v).apply()
 
+    /** Nacht-Timer-Ende: Bildschirm ausschalten. */
+    var sleepScreenOff: Boolean
+        get() = sp.getBoolean("sleep_screen_off", true)
+        set(v) = sp.edit().putBoolean("sleep_screen_off", v).apply()
+
+    /** Nacht-Timer-Ende: offene Apps schließen (und Musik pausieren). */
+    var sleepCloseApps: Boolean
+        get() = sp.getBoolean("sleep_close_apps", true)
+        set(v) = sp.edit().putBoolean("sleep_close_apps", v).apply()
+
     var airpodsAddress: String?
         get() = sp.getString("airpods_address", null)
         set(v) = sp.edit().putString("airpods_address", v).apply()

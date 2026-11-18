@@ -1,16 +1,18 @@
 # Room Launcher
 
 Dunkler Tablet-Launcher im iOS-„Liquid Glass“-Stil für das Zimmer-Tablet (läuft ab **Android 7.1**, z. B. Galaxy Tab E mit LineageOS) – fest im Querformat,
-mit Glas-Widgets für **Uhr** und **Licht**, deinen **Apps** und einem kleinen **AirPods-Abzeichen** oben.
+mit Widgets für **Uhr** und **Licht**, deinen **Apps** und zwei Mini-Widgets oben (**AirPods** links, **Licht** rechts).
 
 **Download:** [neueste Version (Releases)](../../releases/latest) → `RoomLauncher.apk`
 
 - **Home-Launcher**: Als Standard-Startbildschirm landet die Home-Taste immer hier. Zurück-Taste verlässt ihn nicht.
-- **Launcherboard** (8×4-Raster, wie iOS): Widgets und Apps frei anordnen.
+- **Launcherboard** (8×4-Raster): Widgets und Apps bleiben **genau dort, wo du sie loslässt** – Lücken bleiben Lücken.
+  Ist der Platz belegt, landet das Element im nächsten freien Feld; ein Schatten zeigt beim Ziehen die Landestelle.
   **Leere Stelle** (oder App) gedrückt halten → Bearbeiten: alles wackelt weich, **ziehen** zum Verschieben, **„–“** entfernen, **„Größe“** (Klein/Mittel).
   **Widget** gedrückt halten → seine **große Ansicht** wächst aus dem Widget heraus.
-- **Widgets**: Uhr · Licht (Govee) – klein oder mittel.
-- **AirPods-Abzeichen** oben rechts: AirPods-Symbol, Name und „verbunden“ / „nicht verbunden“. Antippen = Verbinden/Trennen und Gerät wählen.
+- **Widgets**: Uhr · Licht (Govee) – klein oder mittel. Pro Widget abschaltbarer **Glas-Container** (Einstellungen → Widgets) – ohne ist es durchsichtig wie die Uhr.
+- **Mini-Widgets oben**: links **AirPods** (Symbol, Name, verbunden/nicht verbunden), rechts **Licht**
+  (leuchtender Farbpunkt, an/aus mit Helligkeit, Mond + Restzeit beim Nacht-Timer, kleiner Power-Knopf). Antippen = große Ansicht.
 - **Dock** unten (Liquid Glass): an/aus, Apps hinzufügen, per Gedrückthalten sortieren/entfernen.
 - **Einstellungen** (Zahnrad unten rechts): Hintergrund, Widgets, Apps, Dock, Geräte, Allgemein (inkl. Launcher verlassen).
 - **Liquid Glass mit Milchglas**: Widgets, Dock, Icons und Panels zeigen den animierten Hintergrund verschwommen – Glas-Deckkraft per Regler einstellbar.
@@ -25,18 +27,22 @@ mit Glas-Widgets für **Uhr** und **Licht**, deinen **Apps** und einem kleinen *
 - **Govee-LED** direkt per Bluetooth LE: An/Aus, Helligkeit, Farbe, Presets, Szenen, Musikmodi, Status-Rücklesen.
   Modell wird am Namen erkannt (z. B. `Govee_H617E_774E`). Für RGBIC-Leisten wie die **H617E** (15 Segmente) gilt der geprüfte Bauplan:
   Write Without Response, Helligkeit 1–100, RGB in 8er-Stufen, nach jedem Verbinden kompletter Segment-Stand (ein Paket pro Farbe), danach nur Änderungen.
-  - **Farbrad-Regler:** außen der Farbring (Warmweiß → Weiß → Regenbogen), innen der Helligkeits-Bogen (rastet alle 10 % spürbar ein),
-    in der Mitte die leuchtende Kugel: tippen = an/aus, halten = Reset. Die Glas-Karte glüht in der Lichtfarbe.
-  - **Leuchtende LED-Leiste** mit den echten 15 Segmentfarben
-  - **Große Ansicht** (Widget gedrückt halten): Segmente, Farbtupfer, **Nacht-Timer** (30 min · 1 Std · 2 Std – dimmt in der letzten Minute sanft herunter, Mond-Ring + Restzeit im Widget), Szenen & Musik
-  - **Modus „Alle“:** Leiste antippen/ziehen = Anzahl leuchtender Segmente 0–15, Farbe färbt alle leuchtenden
-  - **Modus „Einzeln“:** Farbe = Pinsel, Segment antippen/wischen = malen, halten = ausschalten
+  - **Lumen-Oberfläche** (nach der iOS-Vorlage „Lumen Remote“): **3D-LED-Ring** mit 15 Segmenten auf geneigter Ebene
+    (Perspektive, 4 Lagen mit Glow und Glanz), schwebt und schwingt sanft, darunter eine holografische Plattform, die atmet.
+    Mitte: Power-Knopf (tippen = an/aus, 0,7 s halten = Reset). Ring wischen = Anzahl (Modus „Alle“) bzw. Segment wählen
+    („Einzeln“), tippen = setzen/malen, halten = Segment löschen. Dazu HSV-**Farbrad**, **Glow-Helligkeitsleiste**, Modus-Chip
+    und ein dunkler Hintergrund in der gewählten Farbe. Schrift: Nunito (abgerundet).
+  - **Widget klein** = Bühne mit Ring · **mittel** = Ring + Farbrad + Helligkeit · **große Ansicht** (Widget gedrückt halten)
+    zusätzlich Nacht-Timer, Szenen & Musik.
+  - **Nacht-Timer** 30 min · 1 Std · 2 Std: Licht dimmt in der letzten Minute sanft aus, danach (einstellbar) **Bildschirm aus**
+    und **offene Apps schließen** (Musik pausiert). Fürs Bildschirm-Ausschalten einmalig das Recht „Bildschirm sperren“ erlauben
+    (vor dem Deinstallieren unter Einstellungen → Verlassen wieder entfernen).
   - **Schnelleinstellungs-Kachel „Licht“** (An/Aus aus jeder App)
   - **Externe Befehle** (Tasker, NFC …): `lumen://power/on|off|toggle`, `lumen://reset`, `lumen://brightness/50`, `lumen://level/8`, `lumen://color/RRGGBB`, `lumen://sleep/30`
 
 ## Installation
 
-1. APK laden: GitHub → *Releases* → **Room Launcher v2.6.0** (neueste) → `RoomLauncher.apk`.
+1. APK laden: GitHub → *Releases* → **Room Launcher v2.7.0** (neueste) → `RoomLauncher.apk`.
 2. Auf dem Tablet installieren („Unbekannte Quellen“ erlauben).
 3. App öffnen, Bluetooth-/Standortberechtigung erlauben und den **Standort einschalten** – ohne ihn findet Android 7 keine Bluetooth-LE-Geräte (für die Licht-Suche). Der Launcher zeigt oben einen Hinweis, falls etwas fehlt.
 4. Home-Taste drücken → **Room Launcher** als Standard wählen („Immer“).
@@ -65,7 +71,7 @@ Nur für den privaten Gebrauch gedacht.
 ## Tests
 
 `app/src/test/.../ProtocolTest.kt` prüft die Bluetooth-Pakete Byte für Byte gegen veröffentlichte Mitschnitte
-(Govee: egold555/Govee-Reverse-Engineering, H617E-Bauplan). Läuft bei jedem Build mit.
+(Govee: egold555/Govee-Reverse-Engineering, H617E-Bauplan). `GridTest.kt` prüft das freie Raster. Läuft bei jedem Build mit.
 
 ## Schriften
 
@@ -74,3 +80,4 @@ SIL Open Font License 1.1 (Lizenztexte liegen in `app/src/main/assets/fonts/`):
 
 - **Doto** – Punktmatrix-Schrift (Copyright The Doto Project Authors)
 - **Space Grotesk** – Grotesk (Copyright The Space Grotesk Project Authors)
+- **Nunito** – abgerundete Schrift der Licht-Oberfläche (Copyright The Nunito Project Authors)

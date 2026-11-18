@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Einziges Recht: Bildschirm sperren/ausschalten (für den Nacht-Timer) -->
+<device-admin>
+    <uses-policies>
+        <force-lock />
+    </uses-policies>
+</device-admin>
