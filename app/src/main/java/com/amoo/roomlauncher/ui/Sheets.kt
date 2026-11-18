@@ -66,14 +66,40 @@ class Sheet(context: Context, title: String, fillHeight: Boolean, val onDismiss:
         addView(panel, LayoutParams(w, h, Gravity.CENTER))
     }
 
-    fun animateIn() {
+    /** Einblenden. Mit [origin] wächst das Panel aus dieser View heraus (Vorschau beim Gedrückthalten eines Widgets). */
+    fun animateIn(origin: View? = null) {
         alpha = 0f
-        panel.scaleX = 0.94f
-        panel.scaleY = 0.94f
-        panel.translationY = dp(24).toFloat()
-        animate().alpha(1f).setDuration(180).setInterpolator(EASE_OUT).start()
-        panel.animate().scaleX(1f).scaleY(1f).translationY(0f).setDuration(320).setInterpolator(SPRING)
-            .withEndAction { Backdrop.invalidateAll() }.start()
+        animate().alpha(1f).setDuration(200).setInterpolator(EASE_OUT).start()
+        if (origin == null || !origin.isAttachedToWindow) {
+            panel.scaleX = 0.94f
+            panel.scaleY = 0.94f
+            panel.translationY = dp(24).toFloat()
+            panel.animate().scaleX(1f).scaleY(1f).translationY(0f).setDuration(320).setInterpolator(SPRING)
+                .withEndAction { Backdrop.invalidateAll() }.start()
+            return
+        }
+        val o = IntArray(2).also { origin.getLocationInWindow(it) }
+        val ox = o[0] + origin.width / 2f
+        val oy = o[1] + origin.height / 2f
+        panel.alpha = 0f
+        panel.viewTreeObserver.addOnPreDrawListener(object : android.view.ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                panel.viewTreeObserver.removeOnPreDrawListener(this)
+                val p = IntArray(2).also { panel.getLocationInWindow(it) }
+                val px = p[0] + panel.width / 2f
+                val py = p[1] + panel.height / 2f
+                val sc = (origin.width / panel.width.toFloat()).coerceIn(0.3f, 0.9f)
+                panel.translationX = ox - px
+                panel.translationY = oy - py
+                panel.scaleX = sc
+                panel.scaleY = sc
+                panel.animate().alpha(1f).setDuration(160).start()
+                panel.animate().translationX(0f).translationY(0f).scaleX(1f).scaleY(1f).setDuration(380)
+                    .setInterpolator(android.view.animation.OvershootInterpolator(0.9f))
+                    .withEndAction { Backdrop.invalidateAll() }.start()
+                return true
+            }
+        })
     }
 
     fun animateOut(then: () -> Unit) {
@@ -457,8 +483,7 @@ private fun Context.widgetsTab(app: RoomApp): View {
                 label(
                     when (kind) {
                         WidgetKind.CLOCK -> "Uhrzeit und Datum"
-                        WidgetKind.LIGHT -> "Govee-LED: an/aus, Helligkeit, Farbe, Szenen"
-                        WidgetKind.AIRPODS -> "Akku, Verbinden, ANC / Transparenz / Adaptiv"
+                        WidgetKind.LIGHT -> "Govee-LED: Farbrad, Helligkeit, leuchtende Segmente, Nacht-Timer"
                     },
                     13f, C.TEXT3,
                 ),
@@ -480,7 +505,8 @@ private fun Context.widgetsTab(app: RoomApp): View {
     }
     root.addView(
         label(
-            "Tipp: Auf dem Board etwas gedrückt halten → ziehen zum Verschieben, „Größe“ zum Ändern, „–“ zum Entfernen.",
+            "Tipp: Leere Stelle auf dem Board gedrückt halten → alles wackelt: ziehen zum Verschieben, „Größe“ zum Ändern, „–“ zum Entfernen. " +
+                "Ein Widget gedrückt halten öffnet seine große Ansicht.",
             13f, C.TEXT3, lines = 3,
         ),
         lp().margins(t = dp(14)),
@@ -588,7 +614,7 @@ private fun Context.devicesTab(app: RoomApp, onOpenGovee: () -> Unit, onOpenAirP
     addView(listItem("Govee-Licht", light ?: "nicht eingerichtet", "Öffnen ›", C.BLUE, light != null, onOpenGovee))
     addView(spacer(10))
     val pods = app.airpods.deviceName.value
-    addView(listItem("AirPods", pods ?: "nicht ausgewählt", "Öffnen ›", C.BLUE, pods != null, onOpenAirPods))
+    addView(listItem("AirPods", pods ?: "nicht gekoppelt", "Öffnen ›", C.BLUE, pods != null, onOpenAirPods))
 
     // ---- Diagnose: zeigt live, ob Bluetooth, Licht und AirPods laufen
     section("Diagnose")
@@ -611,7 +637,7 @@ private fun Context.devicesTab(app: RoomApp, onOpenGovee: () -> Unit, onOpenAirP
             glassButton("Alles neu verbinden") {
                 app.ble.restart()
                 app.govee.reconnectNow()
-                app.airpods.resync()
+                app.airpods.onBluetoothOn()
                 toast("Verbindungen werden neu aufgebaut")
             },
             glassButton("Bluetooth neu starten") {
@@ -648,18 +674,7 @@ private fun Context.diagnosis(app: RoomApp): String {
         appendLine("${ok(g == GoveeController.Connection.CONNECTED)}  Licht: ${g.name.lowercase()}${app.govee.deviceName.value?.let { " ($it)" } ?: ""}")
         app.govee.lastError.value?.let { appendLine("    ↳ $it") }
         if (app.prefs.goveeAddress != null) appendLine("    ↳ Signal: ${app.govee.signalInfo()}")
-        appendLine("${ok(a.audioConnected.value)}  AirPods Audio ${if (a.audioConnected.value) "verbunden" else "nicht verbunden"}")
-        val learned = app.prefs.airpodsModelId != null
-        appendLine(
-            "${ok(a.battery.value != null)}  AirPods Akku-Signal ${if (a.battery.value != null) "empfangen" else "keins"}" +
-                (a.lastRssi?.let { " · $it dBm" } ?: ""),
-        )
-        appendLine(
-            "${ok(learned)}  Modell: ${a.podModel.value?.label ?: "noch nicht erkannt"}" +
-                (if (learned) " (gelernt)" else " – wird beim Verbinden gelernt") +
-                (if (a.ignoredForeign > 0) " · fremde ignoriert: ${a.ignoredForeign}" else ""),
-        )
-        append("${ok(a.controlReady.value)}  AirPods Steuerkanal: ${a.controlStatus.value}")
+        append("${ok(a.audioConnected.value)}  AirPods: ${a.deviceName.value ?: "keine gekoppelt"} · ${if (a.audioConnected.value) "verbunden" else "nicht verbunden"}")
         com.amoo.roomlauncher.CrashLog.read(this@diagnosis)?.let { append("\n⚠  Letzter Fehler: $it") }
     }
 }
@@ -779,27 +794,38 @@ private fun MainActivity.exitTab(app: RoomApp, onDismiss: () -> Unit): View {
     return root
 }
 
-// ------------------------------------------------------------------ Licht-Panel (Steuerung + Einrichtung)
+// ------------------------------------------------------------------ Licht-Panel (große Ansicht: Steuerung + Einrichtung)
+
+private val SLEEP_OPTIONS = listOf(0 to "Aus", 30 to "30 min", 60 to "1 Std", 120 to "2 Std")
+private val CLOCK_FMT = java.text.SimpleDateFormat("HH:mm", java.util.Locale.GERMANY)
 
 fun Context.goveeSheet(govee: GoveeController, prefs: Prefs, onDismiss: () -> Unit): Sheet {
     val sheet = Sheet(this, "Licht", true, onDismiss)
-    val root = column()
 
-    // ---- Status (eine Zeile) + Fehlermeldung, falls es eine gibt
-    val status = label("", 14f, C.TEXT2)
-    fun refreshStatus() {
-        val name = govee.model.value ?: govee.deviceName.value ?: "Licht"
-        status.text = "$name · " + when (govee.connection.value) {
-            GoveeController.Connection.CONNECTED -> "verbunden"
-            GoveeController.Connection.CONNECTING -> "verbinde…"
-            GoveeController.Connection.DISCONNECTED -> "getrennt"
-            GoveeController.Connection.NOT_CONFIGURED -> "nicht eingerichtet"
-        }
+    // ---- Links: großer Farbrad-Regler im Lichtschein
+    val left = GlowCard(this, 30f, glass = false).apply { gravity = Gravity.CENTER }
+    bindGlow(left, govee)
+    val dial = lightDial(govee)
+    left.anchor = dial
+    left.addView(dial, lp(MATCH, WRAP))
+    val bigName = label("", 15f, C.TEXT2, bold = true).apply { gravity = Gravity.CENTER }
+    fun refreshName() {
+        bigName.text = if (!govee.power.value) "aus" else LightColors.name(
+            if (govee.segmented.value && govee.segMode.value == GoveeController.SegMode.SINGLE) govee.brush.value else govee.color.value,
+        )
     }
-    status.bind(govee.deviceName) { refreshStatus() }
-    status.bind(govee.model) { refreshStatus() }
-    status.bind(govee.connection) { refreshStatus() }
-    root.addView(status)
+    bigName.bind(govee.power) { refreshName() }
+    bigName.bind(govee.color) { refreshName() }
+    bigName.bind(govee.brush) { refreshName() }
+    bigName.bind(govee.segMode) { refreshName() }
+    left.addView(bigName, lp().margins(t = dp(8)))
+    left.addView(label("Ring = Farbe · Bogen = Helligkeit · Mitte tippen = an/aus, halten = Reset", 11.5f, C.TEXT3, lines = 2).apply {
+        gravity = Gravity.CENTER
+    }, lp().margins(t = dp(6)))
+
+    // ---- Rechts: alles Weitere
+    val root = column()
+    root.addView(lightStatus(govee, 14f))
     val err = label("", 13f, C.ORANGE, lines = 2)
     err.bind(govee.lastError) {
         err.text = it.orEmpty()
@@ -808,50 +834,58 @@ fun Context.goveeSheet(govee: GoveeController, prefs: Prefs, onDismiss: () -> Un
     root.addView(err, lp().margins(t = dp(4)))
     // Funkt die Leiste? – sekündlich aktualisiert, solange sie nicht verbunden ist
     val signal = label("", 12.5f, C.TEXT3, lines = 2)
-    val signalTick = object : Runnable {
-        override fun run() {
-            val connected = govee.connection.value == GoveeController.Connection.CONNECTED
-            val configured = govee.connection.value != GoveeController.Connection.NOT_CONFIGURED
-            signal.visibility = if (!connected && configured) View.VISIBLE else View.GONE
-            signal.text = "Signal: " + govee.signalInfo()
-            signal.postDelayed(this, 1000)
-        }
+    signal.everyWhileAttached(1000) {
+        val connected = govee.connection.value == GoveeController.Connection.CONNECTED
+        val configured = govee.connection.value != GoveeController.Connection.NOT_CONFIGURED
+        signal.visibility = if (!connected && configured) View.VISIBLE else View.GONE
+        if (signal.visibility == View.VISIBLE) signal.text = "Signal: " + govee.signalInfo()
     }
-    signal.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
-        override fun onViewAttachedToWindow(v: View) = signalTick.run()
-        override fun onViewDetachedFromWindow(v: View) {
-            v.removeCallbacks(signalTick)
-        }
-    })
     root.addView(signal, lp().margins(t = dp(4)))
 
-    // ---- Steuerung: nur das Nötige
     val control = column()
-    val pct = label("", 15f, C.TEXT2, display = true)
-    pct.bind(govee.brightness) { pct.text = "${(it * 100).roundToInt()}%" }
-    val bright = column().apply {
-        addView(pct)
-        addView(brightnessSlider(govee, 48), lp().margins(t = dp(8)))
-    }
-    control.addView(row(powerButton(govee, 76), bright.also { it.layoutParams = lp(0, WRAP, 1f) }, spacingDp = 18), lp().margins(t = dp(16)))
+    // Segmente
+    val segBox = column()
+    segBox.section("Segmente")
     val segInfo = label("", 12.5f, C.TEXT3)
     fun refreshSegInfo() {
         segInfo.text = if (govee.segMode.value == GoveeController.SegMode.ALL) {
-            "${govee.count.value}/15 Segmente"
+            "${govee.count.value}/15 leuchten · tippen/ziehen"
         } else {
-            "Tippen = malen · Halten = löschen"
+            "Farbe wählen, dann tippen = malen · halten = löschen"
         }
     }
     segInfo.bind(govee.count) { refreshSegInfo() }
     segInfo.bind(govee.segMode) { refreshSegInfo() }
-    val segBox = column().apply {
-        addView(row(segInfo.also { it.layoutParams = lp(0, WRAP, 1f) }, segModeSwitch(govee, 38, 13.5f).also { it.layoutParams = lp(dp(220), WRAP) }))
-        addView(segmentBar(govee, 40), lp(MATCH, dp(40)).margins(t = dp(10)))
-    }
+    segBox.addView(row(segInfo.also { it.layoutParams = lp(0, WRAP, 1f) }, segModeSwitch(govee, 36, 13f).also { it.layoutParams = lp(dp(190), WRAP) }))
+    segBox.addView(ledStrip(govee), lp(MATCH, dp(44)).margins(t = dp(12)))
     segBox.bind(govee.segmented) { segBox.visibility = if (it) View.VISIBLE else View.GONE }
-    control.addView(segBox, lp().margins(t = dp(20)))
-    control.addView(colorPicker(govee, 40), lp().margins(t = dp(16)))
-    control.addView(presetRow(govee, 40, null), lp().margins(t = dp(12)))
+    control.addView(segBox)
+
+    // Farben
+    control.section("Farben")
+    control.addView(swatchRow(govee, 42, 8))
+
+    // Nacht-Timer
+    control.section("Nacht-Timer")
+    val timer = Segmented(this, SLEEP_OPTIONS.map { it.second }, textSp = 14f, heightDp = 46) { i ->
+        govee.setSleepTimer(SLEEP_OPTIONS[i].first)
+        if (i > 0) toast("Licht geht in ${SLEEP_OPTIONS[i].second} sanft aus")
+    }
+    val timerInfo = label("", 13f, C.TEXT3, lines = 2)
+    fun refreshTimer() {
+        val at = govee.sleepAt.value
+        timer.selected = if (at == 0L) 0 else SLEEP_OPTIONS.indexOfFirst { it.first == govee.sleepMinutes }
+        timerInfo.text = if (at == 0L) {
+            "Das Licht geht nach der gewählten Zeit aus – in der letzten Minute dimmt es sanft herunter."
+        } else {
+            "Geht um ${CLOCK_FMT.format(java.util.Date(at))} aus · noch ${sleepLeft(at)}"
+        }
+        timerInfo.setTextColor(if (at == 0L) C.TEXT3 else LightColors.MOON)
+    }
+    timer.bind(govee.sleepAt) { refreshTimer() }
+    timerInfo.everyWhileAttached(10_000) { refreshTimer() }
+    control.addView(timer)
+    control.addView(timerInfo, lp().margins(t = dp(8)))
 
     // Szenen & Musik: eingeklappt
     val more = column().apply { visibility = View.GONE }
@@ -864,13 +898,12 @@ fun Context.goveeSheet(govee: GoveeController, prefs: Prefs, onDismiss: () -> Un
         more.visibility = if (open) View.VISIBLE else View.GONE
         c.text = if (open) "Szenen & Musik ▴" else "Szenen & Musik ▾"
     }
-    control.addView(moreToggle, lp(WRAP, WRAP).margins(t = dp(18)))
+    control.addView(moreToggle, lp(WRAP, WRAP).margins(t = dp(20)))
     control.addView(more)
     root.addView(control)
 
     // ---- Einrichtung / anderes Licht (nur bei Bedarf sichtbar)
     val setup = column()
-    // Direkt über die MAC-Adresse eintragen – keine Suche nötig
     setup.section("MAC-Adresse eingeben")
     val macField = EditText(this).apply {
         hint = "z. B. E8:55:04:06:77:4E"
@@ -940,6 +973,7 @@ fun Context.goveeSheet(govee: GoveeController, prefs: Prefs, onDismiss: () -> Un
     fun refreshSetup() {
         val none = govee.connection.value == GoveeController.Connection.NOT_CONFIGURED
         control.visibility = if (none) View.GONE else View.VISIBLE
+        left.visibility = if (none) View.GONE else View.VISIBLE
         setup.visibility = if (none || setupOpen) View.VISIBLE else View.GONE
     }
     val footer = row(
@@ -952,11 +986,16 @@ fun Context.goveeSheet(govee: GoveeController, prefs: Prefs, onDismiss: () -> Un
         spacingDp = 12,
     )
     footer.bind(govee.connection) { c -> footer.visibility = if (c == GoveeController.Connection.NOT_CONFIGURED) View.GONE else View.VISIBLE }
-    root.addView(footer, lp().margins(t = dp(22)))
+    root.addView(footer, lp().margins(t = dp(24)))
     root.bind(govee.connection) { refreshSetup() }
     root.addView(spacer(16))
 
-    sheet.body.addView(scroll(root), lp(MATCH, 0, 1f))
+    val content = row(
+        left.also { it.layoutParams = lp(dp(340), MATCH) },
+        scroll(root).also { it.layoutParams = lp(0, MATCH, 1f).margins(l = dp(28)) },
+        center = false,
+    )
+    sheet.body.addView(content, lp(MATCH, 0, 1f))
     sheet.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
         override fun onViewAttachedToWindow(v: View) = Unit
         override fun onViewDetachedFromWindow(v: View) = govee.stopScan()
@@ -964,67 +1003,52 @@ fun Context.goveeSheet(govee: GoveeController, prefs: Prefs, onDismiss: () -> Un
     return sheet
 }
 
-// ------------------------------------------------------------------ AirPods-Panel (Steuerung + Einrichtung)
+// ------------------------------------------------------------------ AirPods (schlank: Name, Status, Verbinden, Gerät wählen)
 
 fun Context.airPodsSheet(airpods: AirPodsController, prefs: Prefs, onDismiss: () -> Unit): Sheet {
-    val sheet = Sheet(this, "AirPods", true, onDismiss)
+    val sheet = Sheet(this, "AirPods", false, onDismiss)
     val root = column()
-    locationHint()?.let { root.addView(it, lp().margins(b = dp(14))) }
 
-    root.addView(ringRow(airpods, 80))
-    val ctrl = glassButton("Steuerung verbinden") { airpods.resync() }
-    ctrl.bind(airpods.controlReady) { ctrl.visibility = if (it) View.GONE else View.VISIBLE }
-    root.addView(row(connectButton(airpods, highlighted = true), ctrl, spacingDp = 12), lp().margins(t = dp(18)))
-
-    root.section("Geräuschkontrolle")
-    val noModes = label("Dieses Modell hat keine Geräuschkontrolle (ANC/Transparenz).", 14f, C.TEXT3, lines = 2)
-    val modes = noiseSelector(airpods, short = false)
-    modes.bind(airpods.podModel) { m ->
-        val has = m?.noiseControl != false
-        modes.visibility = if (has) View.VISIBLE else View.GONE
-        noModes.visibility = if (has) View.GONE else View.VISIBLE
+    val name = label("", 20f, bold = true)
+    val status = label("", 14f, C.TEXT2)
+    val dotV = dot(C.TEXT3, 8)
+    val toggle = glassButton("Verbinden", true) { airpods.toggle() }
+    fun refresh() {
+        val n = airpods.deviceName.value
+        val c = airpods.audioConnected.value
+        name.text = n ?: "Keine AirPods gekoppelt"
+        status.text = when {
+            n == null -> "einmalig in den Bluetooth-Einstellungen koppeln"
+            c -> "verbunden"
+            else -> "nicht verbunden"
+        }
+        (dotV.background as? RoundDrawable)?.color = if (c) C.GREEN else C.TEXT3
+        dotV.invalidate()
+        toggle.text = if (c) "Trennen" else "Verbinden"
+        toggle.visibility = if (n == null) View.GONE else View.VISIBLE
     }
-    root.addView(noModes)
-    root.addView(modes)
-    val strengthLabel = label("", 13f, C.TEXT2)
-    val strength = GlassSlider(this, 34) { airpods.setAdaptiveStrength((it * 100).roundToInt()) }
-    val strengthBox = column().apply {
-        addView(strengthLabel)
-        addView(strength, lp().margins(t = dp(6)))
-    }
-    strengthBox.bind(airpods.adaptiveStrength) {
-        strength.value = (it ?: 50) / 100f
-        strengthLabel.text = "Adaptives Audio: ${it ?: 50} %  (weniger ↔ mehr Geräuschreduzierung)"
-    }
-    strengthBox.bind(airpods.noise) {
-        strengthBox.visibility = if (it == AirPodsController.Noise.ADAPTIVE) View.VISIBLE else View.GONE
-    }
-    root.addView(strengthBox, lp().margins(t = dp(14)))
-    root.addView(toggleRow("Gesprächserkennung", airpods.conversationAwareness, airpods.controlReady) { airpods.setConversationAwareness(it) }, lp().margins(t = dp(8)))
-    root.addView(toggleRow("Automatische Ohrerkennung", airpods.earDetection, airpods.controlReady) { airpods.setEarDetection(it) })
-    root.addView(toggleRow("ANC mit einem AirPod", airpods.oneBudAnc, airpods.controlReady) { airpods.setOneBudAnc(it) })
-    val status = label("", 12.5f, C.TEXT3, lines = 3)
-    status.bind(airpods.controlStatus) { status.text = "Steuerkanal: $it" }
-    root.addView(status, lp().margins(t = dp(8)))
-
+    root.bind(airpods.deviceName) { refresh() }
+    root.bind(airpods.audioConnected) { refresh() }
     root.addView(
-        glassButton("Modell neu erkennen") {
-            airpods.forgetModel()
-            toast("Wird beim nächsten Signal der verbundenen AirPods neu erkannt")
-        },
-        lp(WRAP, WRAP).margins(t = dp(12)),
+        row(
+            AirPodsGlyph(this).apply { layoutParams = lp(dp(48), dp(48)) },
+            column().apply {
+                addView(name)
+                addView(row(dotV, status, spacingDp = 7), lp().margins(t = dp(6)))
+                layoutParams = lp(0, WRAP, 1f).margins(l = dp(16))
+            },
+            toggle,
+        ),
     )
+
     root.section("Gerät auswählen")
-    root.addView(
-        label("Einmalig in den Android-Bluetooth-Einstellungen koppeln (Case öffnen, Knopf hinten halten), dann hier auswählen.", 14f, C.TEXT2, lines = 2),
-    )
     val list = column()
     fun fill() {
         list.removeAllViews()
         val devices = airpods.pairedDevices()
         if (devices.isEmpty()) list.addView(label("Keine gekoppelten Geräte gefunden.", 14f, C.TEXT3))
-        devices.forEach { d ->
-            val sel = d.address == prefs.airpodsAddress
+        devices.take(8).forEach { d ->
+            val sel = d.address == prefs.airpodsAddress || (prefs.airpodsAddress == null && d.name == airpods.deviceName.value)
             val item = listItem(d.name, d.address, if (sel) "Ausgewählt" else null, C.BLUE, sel) {
                 airpods.selectDevice(d.address)
                 fill()
@@ -1032,6 +1056,7 @@ fun Context.airPodsSheet(airpods: AirPodsController, prefs: Prefs, onDismiss: ()
             list.addView(item, lp().margins(b = dp(8)))
         }
     }
+    root.addView(list)
     root.addView(
         row(
             glassButton("Bluetooth-Einstellungen") {
@@ -1040,11 +1065,24 @@ fun Context.airPodsSheet(airpods: AirPodsController, prefs: Prefs, onDismiss: ()
             glassButton("Liste aktualisieren") { fill() },
             spacingDp = 12,
         ),
-        lp().margins(t = dp(12)),
+        lp().margins(t = dp(6)),
     )
-    root.addView(list, lp().margins(t = dp(12)))
     fill()
-    root.addView(spacer(16))
-    sheet.body.addView(scroll(root), lp(MATCH, 0, 1f))
+    sheet.body.addView(root)
+    return sheet
+}
+
+// ------------------------------------------------------------------ Uhr (große Ansicht)
+
+fun Context.clockSheet(onEdit: () -> Unit, onDismiss: () -> Unit): Sheet {
+    val sheet = Sheet(this, "Uhr", false, onDismiss)
+    sheet.body.addView(clockWidget(com.amoo.roomlauncher.board.WidgetSize.M), lp(MATCH, dp(300)))
+    sheet.body.addView(
+        glassButton("Board bearbeiten") { onEdit() },
+        lp(WRAP, WRAP).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            topMargin = dp(8)
+        },
+    )
     return sheet
 }

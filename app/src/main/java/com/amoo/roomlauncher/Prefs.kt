@@ -91,10 +91,15 @@ class Prefs(context: Context) {
             later("govee_brush") { it.putInt("govee_brush", v) }
         }
 
-    /** Gelernte Modell-ID der eigenen AirPods (z. B. 0x1420 = AirPods Pro 2). */
-    var airpodsModelId: Int?
-        get() = sp.getInt("airpods_model_id", -1).takeIf { it >= 0 }
-        set(v) = sp.edit().putInt("airpods_model_id", v ?: -1).apply()
+    /** Nacht-Timer: Zeitpunkt (ms), zu dem das Licht ausgeht – 0 = kein Timer. */
+    var goveeSleepAt: Long
+        get() = sp.getLong("govee_sleep_at", 0L)
+        set(v) = sp.edit().putLong("govee_sleep_at", v).apply()
+
+    /** Zuletzt gewählte Dauer des Nacht-Timers in Minuten (für die Anzeige des Fortschritts). */
+    var goveeSleepMinutes: Int
+        get() = sp.getInt("govee_sleep_minutes", 0)
+        set(v) = sp.edit().putInt("govee_sleep_minutes", v).apply()
 
     var airpodsAddress: String?
         get() = sp.getString("airpods_address", null)

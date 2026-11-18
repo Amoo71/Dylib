@@ -1,7 +1,5 @@
 package com.amoo.roomlauncher
 
-import com.amoo.roomlauncher.airpods.Aap
-import com.amoo.roomlauncher.airpods.ProximityParser
 import com.amoo.roomlauncher.govee.GoveeProtocol
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -13,8 +11,6 @@ import org.junit.Test
 /**
  * Prüft die Bluetooth-Pakete Byte für Byte gegen veröffentlichte Mitschnitte:
  *  - Govee: egold555/Govee-Reverse-Engineering (H6127), Beshelmek/govee_ble_lights
- *  - AirPods AAP: GreenPods / LibrePods
- *  - AirPods BLE-Werbepakete: OpenPods / furiousMAC continuity
  */
 class ProtocolTest {
 
@@ -141,109 +137,5 @@ class ProtocolTest {
         assertEquals(GoveeProtocol.MODE_NEW, GoveeProtocol.colorModeFor("H6008"))
         assertEquals(GoveeProtocol.MODE_CLASSIC, GoveeProtocol.colorModeFor("H6127"))
         assertEquals(GoveeProtocol.MODE_CLASSIC, GoveeProtocol.colorModeFor(null))
-    }
-
-    // ---------------------------------------------------------------- AirPods AAP (Steuerkanal)
-
-    @Test fun aapNoiseControlPackets() {
-        assertHex("0400040009000d02000000", Aap.control(Aap.CMD_LISTENING_MODE, 0x02)) // ANC
-        assertHex("0400040009000d03000000", Aap.control(Aap.CMD_LISTENING_MODE, 0x03)) // Transparenz
-        assertHex("0400040009000d04000000", Aap.control(Aap.CMD_LISTENING_MODE, 0x04)) // Adaptiv
-        assertHex("0400040009000d01000000", Aap.control(Aap.CMD_LISTENING_MODE, 0x01)) // Aus
-        assertHex("04000400090028010000 00", Aap.control(Aap.CMD_CONVERSATION_DETECT, Aap.toggle(true)))
-    }
-
-    @Test fun aapHandshakeAndNotifications() {
-        assertHex("00000400010002000000000000000000", Aap.HANDSHAKE)
-        assertHex("040004004d00ff00000000000000", Aap.SET_HOST_CAPABILITIES)
-        assertHex("040004000f00fffffeff", Aap.REQUEST_NOTIFICATIONS)
-    }
-
-    @Test fun aapParsesNoiseBatteryAndEarDetection() {
-        assertEquals(Aap.Message.Control(0x0D, 0x03), Aap.parse(hex("04 00 04 00 09 00 0d 03 00 00 00")))
-        val bat = Aap.parse(hex("04 00 04 00 04 00 03 02 01 64 02 01 04 01 50 01 01 08 01 32 02 01")) as Aap.Message.BatteryInfo
-        assertEquals(100, bat.right)
-        assertEquals(80, bat.left)
-        assertTrue(bat.chargingLeft)
-        assertFalse(bat.chargingRight)
-        assertEquals(50, bat.case)
-        assertEquals(Aap.Message.EarDetection(true, false), Aap.parse(hex("04 00 04 00 06 00 00 01")))
-    }
-
-    @Test fun aapSplitsConcatenatedFrames() {
-        val two = hex("04 00 04 00 09 00 0d 02 00 00 00 04 00 04 00 06 00 00 00")
-        val parts = Aap.split(two)
-        assertEquals(2, parts.size)
-        assertEquals(Aap.Message.Control(0x0D, 0x02), Aap.parse(parts[0]))
-    }
-
-    // ---------------------------------------------------------------- AirPods BLE-Werbepaket (Akku)
-
-    private fun advert(vararg head: Int): ByteArray = ByteArray(27).also { b -> head.forEachIndexed { i, v -> b[i] = v.toByte() } }
-
-    @Test fun proximityAdvertBattery() {
-        // AirPods Pro (0x0E20), beide im Ohr, L/R 90 %, Case unbekannt
-        val info = ProximityParser.parse(advert(0x07, 0x19, 0x01, 0x0E, 0x20, 0x2B, 0x99, 0x8F))!!
-        assertEquals("AirPods Pro", info.model.label)
-        assertEquals(90, info.left)
-        assertEquals(90, info.right)
-        assertNull(info.case)
-        assertTrue(info.leftInEar && info.rightInEar)
-    }
-
-    @Test fun proximityAdvertCaseCharging() {
-        // AirPods Pro 2, L 70 %, R 60 %, Case lädt mit 50 %
-        val info = ProximityParser.parse(advert(0x07, 0x19, 0x01, 0x14, 0x20, 0x01, 0x67, 0x45))!!
-        assertEquals("AirPods Pro 2", info.model.label)
-        assertEquals(50, info.case)
-        assertTrue(info.chargingCase)
-        assertEquals(setOf(60, 70), setOf(info.left, info.right))
-    }
-
-    @Test fun proximityLeftRightFollowsPrimaryFlag() {
-        // Primärer AirPod = links (0x20): oberes Akku-Nibble ist links
-        val primaryLeft = ProximityParser.parse(advert(0x07, 0x19, 0x01, 0x14, 0x20, 0x20, 0x83, 0x2A))!!
-        assertEquals(80, primaryLeft.left)
-        assertEquals(30, primaryLeft.right)
-        assertTrue(primaryLeft.chargingLeft) // Lade-Flag 0x2 = links, unabhängig vom Primär-Flag
-        assertFalse(primaryLeft.chargingRight)
-        assertEquals(100, primaryLeft.case)
-        // Primärer AirPod = rechts: oberes Nibble ist rechts
-        val primaryRight = ProximityParser.parse(advert(0x07, 0x19, 0x01, 0x14, 0x20, 0x00, 0x83, 0x1A))!!
-        assertEquals(30, primaryRight.left)
-        assertEquals(80, primaryRight.right)
-        assertTrue(primaryRight.chargingRight) // 0x1 = rechts
-        assertFalse(primaryRight.chargingLeft)
-    }
-
-    @Test fun proximityWearStates() {
-        // beide im Case
-        val inCase = ProximityParser.parse(advert(0x07, 0x19, 0x01, 0x0E, 0x20, 0x24, 0xAA, 0x5A))!!
-        assertEquals(ProximityParser.Wear.IN_CASE, inCase.leftWear)
-        assertEquals(ProximityParser.Wear.IN_CASE, inCase.rightWear)
-        // primär (links) im Case, sekundär (rechts) im Ohr
-        val mixed = ProximityParser.parse(advert(0x07, 0x19, 0x01, 0x0E, 0x20, 0x38, 0x99, 0x0F))!!
-        assertEquals(ProximityParser.Wear.IN_CASE, mixed.leftWear)
-        assertEquals(ProximityParser.Wear.IN_EAR, mixed.rightWear)
-        // nur rechts (primär) im Ohr
-        val right = ProximityParser.parse(advert(0x07, 0x19, 0x01, 0x0E, 0x20, 0x02, 0x99, 0x0F))!!
-        assertTrue(right.rightInEar)
-        assertFalse(right.leftInEar)
-    }
-
-    @Test fun proximityModelRegistry() {
-        assertEquals("AirPods (2. Gen.)", ProximityParser.parse(advert(0x07, 0x19, 0x01, 0x0F, 0x20))!!.model.label)
-        assertEquals("AirPods Max", ProximityParser.parse(advert(0x07, 0x19, 0x01, 0x0A, 0x20))!!.model.label)
-        val max = ProximityParser.parse(advert(0x07, 0x19, 0x01, 0x0A, 0x20))!!.model
-        assertFalse(max.splitBuds)
-        assertFalse(ProximityParser.parse(advert(0x07, 0x19, 0x01, 0x13, 0x20))!!.model.noiseControl) // AirPods 3: kein ANC
-        assertTrue(ProximityParser.parse(advert(0x07, 0x19, 0x01, 0x27, 0x20))!!.model.noiseControl) // Pro 3
-        assertEquals(0x1420, ProximityParser.parse(advert(0x07, 0x19, 0x01, 0x14, 0x20))!!.rawModelId)
-        assertEquals(com.amoo.roomlauncher.airpods.PodModel.UNKNOWN, ProximityParser.parse(advert(0x07, 0x19, 0x01, 0x99, 0x99))!!.model)
-    }
-
-    @Test fun proximityRejectsOtherAdverts() {
-        assertNull(ProximityParser.parse(ByteArray(10)))
-        assertNull(ProximityParser.parse(advert(0x10, 0x05)))
     }
 }

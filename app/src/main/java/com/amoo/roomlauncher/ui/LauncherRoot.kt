@@ -75,8 +75,11 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
         setBackgroundColor(0xFF000000.toInt())
         addView(bgView, LayoutParams(MATCH, MATCH))
 
-        // ---- Board + Dock
-        val content = context.column().apply { setPadding(dp(30), dp(28), dp(30), dp(14)) }
+        // ---- Oben: AirPods-Abzeichen (rechts) · Board · Dock
+        val content = context.column().apply { setPadding(dp(30), dp(10), dp(30), dp(14)) }
+        val topBar = FrameLayout(activity)
+        topBar.addView(airPodsBadge(), LayoutParams(WRAP, WRAP, Gravity.END or Gravity.CENTER_VERTICAL))
+        content.addView(topBar, lp(MATCH, dp(38)).margins(b = dp(10)))
         boardScroll.isVerticalScrollBarEnabled = false
         boardScroll.overScrollMode = View.OVER_SCROLL_NEVER
         boardScroll.isFillViewport = true
@@ -130,6 +133,7 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
             override fun onRemove(id: String) = app.board.remove(id)
             override fun onResize(id: String) = app.board.cycleSize(id)
             override fun onEmptyTap() = setEdit(false)
+            override fun onItemLongPress(id: String, view: View): Boolean = openPreview(id, view)
         }
         dock.listener = object : BoardLayout.Listener {
             override fun onEnterEdit() = setEdit(true)
@@ -206,11 +210,9 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
                 // Ein fehlerhaftes Widget darf nie den ganzen Launcher abstürzen lassen
                 try {
                     when (val item = items.first { it.id == cell.id }) {
-                        is BoardItem.Widget -> context.widgetView(
-                            item.kind, item.size, app.govee, app.airpods,
-                            onOpenLight = { if (!editMode) showOverlay(context.goveeSheet(app.govee, app.prefs) { closeOverlay() }) },
-                            onOpenAirPods = { if (!editMode) showOverlay(context.airPodsSheet(app.airpods, app.prefs) { closeOverlay() }) },
-                        )
+                        is BoardItem.Widget -> context.widgetView(item.kind, item.size, app.govee) {
+                            if (!editMode) showOverlay(context.goveeSheet(app.govee, app.prefs) { closeOverlay() })
+                        }
                         is BoardItem.App -> {
                             val entry = appMap[item.component]
                             context.appIcon(entry, style) { if (!editMode && entry != null) app.apps.launch(entry) }
@@ -269,7 +271,7 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
                 runCatching { activity.startActivity(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)) }
                 Unit
             }
-            !BleHub.locationEnabled(ctx) -> Triple("Standort ist aus – Licht & AirPods-Akku brauchen ihn", "Einschalten") {
+            !BleHub.locationEnabled(ctx) -> Triple("Standort ist aus – die Licht-Suche braucht ihn", "Einschalten") {
                 activity.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
             }
             else -> Triple(null, null, null)
@@ -319,10 +321,64 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
         )
     }
 
-    private fun showOverlay(v: Sheet) {
+    private fun showOverlay(v: Sheet, origin: View? = null) {
         overlayHost.removeAllViews()
         overlayHost.addView(v, LayoutParams(MATCH, MATCH))
-        v.animateIn()
+        v.animateIn(origin)
+    }
+
+    /** Widget gedrückt halten → große Ansicht, die aus dem Widget herauswächst. Apps → Bearbeiten. */
+    private fun openPreview(id: String, view: View): Boolean {
+        if (editMode) return false
+        val item = app.board.items.value.firstOrNull { it.id == id } as? BoardItem.Widget ?: return false
+        val sheet = when (item.kind) {
+            com.amoo.roomlauncher.board.WidgetKind.LIGHT -> context.goveeSheet(app.govee, app.prefs) { closeOverlay() }
+            com.amoo.roomlauncher.board.WidgetKind.CLOCK -> context.clockSheet(
+                onEdit = {
+                    closeOverlay()
+                    setEdit(true)
+                },
+                onDismiss = { closeOverlay() },
+            )
+        }
+        showOverlay(sheet, view)
+        return true
+    }
+
+    /** Mini-Abzeichen oben rechts: AirPods-Symbol, Name, verbunden oder nicht. Tippen = kleines AirPods-Panel. */
+    private fun airPodsBadge(): View {
+        val ctx: Context = context
+        val name = ctx.label("AirPods", 13.5f, bold = true)
+        val state = ctx.label("", 12.5f, C.TEXT2)
+        val dot = ctx.dot(C.TEXT3, 7)
+        val badge = ctx.row(
+            AirPodsGlyph(ctx).apply { layoutParams = lp(dp(22), dp(22)) },
+            name,
+            dot.also { it.layoutParams = lp(dp(7), dp(7)).margins(l = dp(4)) },
+            state,
+            spacingDp = 7,
+        ).apply {
+            background = GlassDrawable(ctx, 19f, 1.1f)
+            setPadding(dp(12), dp(7), dp(16), dp(7))
+            pressable { showOverlay(ctx.airPodsSheet(app.airpods, app.prefs) { closeOverlay() }, this) }
+        }
+        fun refresh() {
+            val n = app.airpods.deviceName.value
+            val c = app.airpods.audioConnected.value
+            name.text = n ?: "AirPods"
+            state.text = when {
+                n == null -> "nicht gekoppelt"
+                c -> "verbunden"
+                else -> "nicht verbunden"
+            }
+            state.setTextColor(if (c) C.TEXT else C.TEXT2)
+            (dot.background as? RoundDrawable)?.color = if (c) C.GREEN else C.TEXT3
+            dot.invalidate()
+            badge.alpha = if (c) 1f else 0.8f
+        }
+        badge.bind(app.airpods.deviceName) { refresh() }
+        badge.bind(app.airpods.audioConnected) { refresh() }
+        return badge
     }
 
     fun closeOverlay(): Boolean {

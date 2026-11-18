@@ -1,6 +1,6 @@
 package com.amoo.roomlauncher.board
 
-import android.animation.ValueAnimator
+import android.animation.TimeAnimator
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
@@ -15,8 +15,10 @@ import android.view.ViewGroup
 import android.view.animation.DecelerateInterpolator
 import android.view.animation.OvershootInterpolator
 import com.amoo.roomlauncher.ui.Backdrop
+import kotlin.math.exp
 import kotlin.math.hypot
 import kotlin.math.max
+import kotlin.math.sin
 
 /** Ein Feld auf dem Board. [sizeLabel] != null -> Größe ist änderbar. */
 data class Cell(val id: String, val w: Int, val h: Int, val sizeLabel: String? = null)
@@ -61,7 +63,8 @@ fun pack(cells: List<Cell>, columns: Int): Pair<List<Placement>, Int> {
  * Raster-Layout für Board und Dock.
  *  - Board: [columns] x [rows] sichtbar, Zellen füllen die Fläche.
  *  - Dock: [fixedCellDp] > 0, eine Reihe, Breite passt sich an.
- * Gedrückt halten -> Bearbeiten-Modus: wackeln, ziehen zum Verschieben, Badges zum Entfernen / Größe ändern.
+ * Leere Stelle (oder App) gedrückt halten -> Bearbeiten-Modus: wackeln, ziehen zum Verschieben, Badges zum Entfernen / Größe ändern.
+ * Ein Widget gedrückt halten -> [Listener.onItemLongPress] (große Ansicht).
  */
 class BoardLayout(
     context: Context,
@@ -76,6 +79,9 @@ class BoardLayout(
         fun onRemove(id: String)
         fun onResize(id: String) {}
         fun onEmptyTap() {}
+
+        /** Gedrückthalten auf einem Element außerhalb des Bearbeitens. true = erledigt (z. B. Vorschau), sonst → Bearbeiten. */
+        fun onItemLongPress(id: String, view: View): Boolean = false
     }
 
     var listener: Listener? = null
@@ -195,38 +201,53 @@ class BoardLayout(
 
     // ---------------------------------------------------------------- Bearbeiten-Modus
 
-    private var wiggle: ValueAnimator? = null
+    /**
+     * Wackeln wie auf dem iPhone: weiche Sinus-Bewegung statt Zickzack, jedes Element mit eigener Phase und
+     * leicht eigenem Takt, Ausschlag passend zur Größe (große Widgets wackeln weniger weit), sanftes Ein- und Ausschwingen.
+     */
+    private var wiggle: TimeAnimator? = null
+    private var wiggleAmp = 0f
+    private var wiggleTarget = 0f
 
     var editMode: Boolean = false
         set(v) {
             if (field == v) return
             field = v
-            wiggle?.cancel()
-            if (v) {
-                wiggle = ValueAnimator.ofFloat(-1f, 1f).apply {
-                    duration = 130
-                    repeatMode = ValueAnimator.REVERSE
-                    repeatCount = ValueAnimator.INFINITE
-                    addUpdateListener { a ->
-                        val f = a.animatedValue as Float
-                        var i = 0
-                        for (p in placements) {
-                            val view = views[p.cell.id] ?: continue
-                            if (p.cell.id != dragId) {
-                                val amp = if (p.cell.w * p.cell.h > 1) 0.7f else 1.6f
-                                view.rotation = f * amp * (if (i % 2 == 0) 1f else -1f)
-                            }
-                            i++
-                        }
-                    }
+            wiggleTarget = if (v) 1f else 0f
+            if (wiggle == null) {
+                wiggle = TimeAnimator().apply {
+                    setTimeListener { anim, total, delta -> wiggleFrame(anim, total, delta) }
                     start()
                 }
-            } else {
-                views.values.forEach { it.rotation = 0f }
-                endDrag()
             }
+            if (!v) endDrag()
             invalidate()
         }
+
+    private fun wiggleFrame(anim: TimeAnimator, totalMs: Long, deltaMs: Long) {
+        wiggleAmp += (wiggleTarget - wiggleAmp) * (1f - exp(-deltaMs / 120f))
+        if (wiggleTarget == 0f && wiggleAmp < 0.02f) {
+            wiggleAmp = 0f
+            views.values.forEach { it.rotation = 0f }
+            wiggle = null
+            anim.cancel()
+            return
+        }
+        val t = totalMs / 1000f
+        for (p in placements) {
+            val v = views[p.cell.id] ?: continue
+            if (p.cell.id == dragId) {
+                v.rotation = 0f
+                continue
+            }
+            val h = p.cell.id.hashCode()
+            val phase = ((h and 0xFFFF) / 65535f) * TAU
+            val period = 0.25f + ((h ushr 16) and 0xFF) / 255f * 0.07f
+            val half = hypot(v.width.toFloat(), v.height.toFloat()) / 2f
+            val maxDeg = if (half > 0f) Math.toDegrees(dp(2.4f) / half.toDouble()).toFloat().coerceIn(0.35f, 1.8f) else 1f
+            v.rotation = maxDeg * wiggleAmp * sin(t * TAU / period + phase)
+        }
+    }
 
     // ---------------------------------------------------------------- Touch
 
@@ -246,6 +267,10 @@ class BoardLayout(
     private val longPress = Runnable {
         longPressFired = true
         performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+        // Auf einem Widget: große Ansicht statt Bearbeiten
+        val p = placementAt(downX, downY)
+        val v = p?.let { views[it.cell.id] }
+        if (p != null && v != null && listener?.onItemLongPress(p.cell.id, v) == true) return@Runnable
         listener?.onEnterEdit()
         prepareCandidate(downX, downY)
     }
@@ -452,6 +477,10 @@ class BoardLayout(
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
         mainHandler.removeCallbacks(longPress)
+        wiggle?.cancel()
+        wiggle = null
+        wiggleAmp = 0f
+        views.values.forEach { it.rotation = 0f }
     }
 
     private fun dp(v: Number): Int = (v.toFloat() * resources.displayMetrics.density + 0.5f).toInt()
@@ -459,3 +488,4 @@ class BoardLayout(
 
 private val EASE = DecelerateInterpolator(2f)
 private val SPRING = OvershootInterpolator(1.2f)
+private const val TAU = 6.2831855f

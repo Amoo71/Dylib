@@ -112,6 +112,13 @@ class GoveeController(
     private val _lastError = MutableStateFlow<String?>(null)
     val lastError: StateFlow<String?> = _lastError.asStateFlow()
 
+    private val _sleepAt = MutableStateFlow(prefs.goveeSleepAt.takeIf { it > System.currentTimeMillis() } ?: 0L)
+    /** Nacht-Timer: Zeitpunkt (ms), zu dem das Licht ausgeht – 0 = kein Timer. */
+    val sleepAt: StateFlow<Long> = _sleepAt.asStateFlow()
+
+    /** Gewählte Timer-Dauer in Minuten (für den Fortschrittsring). */
+    val sleepMinutes: Int get() = prefs.goveeSleepMinutes
+
     // ---------------------------------------------------------------- Intern
 
     private val adapter: BluetoothAdapter?
@@ -147,6 +154,10 @@ class GoveeController(
     private var scanStopJob: Job? = null
     private var failures = 0
     private var failedWrites = 0
+    private var sleepJob: Job? = null
+    @Volatile private var fading = false
+    /** Helligkeit vor dem Ausdimmen des Nacht-Timers – wird beim nächsten Einschalten wiederhergestellt. */
+    @Volatile private var restoreBrightness: Float? = null
 
     init {
         // Bereits eingerichtete Leiste: Modell aus dem Namen erkennen (einmalig, danach gilt die Einstellung)
@@ -180,6 +191,7 @@ class GoveeController(
                 }
             }
         }
+        armSleep()
         connect()
     }
 
@@ -191,6 +203,15 @@ class GoveeController(
         powerKnown = true
         lastPowerCmd = System.currentTimeMillis()
         enqueue("power", GoveeProtocol.power(on), 35)
+        if (on) {
+            // Nach dem Nacht-Timer: wieder mit der gewohnten Helligkeit starten
+            restoreBrightness?.let {
+                restoreBrightness = null
+                enqueue("bright", GoveeProtocol.brightness(it, prefs.goveeBrightness100), 35)
+            }
+        } else if (!fading && _sleepAt.value != 0L) {
+            setSleepTimer(0) // von Hand ausgeschaltet → Timer erledigt
+        }
     }
 
     fun togglePower() {
@@ -213,6 +234,8 @@ class GoveeController(
 
     fun setBrightness(value: Float) {
         val v = value.coerceIn(0.01f, 1f)
+        restoreBrightness = null
+        if (fading) setSleepTimer(0) // Helligkeit von Hand geändert → Ausdimmen abbrechen
         _brightness.value = v
         prefs.lastBrightness = v
         lastBrightCmd = System.currentTimeMillis()
@@ -315,6 +338,73 @@ class GoveeController(
         resendState()
     }
 
+    // ================================================================ Nacht-Timer
+
+    /**
+     * Nacht-Timer: Nach [minutes] Minuten geht das Licht aus. In der letzten Minute dimmt es sanft herunter.
+     * 0 = Timer aus. Übersteht auch einen Neustart der App (Zeitpunkt wird gespeichert).
+     */
+    fun setSleepTimer(minutes: Int) {
+        sleepJob?.cancel()
+        sleepJob = null
+        if (fading) {
+            // Abgebrochen mitten im Ausdimmen → alte Helligkeit sofort zurück
+            fading = false
+            restoreBrightness?.let {
+                restoreBrightness = null
+                _brightness.value = it
+                enqueue("bright", GoveeProtocol.brightness(it, prefs.goveeBrightness100), 35)
+            }
+        }
+        if (minutes <= 0) {
+            _sleepAt.value = 0L
+            prefs.goveeSleepAt = 0L
+            return
+        }
+        val at = System.currentTimeMillis() + minutes * 60_000L
+        prefs.goveeSleepMinutes = minutes
+        prefs.goveeSleepAt = at
+        _sleepAt.value = at
+        if (!_power.value) setPower(true)
+        com.amoo.roomlauncher.L.i("Nacht-Timer: $minutes min")
+        armSleep()
+    }
+
+    private fun armSleep() {
+        sleepJob?.cancel()
+        val at = _sleepAt.value
+        if (at == 0L) return
+        sleepJob = scope.launch {
+            val fadeMs = 60_000L
+            val wait = at - fadeMs - System.currentTimeMillis()
+            if (wait > 0) delay(wait)
+            if (_power.value) {
+                // Letzte Minute: in 12 Schritten herunterdimmen
+                val from = _brightness.value
+                restoreBrightness = from
+                fading = true
+                val steps = 12
+                for (i in 1 until steps) {
+                    val left = at - System.currentTimeMillis()
+                    if (left <= 0) break
+                    val v = (from * (1f - i / steps.toFloat())).coerceAtLeast(0.01f)
+                    _brightness.value = v
+                    enqueue("bright", GoveeProtocol.brightness(v, prefs.goveeBrightness100), 35)
+                    delay(minOf(left, fadeMs / steps))
+                }
+                val rest = at - System.currentTimeMillis()
+                if (rest > 0) delay(rest)
+                setPower(false)
+                _brightness.value = from // Anzeige zeigt die gewohnte Helligkeit fürs nächste Einschalten
+                fading = false
+            }
+            _sleepAt.value = 0L
+            prefs.goveeSleepAt = 0L
+            sleepJob = null
+            com.amoo.roomlauncher.L.i("Nacht-Timer abgelaufen – Licht aus")
+        }
+    }
+
     /** Aktuellen Stand erneut senden (z. B. nach Ändern von Farb-Befehl oder Helligkeitsskala). */
     fun resendState() {
         setBrightness(_brightness.value)
@@ -329,6 +419,7 @@ class GoveeController(
     /**
      * Externe Befehle (z. B. aus Tasker/Automatisierung):
      * lumen://power/on|off|toggle · lumen://reset · lumen://brightness/50 · lumen://level/8 · lumen://color/RRGGBB
+ * · lumen://sleep/30 (Nacht-Timer in Minuten, 0 = aus)
      * Bis die Verbindung steht, bleiben sie in der Warteschlange.
      */
     fun command(uri: Uri): Boolean {
@@ -341,6 +432,7 @@ class GoveeController(
                 else -> return false
             }
             "reset" -> reset()
+            "sleep" -> setSleepTimer(arg?.toIntOrNull() ?: return false)
             "brightness" -> setBrightness((arg?.toIntOrNull() ?: return false).coerceIn(1, 100) / 100f)
             "level" -> {
                 val n = arg?.toIntOrNull() ?: return false
@@ -635,6 +727,8 @@ class GoveeController(
                 if (now - lastPowerCmd > 1_000) {
                     _power.value = st.on
                     prefs.lastPower = st.on
+                    // Per Fernbedienung/App ausgeschaltet → Nacht-Timer hat sich erledigt
+                    if (!st.on && !fading && _sleepAt.value != 0L) scope.launch { setSleepTimer(0) }
                 }
                 if (!powerKnown) {
                     powerKnown = true

@@ -49,7 +49,7 @@ class RoomApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        // Erlaubt ab Android 9 Reflection auf versteckte Bluetooth-APIs (AirPods-Steuerkanal).
+        // Erlaubt ab Android 9 Reflection auf versteckte Bluetooth-APIs (AirPods verbinden/trennen).
         if (Build.VERSION.SDK_INT >= 28) runCatching { HiddenApiBypass.addHiddenApiExemptions("L") }
 
         CrashLog.install(this)
@@ -63,7 +63,7 @@ class RoomApp : Application() {
         }
         prefs.goveeDefaultApplied = true
         govee = GoveeController(this, prefs, appScope, ble)
-        airpods = AirPodsController(this, prefs, appScope, ble)
+        airpods = AirPodsController(this, prefs, appScope)
         apps = AppRepository(this, appScope)
         board = BoardStore(this)
         theme = ThemeStore(this)

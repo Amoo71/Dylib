@@ -16,7 +16,6 @@ enum class WidgetSize(val w: Int, val h: Int, val label: String) {
 enum class WidgetKind(val title: String, val sizes: List<WidgetSize>) {
     CLOCK("Uhr", listOf(WidgetSize.S, WidgetSize.M)),
     LIGHT("Licht", listOf(WidgetSize.S, WidgetSize.M)),
-    AIRPODS("AirPods", listOf(WidgetSize.S, WidgetSize.M)),
 }
 
 sealed class BoardItem {
@@ -167,7 +166,6 @@ class BoardStore(context: Context) {
     private fun defaults(): List<BoardItem> = listOf(
         BoardItem.Widget(newId(), WidgetKind.CLOCK, WidgetSize.M),
         BoardItem.Widget(newId(), WidgetKind.LIGHT, WidgetSize.S),
-        BoardItem.Widget(newId(), WidgetKind.AIRPODS, WidgetSize.S),
     )
 
     private fun newId() = UUID.randomUUID().toString().take(8)

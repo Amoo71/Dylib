@@ -16,7 +16,7 @@ import android.provider.Settings
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
- * Ein gemeinsamer BLE-Scan für alle Nutzer (AirPods-Akku dauerhaft, Govee-Suche zeitweise).
+ * Ein gemeinsamer BLE-Scan für alle Nutzer (z. B. die Govee-Suche, wenn das Licht nicht direkt erreichbar ist).
  *
  * Android 7 hat zwei Fallstricke, die hier abgefangen werden:
  *  - Ein Scan, der länger als 30 Minuten läuft, wird stillschweigend gedrosselt ("opportunistic").
