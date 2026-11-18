@@ -647,7 +647,16 @@ private fun Context.diagnosis(app: RoomApp): String {
         appendLine("${ok(g == GoveeController.Connection.CONNECTED)}  Licht: ${g.name.lowercase()}${app.govee.deviceName.value?.let { " ($it)" } ?: ""}")
         app.govee.lastError.value?.let { appendLine("    ↳ $it") }
         appendLine("${ok(a.audioConnected.value)}  AirPods Audio ${if (a.audioConnected.value) "verbunden" else "nicht verbunden"}")
-        appendLine("${ok(a.battery.value != null)}  AirPods Akku-Signal ${if (a.battery.value != null) "empfangen" else "keins"}")
+        val learned = app.prefs.airpodsModelId != null
+        appendLine(
+            "${ok(a.battery.value != null)}  AirPods Akku-Signal ${if (a.battery.value != null) "empfangen" else "keins"}" +
+                (a.lastRssi?.let { " · $it dBm" } ?: ""),
+        )
+        appendLine(
+            "${ok(learned)}  Modell: ${a.podModel.value?.label ?: "noch nicht erkannt"}" +
+                (if (learned) " (gelernt)" else " – wird beim Verbinden gelernt") +
+                (if (a.ignoredForeign > 0) " · fremde ignoriert: ${a.ignoredForeign}" else ""),
+        )
         append("${ok(a.controlReady.value)}  AirPods Steuerkanal: ${a.controlStatus.value}")
         com.amoo.roomlauncher.CrashLog.read(this@diagnosis)?.let { append("\n⚠  Letzter Fehler: $it") }
     }
@@ -911,7 +920,15 @@ fun Context.airPodsSheet(airpods: AirPodsController, prefs: Prefs, onDismiss: ()
     root.addView(row(connectButton(airpods, highlighted = true), ctrl, spacingDp = 12), lp().margins(t = dp(18)))
 
     root.section("Geräuschkontrolle")
-    root.addView(noiseSelector(airpods, short = false))
+    val noModes = label("Dieses Modell hat keine Geräuschkontrolle (ANC/Transparenz).", 14f, C.TEXT3, lines = 2)
+    val modes = noiseSelector(airpods, short = false)
+    modes.bind(airpods.podModel) { m ->
+        val has = m?.noiseControl != false
+        modes.visibility = if (has) View.VISIBLE else View.GONE
+        noModes.visibility = if (has) View.GONE else View.VISIBLE
+    }
+    root.addView(noModes)
+    root.addView(modes)
     val strengthLabel = label("", 13f, C.TEXT2)
     val strength = GlassSlider(this, 34) { airpods.setAdaptiveStrength((it * 100).roundToInt()) }
     val strengthBox = column().apply {
@@ -933,6 +950,13 @@ fun Context.airPodsSheet(airpods: AirPodsController, prefs: Prefs, onDismiss: ()
     status.bind(airpods.controlStatus) { status.text = "Steuerkanal: $it" }
     root.addView(status, lp().margins(t = dp(8)))
 
+    root.addView(
+        glassButton("Modell neu erkennen") {
+            airpods.forgetModel()
+            toast("Wird beim nächsten Signal der verbundenen AirPods neu erkannt")
+        },
+        lp(WRAP, WRAP).margins(t = dp(12)),
+    )
     root.section("Gerät auswählen")
     root.addView(
         label("Einmalig in den Android-Bluetooth-Einstellungen koppeln (Case öffnen, Knopf hinten halten), dann hier auswählen.", 14f, C.TEXT2, lines = 2),

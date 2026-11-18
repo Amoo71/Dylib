@@ -63,7 +63,7 @@ class AirPodsController(
         val chargingCase: Boolean = false,
     )
 
-    data class InEar(val left: Boolean, val right: Boolean)
+    data class InEar(val left: Boolean, val right: Boolean, val leftInCase: Boolean = false, val rightInCase: Boolean = false)
 
     data class PairedDevice(val name: String, val address: String)
 
@@ -76,7 +76,11 @@ class AirPodsController(
     private val _inEar = MutableStateFlow<InEar?>(null)
     val inEar: StateFlow<InEar?> = _inEar.asStateFlow()
 
-    private val _model = MutableStateFlow<String?>(null)
+    private val _podModel = MutableStateFlow(prefs.airpodsModelId?.let { PodModel.fromId(it) }?.takeIf { it != PodModel.UNKNOWN })
+    /** Erkanntes Modell der eigenen AirPods (aus dem Werbepaket gelernt). */
+    val podModel: StateFlow<PodModel?> = _podModel.asStateFlow()
+
+    private val _model = MutableStateFlow(_podModel.value?.label)
     val model: StateFlow<String?> = _model.asStateFlow()
 
     private val _noise = MutableStateFlow<Noise?>(null)
@@ -207,6 +211,13 @@ class AirPodsController(
 
     fun selectDevice(address: String) {
         closeControl()
+        if (address != prefs.airpodsAddress) {
+            prefs.airpodsModelId = null
+            _podModel.value = null
+            _model.value = null
+            synchronized(sightings) { sightings.clear() }
+            bestAddress = null
+        }
         prefs.airpodsAddress = address
         refreshConnectionState()
     }
@@ -517,14 +528,72 @@ class AirPodsController(
 
     // ---------------------------------------------------------------- Akku/Ohrerkennung via BLE
 
-    private val advertListener = com.amoo.roomlauncher.ble.BleHub.Listener { _, rssi, record ->
-        if (rssi < -75) return@Listener
+    private class Sighting(val info: ProximityParser.Info, val rssi: Int, val at: Long)
+
+    /** Zuletzt gesehene Apple-Werbepakete je (wechselnder) Adresse. */
+    private val sightings = HashMap<String, Sighting>()
+    @Volatile private var bestAddress: String? = null
+
+    /** Für die Diagnose: Signalstärke der eigenen AirPods und Zahl ignorierter fremder Pakete. */
+    @Volatile var lastRssi: Int? = null
+        private set
+    @Volatile var ignoredForeign = 0
+        private set
+
+    /** Gelerntes Modell vergessen (z. B. bei anderen AirPods) – wird beim nächsten Verbinden neu erkannt. */
+    fun forgetModel() {
+        prefs.airpodsModelId = null
+        _podModel.value = null
+        _model.value = null
+        synchronized(sightings) { sightings.clear() }
+        bestAddress = null
+        ignoredForeign = 0
+    }
+
+    /**
+     * Werbepakete aller AirPods in Reichweite → die eigenen herausfinden:
+     *  1. Solange verbunden, lernt die App das Modell der nächsten AirPods und merkt es sich.
+     *  2. Danach zählen nur Pakete genau dieses Modells – fremde AirPods im Raum werden ignoriert.
+     *  3. Mehrere gleiche: das stärkste Signal gewinnt (mit 6 dB Trägheit, damit nichts springt).
+     */
+    private val advertListener = com.amoo.roomlauncher.ble.BleHub.Listener { device, rssi, record ->
+        if (rssi < -85) return@Listener
         val data = com.amoo.roomlauncher.ble.BleHub.parse(record).manufacturer[APPLE_ID] ?: return@Listener
         val info = ProximityParser.parse(data) ?: return@Listener
-        lastBleSeen = System.currentTimeMillis()
-        _model.value = info.model
-        _inEar.value = InEar(info.leftInEar, info.rightInEar)
-        if (System.currentTimeMillis() - lastAapBattery < 60_000) return@Listener
+        if (info.model == PodModel.UNKNOWN) return@Listener
+        val learned = prefs.airpodsModelId
+        if (learned != null && info.rawModelId != learned) {
+            ignoredForeign++ // fremde AirPods in der Nähe
+            return@Listener
+        }
+
+        val now = System.currentTimeMillis()
+        val best = synchronized(sightings) {
+            sightings[device.address] = Sighting(info, rssi, now)
+            sightings.values.removeAll { now - it.at > 30_000 }
+            val strongest = sightings.entries.maxByOrNull { it.value.rssi } ?: return@Listener
+            val current = bestAddress?.let { sightings[it] }
+            val pick = if (current != null && strongest.value.rssi < current.rssi + 6) bestAddress!! else strongest.key
+            bestAddress = pick
+            sightings[pick]
+        } ?: return@Listener
+        if (best.info !== info) return@Listener // nur das gewählte Gerät aktualisiert die Anzeige
+
+        // Modell lernen, während die eigenen AirPods verbunden und nah sind
+        if (learned == null && _audioConnected.value && rssi > -70) {
+            prefs.airpodsModelId = info.rawModelId
+        }
+        lastBleSeen = now
+        lastRssi = rssi
+        _podModel.value = info.model
+        _model.value = info.model.label
+        _inEar.value = InEar(
+            left = info.leftInEar,
+            right = info.rightInEar,
+            leftInCase = info.leftWear == ProximityParser.Wear.IN_CASE,
+            rightInCase = info.rightWear == ProximityParser.Wear.IN_CASE,
+        )
+        if (now - lastAapBattery < 60_000) return@Listener
         _battery.value = Battery(
             left = info.left, right = info.right, case = info.case,
             chargingLeft = info.chargingLeft, chargingRight = info.chargingRight, chargingCase = info.chargingCase,

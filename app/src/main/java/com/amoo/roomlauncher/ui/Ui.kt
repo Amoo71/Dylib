@@ -907,6 +907,11 @@ class BatteryRing(context: Context, private val part: Part) : View(context) {
             field = v
             invalidate()
         }
+    var inCase = false
+        set(v) {
+            field = v
+            invalidate()
+        }
 
     private var shown = 0f
     private var anim: ValueAnimator? = null
@@ -988,10 +993,20 @@ class BatteryRing(context: Context, private val part: Part) : View(context) {
             path.close()
             canvas.drawPath(path, badge)
         }
-        // Im Ohr: blauer Punkt oben rechts
+        // Im Ohr: blauer Punkt oben rechts · im Case: kleines Case-Symbol oben rechts
         if (inEar) {
             badge.color = C.BLUE
             canvas.drawCircle(cx + rad * 0.72f, cy - rad * 0.72f, s * 0.07f, badge)
+        } else if (inCase) {
+            val bx = cx + rad * 0.72f
+            val by = cy - rad * 0.72f
+            val bw = s * 0.11f
+            badge.color = C.white(0.85f)
+            r.set(bx - bw, by - bw * 0.75f, bx + bw, by + bw * 0.75f)
+            canvas.drawRoundRect(r, bw * 0.35f, bw * 0.35f, badge)
+            badge.color = 0xFF1C1C1E.toInt()
+            badge.strokeWidth = s * 0.015f
+            canvas.drawLine(bx - bw, by - bw * 0.2f, bx + bw, by - bw * 0.2f, badge)
         }
     }
 

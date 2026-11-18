@@ -34,7 +34,7 @@ mit drei Glas-Widgets: **Licht**, **AirPods** und **Apps**.
 
 ## Installation
 
-1. APK laden: GitHub → *Releases* → **Room Launcher v2.4.0** (neueste) → `RoomLauncher.apk`.
+1. APK laden: GitHub → *Releases* → **Room Launcher v2.5.0** (neueste) → `RoomLauncher.apk`.
 2. Auf dem Tablet installieren („Unbekannte Quellen“ erlauben).
 3. App öffnen, Bluetooth-/Standortberechtigung erlauben und den **Standort einschalten** – ohne ihn findet Android 7 keine Bluetooth-LE-Geräte (Licht, AirPods-Akku). Der Launcher zeigt oben einen Hinweis, falls etwas fehlt.
 4. Home-Taste drücken → **Room Launcher** als Standard wählen („Immer“).
@@ -50,7 +50,8 @@ Falls die Farbe nicht reagiert: anderen „Farb-Befehl“ probieren (02 / 0D / 0
 
 Einmal in den Android-Bluetooth-Einstellungen koppeln, dann im Zahnrad auswählen.
 
-- Akku: funktioniert auf jedem Gerät (Apple-BLE-Werbepakete).
+- Akku, Laden, „im Ohr“ / „im Case“ und Modell: aus Apples BLE-Werbepaketen (Decoder nach GreenPods/CAPod) – funktioniert auf jedem Gerät.
+  Die App lernt beim Verbinden das Modell der eigenen AirPods und ignoriert danach fremde AirPods in der Nähe.
 - Verbinden per Knopf: nutzt die versteckte A2DP-`connect()`-API, klappt bis ca. Android 12 meist ohne Root.
 - Modi & Einstellungen: Apple Accessory Protocol (AAP) über einen sicheren L2CAP-Kanal (PSM `0x1001`,
   Apple-Service-UUID `74ec2172-0bad-4d01-8f77-997b2be0722a`), Socket-Aufbau wie GreenPods.

@@ -86,6 +86,11 @@ class Prefs(context: Context) {
             later("govee_brush") { it.putInt("govee_brush", v) }
         }
 
+    /** Gelernte Modell-ID der eigenen AirPods (z. B. 0x1420 = AirPods Pro 2). */
+    var airpodsModelId: Int?
+        get() = sp.getInt("airpods_model_id", -1).takeIf { it >= 0 }
+        set(v) = sp.edit().putInt("airpods_model_id", v ?: -1).apply()
+
     var airpodsAddress: String?
         get() = sp.getString("airpods_address", null)
         set(v) = sp.edit().putString("airpods_address", v).apply()

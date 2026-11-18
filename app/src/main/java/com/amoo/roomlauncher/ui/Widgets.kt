@@ -351,8 +351,10 @@ private fun Context.ringItem(part: BatteryRing.Part, ringDp: Int, airpods: AirPo
     val ring = BatteryRing(this, part)
     val pct = label("–", 15f, C.TEXT2, display = true).apply { gravity = Gravity.CENTER }
     ring.bind(airpods.battery) { b ->
+        val split = airpods.podModel.value?.splitBuds != false
         val (p, ch) = when (part) {
-            BatteryRing.Part.LEFT -> b?.left to (b?.chargingLeft == true)
+            // Over-Ear (AirPods Max): ein gemeinsamer Akku
+            BatteryRing.Part.LEFT -> (if (split) b?.left else b?.left ?: b?.right) to (b?.chargingLeft == true || (!split && b?.chargingRight == true))
             BatteryRing.Part.RIGHT -> b?.right to (b?.chargingRight == true)
             BatteryRing.Part.CASE -> b?.case to (b?.chargingCase == true)
         }
@@ -362,7 +364,11 @@ private fun Context.ringItem(part: BatteryRing.Part, ringDp: Int, airpods: AirPo
         pct.setTextColor(if (p != null) C.TEXT else C.TEXT3)
     }
     if (part != BatteryRing.Part.CASE) {
-        ring.bind(airpods.inEar) { e -> ring.inEar = if (part == BatteryRing.Part.LEFT) e?.left == true else e?.right == true }
+        ring.bind(airpods.inEar) { e ->
+            val left = part == BatteryRing.Part.LEFT
+            ring.inEar = if (left) e?.left == true else e?.right == true
+            ring.inCase = if (left) e?.leftInCase == true else e?.rightInCase == true
+        }
     }
     return column().apply {
         gravity = Gravity.CENTER_HORIZONTAL
@@ -374,7 +380,12 @@ private fun Context.ringItem(part: BatteryRing.Part, ringDp: Int, airpods: AirPo
 internal fun Context.ringRow(airpods: AirPodsController, ringDp: Int): LinearLayout = LinearLayout(this).apply {
     orientation = LinearLayout.HORIZONTAL
     gravity = Gravity.CENTER_VERTICAL
-    for (part in BatteryRing.Part.entries) addView(ringItem(part, ringDp, airpods), lp(0, WRAP, 1f))
+    val items = BatteryRing.Part.entries.map { part -> part to ringItem(part, ringDp, airpods).also { addView(it, lp(0, WRAP, 1f)) } }
+    // AirPods Max & Co.: nur ein Akku (kein rechts/Case)
+    bind(airpods.podModel) { m ->
+        val split = m?.splitBuds != false
+        items.forEach { (part, v) -> v.visibility = if (split || part == BatteryRing.Part.LEFT) View.VISIBLE else View.GONE }
+    }
 }
 
 internal fun Context.noiseSelector(airpods: AirPodsController, short: Boolean): Segmented {
@@ -409,13 +420,17 @@ fun Context.airPodsWidget(size: WidgetSize, airpods: AirPodsController, onOpen: 
             // Verbunden: Geräuschmodus direkt wählbar, sonst ein Verbinden-Knopf
             val bottom = FrameLayout(context)
             val seg = noiseSelector(airpods, short = true)
-            val connect = glassButton("Verbinden", true) { airpods.connectAudio() }
+            val connect = connectButton(airpods, highlighted = true)
             bottom.addView(seg, FrameLayout.LayoutParams(MATCH, WRAP))
             bottom.addView(connect, FrameLayout.LayoutParams(MATCH, WRAP))
-            bottom.bind(airpods.audioConnected) { c ->
-                seg.visibility = if (c) View.VISIBLE else View.GONE
-                connect.visibility = if (c) View.GONE else View.VISIBLE
+            fun refresh() {
+                // Modus-Auswahl nur, wenn verbunden UND das Modell überhaupt ANC/Transparenz hat
+                val showModes = airpods.audioConnected.value && airpods.podModel.value?.noiseControl != false
+                seg.visibility = if (showModes) View.VISIBLE else View.GONE
+                connect.visibility = if (showModes) View.GONE else View.VISIBLE
             }
+            bottom.bind(airpods.audioConnected) { refresh() }
+            bottom.bind(airpods.podModel) { refresh() }
             addView(bottom, lp())
         }
     } else {
@@ -430,7 +445,9 @@ fun Context.airPodsWidget(size: WidgetSize, airpods: AirPodsController, onOpen: 
                 ),
             )
             addView(flexSpace())
-            addView(noiseSelector(airpods, short = false))
+            val seg = noiseSelector(airpods, short = false)
+            seg.bind(airpods.podModel) { m -> seg.visibility = if (m?.noiseControl == false) View.GONE else View.VISIBLE }
+            addView(seg)
         }
     }
 

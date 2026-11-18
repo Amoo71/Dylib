@@ -184,7 +184,7 @@ class ProtocolTest {
     @Test fun proximityAdvertBattery() {
         // AirPods Pro (0x0E20), beide im Ohr, L/R 90 %, Case unbekannt
         val info = ProximityParser.parse(advert(0x07, 0x19, 0x01, 0x0E, 0x20, 0x2B, 0x99, 0x8F))!!
-        assertEquals("AirPods Pro", info.model)
+        assertEquals("AirPods Pro", info.model.label)
         assertEquals(90, info.left)
         assertEquals(90, info.right)
         assertNull(info.case)
@@ -194,10 +194,52 @@ class ProtocolTest {
     @Test fun proximityAdvertCaseCharging() {
         // AirPods Pro 2, L 70 %, R 60 %, Case lädt mit 50 %
         val info = ProximityParser.parse(advert(0x07, 0x19, 0x01, 0x14, 0x20, 0x01, 0x67, 0x45))!!
-        assertEquals("AirPods Pro 2", info.model)
+        assertEquals("AirPods Pro 2", info.model.label)
         assertEquals(50, info.case)
         assertTrue(info.chargingCase)
         assertEquals(setOf(60, 70), setOf(info.left, info.right))
+    }
+
+    @Test fun proximityLeftRightFollowsPrimaryFlag() {
+        // Primärer AirPod = links (0x20): oberes Akku-Nibble ist links
+        val primaryLeft = ProximityParser.parse(advert(0x07, 0x19, 0x01, 0x14, 0x20, 0x20, 0x83, 0x2A))!!
+        assertEquals(80, primaryLeft.left)
+        assertEquals(30, primaryLeft.right)
+        assertTrue(primaryLeft.chargingLeft) // Lade-Flag 0x2 = links, unabhängig vom Primär-Flag
+        assertFalse(primaryLeft.chargingRight)
+        assertEquals(100, primaryLeft.case)
+        // Primärer AirPod = rechts: oberes Nibble ist rechts
+        val primaryRight = ProximityParser.parse(advert(0x07, 0x19, 0x01, 0x14, 0x20, 0x00, 0x83, 0x1A))!!
+        assertEquals(30, primaryRight.left)
+        assertEquals(80, primaryRight.right)
+        assertTrue(primaryRight.chargingRight) // 0x1 = rechts
+        assertFalse(primaryRight.chargingLeft)
+    }
+
+    @Test fun proximityWearStates() {
+        // beide im Case
+        val inCase = ProximityParser.parse(advert(0x07, 0x19, 0x01, 0x0E, 0x20, 0x24, 0xAA, 0x5A))!!
+        assertEquals(ProximityParser.Wear.IN_CASE, inCase.leftWear)
+        assertEquals(ProximityParser.Wear.IN_CASE, inCase.rightWear)
+        // primär (links) im Case, sekundär (rechts) im Ohr
+        val mixed = ProximityParser.parse(advert(0x07, 0x19, 0x01, 0x0E, 0x20, 0x38, 0x99, 0x0F))!!
+        assertEquals(ProximityParser.Wear.IN_CASE, mixed.leftWear)
+        assertEquals(ProximityParser.Wear.IN_EAR, mixed.rightWear)
+        // nur rechts (primär) im Ohr
+        val right = ProximityParser.parse(advert(0x07, 0x19, 0x01, 0x0E, 0x20, 0x02, 0x99, 0x0F))!!
+        assertTrue(right.rightInEar)
+        assertFalse(right.leftInEar)
+    }
+
+    @Test fun proximityModelRegistry() {
+        assertEquals("AirPods (2. Gen.)", ProximityParser.parse(advert(0x07, 0x19, 0x01, 0x0F, 0x20))!!.model.label)
+        assertEquals("AirPods Max", ProximityParser.parse(advert(0x07, 0x19, 0x01, 0x0A, 0x20))!!.model.label)
+        val max = ProximityParser.parse(advert(0x07, 0x19, 0x01, 0x0A, 0x20))!!.model
+        assertFalse(max.splitBuds)
+        assertFalse(ProximityParser.parse(advert(0x07, 0x19, 0x01, 0x13, 0x20))!!.model.noiseControl) // AirPods 3: kein ANC
+        assertTrue(ProximityParser.parse(advert(0x07, 0x19, 0x01, 0x27, 0x20))!!.model.noiseControl) // Pro 3
+        assertEquals(0x1420, ProximityParser.parse(advert(0x07, 0x19, 0x01, 0x14, 0x20))!!.rawModelId)
+        assertEquals(com.amoo.roomlauncher.airpods.PodModel.UNKNOWN, ProximityParser.parse(advert(0x07, 0x19, 0x01, 0x99, 0x99))!!.model)
     }
 
     @Test fun proximityRejectsOtherAdverts() {
