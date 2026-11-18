@@ -331,7 +331,7 @@ fun Context.label(
     display: Boolean = false,
     lines: Int = 1,
 ): TextView = TextView(this).apply {
-    this.text = text
+    this.text = com.amoo.roomlauncher.Lang.auto(text)
     setTextSize(TypedValue.COMPLEX_UNIT_SP, sp)
     setTextColor(color)
     includeFontPadding = false
@@ -390,7 +390,7 @@ class Chip(context: Context, text: String, selected: Boolean = false, onClick: (
         }
 
     init {
-        this.text = text
+        this.text = com.amoo.roomlauncher.Lang.auto(text)
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
         typeface = Fonts.medium
         includeFontPadding = false
@@ -719,11 +719,12 @@ fun blend(a: Int, b: Int, t: Float): Int {
 
 class Segmented(
     context: Context,
-    private val labels: List<String>,
+    labels: List<String>,
     textSp: Float = 14f,
     private val heightDp: Int = 50,
     var onSelect: (Int) -> Unit,
 ) : View(context) {
+    private val labels = labels.map { com.amoo.roomlauncher.Lang.auto(it) }
     private val pill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = C.white(0.92f) }
     private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         typeface = Fonts.medium

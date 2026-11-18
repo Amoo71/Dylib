@@ -115,6 +115,11 @@ class Prefs(context: Context) {
         get() = sp.getString("airpods_address", null)
         set(v) = sp.edit().putString("airpods_address", v).apply()
 
+    /** Sprache der Oberfläche: "de", "en" oder null (= Systemsprache). */
+    var language: String?
+        get() = sp.getString("language", null)
+        set(v) = sp.edit().putString("language", v).apply()
+
     var keepScreenOn: Boolean
         get() = sp.getBoolean("keep_screen_on", true)
         set(v) = sp.edit().putBoolean("keep_screen_on", v).apply()

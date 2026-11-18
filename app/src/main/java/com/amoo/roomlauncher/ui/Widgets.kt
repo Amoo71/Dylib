@@ -13,11 +13,14 @@ import android.view.View
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import com.amoo.roomlauncher.airpods.AirPodsController
 import com.amoo.roomlauncher.apps.AppEntry
 import com.amoo.roomlauncher.board.WidgetKind
 import com.amoo.roomlauncher.board.WidgetSize
 import com.amoo.roomlauncher.govee.GoveeController
+import com.amoo.roomlauncher.Lang
 import com.amoo.roomlauncher.toast
+import com.amoo.roomlauncher.tr
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -29,11 +32,14 @@ fun Context.widgetView(
     kind: WidgetKind,
     size: WidgetSize,
     govee: GoveeController,
+    airpods: AirPodsController,
     glass: Boolean,
     onOpenLight: () -> Unit,
+    onOpenAirPods: () -> Unit,
 ): View = when (kind) {
     WidgetKind.CLOCK -> clockWidget(size, glass)
     WidgetKind.LIGHT -> lightWidget(size, govee, glass, onOpenLight)
+    WidgetKind.AIRPODS -> airPodsWidget(size, airpods, glass, onOpenAirPods)
 }
 
 /** Führt [block] sofort und dann alle [periodMs] aus, solange die View im Fenster hängt. */
@@ -56,10 +62,8 @@ internal fun View.everyWhileAttached(periodMs: Long, block: () -> Unit) {
 
 // ------------------------------------------------------------------ Uhr
 
-private val DAY = SimpleDateFormat("EEEE", Locale.GERMANY)
 private val HOURS = SimpleDateFormat("HH", Locale.GERMANY)
 private val MINUTES = SimpleDateFormat("mm", Locale.GERMANY)
-private val DATE = SimpleDateFormat("d. MMMM yyyy", Locale.GERMANY)
 
 /** Uhr – standardmäßig ohne Kasten (Punktmatrix-Ziffern schweben frei), auf Wunsch im Glas-Container. */
 fun Context.clockWidget(size: WidgetSize, glass: Boolean = false): View {
@@ -74,6 +78,8 @@ fun Context.clockWidget(size: WidgetSize, glass: Boolean = false): View {
         setShadowLayer(dpf(10), 0f, dpf(2), 0x8C000000.toInt())
         gravity = Gravity.CENTER
     }
+    val dayFmt = SimpleDateFormat("EEEE", Lang.locale)
+    val dateFmt = SimpleDateFormat(if (Lang.english) "d MMMM yyyy" else "d. MMMM yyyy", Lang.locale)
     val sp = if (small) 66f else 112f
     val day = label("", if (small) 15f else 18f, C.RED, bold = true).shadow()
     val hours = label("", sp, display = true).shadow()
@@ -94,10 +100,10 @@ fun Context.clockWidget(size: WidgetSize, glass: Boolean = false): View {
     val tick = object : Runnable {
         override fun run() {
             val now = Date()
-            day.text = DAY.format(now).uppercase(Locale.GERMANY)
+            day.text = dayFmt.format(now).uppercase(Lang.locale)
             hours.text = HOURS.format(now)
             minutes.text = MINUTES.format(now)
-            date.text = DATE.format(now)
+            date.text = dateFmt.format(now)
             card.removeCallbacks(this)
             card.postDelayed(this, 1000L - System.currentTimeMillis() % 1000L)
         }
@@ -240,15 +246,15 @@ internal fun Context.lumenStatusRow(govee: GoveeController, onOpen: (() -> Unit)
             GoveeController.Connection.NOT_CONFIGURED -> "Nicht eingerichtet" to C.TEXT3
             else -> "Sucht…" to C.ORANGE
         }
-        text.text = t
+        text.text = Lang.auto(t)
         dot.color = c
     }
     left.bind(govee.connection) { refresh() }
     return row(left, flexSpace().also { it.layoutParams = lp(0, 1, 1f) }, chip.also { it.layoutParams = lp(WRAP, WRAP).margins(r = dp(2)) })
 }
 
-/** Bühne: 3D-LED-Ring (mit Plattform und Power-Knopf) + Statuszeile. */
-internal fun Context.lumenStage(govee: GoveeController, board: Boolean, onOpen: (() -> Unit)? = null): FrameLayout {
+/** Bühne: 3D-LED-Ring mit Power-Knopf, optional mit Statuszeile (Verbunden · Modus-Chip). */
+internal fun Context.lumenStage(govee: GoveeController, board: Boolean, onOpen: (() -> Unit)? = null, status: Boolean = true): FrameLayout {
     val ring = LumenRing(this, board)
     ring.onCount = { govee.setCount(it) }
     ring.onSelect = { govee.selectSegment(it) }
@@ -271,10 +277,10 @@ internal fun Context.lumenStage(govee: GoveeController, board: Boolean, onOpen: 
     ring.bind(govee.segMode) { ring.single = it == GoveeController.SegMode.SINGLE }
     ring.bind(govee.selected) { ring.selected = it }
     ring.bindAccent(govee) { ring.accent = it }
-    val statusH = dp(28)
+    val statusH = if (status) dp(28) else 0
     return FrameLayout(this).apply {
         addView(ring, FrameLayout.LayoutParams(MATCH, MATCH).apply { bottomMargin = statusH })
-        addView(lumenStatusRow(govee, onOpen), FrameLayout.LayoutParams(MATCH, statusH, Gravity.BOTTOM))
+        if (status) addView(lumenStatusRow(govee, onOpen), FrameLayout.LayoutParams(MATCH, statusH, Gravity.BOTTOM))
     }
 }
 
@@ -290,7 +296,7 @@ internal fun Context.colorCard(govee: GoveeController, wheelDp: Int, swatchDp: I
         wheel.setColor(c)
         swatch.color = c or 0xFF000000.toInt()
         hex.text = LightColors.hex(c)
-        caption.text = if (govee.segmented.value && govee.segMode.value == GoveeController.SegMode.SINGLE) "Pinselfarbe" else "Alle aktiven"
+        caption.text = Lang.auto(if (govee.segmented.value && govee.segMode.value == GoveeController.SegMode.SINGLE) "Pinselfarbe" else "Alle aktiven")
     }
     val right = column().apply {
         gravity = Gravity.CENTER
@@ -300,11 +306,17 @@ internal fun Context.colorCard(govee: GoveeController, wheelDp: Int, swatchDp: I
             topMargin = -dp(6)
         })
     }
-    // Das Farbrad hat Rand für Glow und Regler – optisch an die Kartenkante rücken
+    // Farbrad und Swatch je in ihrer Hälfte mittig. Das Rad hat innen Rand für Regler + Glow:
+    // oben/unten etwas in den Kartenrand rücken (die Karte schneidet dort nicht ab), seitlich nicht.
+    val left = android.widget.FrameLayout(this).apply {
+        clipChildren = false
+        addView(wheel, android.widget.FrameLayout.LayoutParams(WRAP, WRAP, Gravity.CENTER))
+    }
     card.addView(
-        row(wheel.also { it.layoutParams = lp(WRAP, WRAP).margins(l = -dp(18)) }, right.also { it.layoutParams = lp(0, WRAP, 1f) }),
-        lp().margins(t = -dp(6), b = -dp(14)),
+        row(left.also { it.layoutParams = lp(0, WRAP, 1.25f) }, right.also { it.layoutParams = lp(0, WRAP, 1f) }).apply { clipChildren = false },
+        lp().margins(t = -dp(16), b = -dp(22)),
     )
+    card.clipChildren = false
     return card
 }
 
@@ -360,13 +372,13 @@ fun Context.lightWidget(size: WidgetSize, govee: GoveeController, glass: Boolean
     val card = LumenCard(this, glass)
     bindLumenGlow(card, card.glow, govee)
     val body: View = if (size == WidgetSize.S) {
-        card.setPadding(dp(10), dp(8), dp(10), dp(8))
-        lumenStage(govee, board = true, onOpen = onOpen)
+        card.setPadding(dp(8), dp(8), dp(8), dp(8))
+        lumenStage(govee, board = true, onOpen = onOpen, status = false) // klein: nur der Ring
     } else {
         card.setPadding(dp(12), dp(10), dp(12), dp(10))
         val right = column().apply {
             gravity = Gravity.CENTER_VERTICAL
-            addView(colorCard(govee, 92, 40))
+            addView(colorCard(govee, 84, 40))
             addView(brightnessCard(govee), lp().margins(t = dp(10)))
         }
         row(
@@ -382,6 +394,106 @@ fun Context.lightWidget(size: WidgetSize, govee: GoveeController, glass: Boolean
         val none = c == GoveeController.Connection.NOT_CONFIGURED
         body.visibility = if (none) View.GONE else View.VISIBLE
         setup.visibility = if (none) View.VISIBLE else View.GONE
+    }
+    return card
+}
+
+// ------------------------------------------------------------------ AirPods
+
+/** AirPods-Symbol mit weichem Schein (grün = verbunden). */
+private class PodsHero(context: Context) : View(context) {
+    var connected = false
+        set(v) {
+            if (field != v) {
+                field = v
+                invalidate()
+            }
+        }
+    private val glowP = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val ringP = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+    private val podP = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFF5F5F7.toInt() }
+    private val shade = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x33000000 }
+    private val r = RectF()
+
+    override fun onDraw(canvas: Canvas) {
+        val s = min(width, height).toFloat()
+        val cx = width / 2f
+        val cy = height / 2f
+        val accent = if (connected) C.GREEN else 0xFF8E8E93.toInt()
+        glowP.shader = android.graphics.RadialGradient(
+            cx, cy, s / 2, intArrayOf(LightColors.withAlpha(accent, if (connected) 0.35f else 0.14f), LightColors.withAlpha(accent, 0)),
+            null, android.graphics.Shader.TileMode.CLAMP,
+        )
+        canvas.drawCircle(cx, cy, s / 2, glowP)
+        ringP.strokeWidth = s * 0.018f
+        ringP.color = LightColors.withAlpha(accent, if (connected) 0.7f else 0.25f)
+        canvas.drawCircle(cx, cy, s * 0.4f, ringP)
+        // zwei Ohrhörer: runder Kopf + Stiel, gespiegelt
+        val g = s * 0.5f
+        for ((i, x) in listOf(cx - g * 0.3f, cx + g * 0.3f).withIndex()) {
+            canvas.save()
+            if (i == 1) canvas.scale(-1f, 1f, x, cy)
+            canvas.drawCircle(x - g * 0.05f, cy - g * 0.18f, g * 0.2f, podP)
+            r.set(x + g * 0.02f, cy - g * 0.18f, x + g * 0.15f, cy + g * 0.42f)
+            canvas.drawRoundRect(r, g * 0.065f, g * 0.065f, podP)
+            canvas.drawCircle(x - g * 0.1f, cy - g * 0.2f, g * 0.05f, shade)
+            canvas.restore()
+        }
+    }
+}
+
+/**
+ * AirPods-Widget. Klein: Symbol, Name, Status, Verbinden-Knopf. Mittel: zusätzlich "Gerät wählen".
+ * Gedrückt halten öffnet das AirPods-Panel.
+ */
+fun Context.airPodsWidget(size: WidgetSize, airpods: AirPodsController, glass: Boolean, onOpen: () -> Unit): View {
+    val small = size == WidgetSize.S
+    val card = column().apply {
+        if (glass) background = GlassDrawable(context, 30f)
+        setPadding(dp(16), dp(14), dp(16), dp(14))
+    }
+    val hero = PodsHero(this)
+    val name = label("AirPods", if (small) 16f else 21f, bold = true).apply { gravity = if (small) Gravity.CENTER else Gravity.START }
+    val dot = StatusDot(this)
+    val status = label("", if (small) 12.5f else 14f, C.TEXT2)
+    val toggle = glassButton("Verbinden", true) { airpods.toggle() }
+    fun refresh() {
+        val n = airpods.deviceName.value
+        val c = airpods.audioConnected.value
+        name.text = n ?: "AirPods"
+        status.text = when {
+            n == null -> tr("nicht gekoppelt", "not paired")
+            c -> tr("verbunden", "connected")
+            else -> tr("nicht verbunden", "not connected")
+        }
+        dot.color = if (c) C.GREEN else C.TEXT3
+        hero.connected = c
+        toggle.text = if (c) tr("Trennen", "Disconnect") else tr("Verbinden", "Connect")
+        toggle.visibility = if (n == null) View.INVISIBLE else View.VISIBLE
+    }
+    card.bind(airpods.deviceName) { refresh() }
+    card.bind(airpods.audioConnected) { refresh() }
+    val statusRow = row(dot.also { it.layoutParams = lp(dp(14), dp(14)) }, status, spacingDp = 3)
+    if (small) {
+        card.gravity = Gravity.CENTER_HORIZONTAL
+        card.addView(hero, lp(MATCH, 0, 1f))
+        card.addView(name, lp(MATCH, WRAP).margins(t = dp(4)))
+        card.addView(statusRow.apply { gravity = Gravity.CENTER }, lp(MATCH, WRAP).margins(t = dp(4)))
+        card.addView(toggle, lp(MATCH, WRAP).margins(t = dp(10)))
+    } else {
+        val right = column().apply {
+            gravity = Gravity.CENTER_VERTICAL
+            addView(name)
+            addView(statusRow, lp().margins(t = dp(6)))
+            addView(
+                row(toggle, glassButton(tr("Gerät wählen", "Choose device"), false, onOpen), spacingDp = 10),
+                lp(WRAP, WRAP).margins(t = dp(16)),
+            )
+        }
+        card.addView(
+            row(hero.also { it.layoutParams = lp(0, MATCH, 0.9f) }, right.also { it.layoutParams = lp(0, MATCH, 1.1f).margins(l = dp(12)) }, center = false),
+            lp(MATCH, MATCH, 1f),
+        )
     }
     return card
 }

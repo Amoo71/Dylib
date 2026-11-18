@@ -33,7 +33,9 @@ import com.amoo.roomlauncher.theme.BgEffect
 import com.amoo.roomlauncher.theme.BgType
 import com.amoo.roomlauncher.theme.BubbleColor
 import com.amoo.roomlauncher.theme.ThemeSettings
+import com.amoo.roomlauncher.Lang
 import com.amoo.roomlauncher.toast
+import com.amoo.roomlauncher.tr
 import kotlin.math.roundToInt
 
 // ------------------------------------------------------------------ Grundgerüst
@@ -116,14 +118,14 @@ class Sheet(context: Context, title: String, fillHeight: Boolean, val onDismiss:
     }
 }
 
-private fun Context.sectionTitle(text: String): TextView = label(text.uppercase(), 12.5f, C.TEXT3, bold = true)
+private fun Context.sectionTitle(text: String): TextView = label(Lang.auto(text).uppercase(Lang.locale), 12.5f, C.TEXT3, bold = true)
 
 private fun LinearLayout.section(text: String) {
     addView(context.sectionTitle(text), lp().margins(t = context.dp(22), b = context.dp(10)))
 }
 
 private fun Context.searchField(hint: String, onChange: (String) -> Unit): EditText = EditText(this).apply {
-    this.hint = hint
+    this.hint = Lang.auto(hint)
     typeface = Fonts.regular
     setHintTextColor(C.TEXT3)
     setTextColor(C.TEXT)
@@ -244,7 +246,7 @@ fun Context.appsSheet(app: RoomApp, onDismiss: () -> Unit): Sheet {
         setOnItemLongClickListener { _, _, pos, _ ->
             val e = shown[pos]
             app.board.addApp(e.key)
-            toast("${e.label} liegt jetzt auf dem Board")
+            toast(tr("${e.label} liegt jetzt auf dem Board", "${e.label} is now on the board"))
             true
         }
     }
@@ -487,8 +489,9 @@ private fun Context.widgetsTab(app: RoomApp): View {
             addView(
                 label(
                     when (kind) {
-                        WidgetKind.CLOCK -> "Uhrzeit und Datum"
-                        WidgetKind.LIGHT -> "Govee-LED: Farbrad, Helligkeit, leuchtende Segmente, Nacht-Timer"
+                        WidgetKind.CLOCK -> tr("Uhrzeit, Datum und Tablet-Akku", "Time, date and tablet battery")
+                        WidgetKind.LIGHT -> tr("Govee-LED: 3D-Ring, Farbrad, Helligkeit, Nacht-Timer", "Govee LED: 3D ring, color wheel, brightness, sleep timer")
+                        WidgetKind.AIRPODS -> tr("Name, Verbindung, Verbinden/Trennen", "Name, connection, connect/disconnect")
                     },
                     13f, C.TEXT3,
                 ),
@@ -497,9 +500,9 @@ private fun Context.widgetsTab(app: RoomApp): View {
             layoutParams = lp(0, WRAP, 1f)
         }
         val chips = kind.sizes.map { size ->
-            Chip(this, "+ ${size.label}") {
+            Chip(this, "+ ${Lang.auto(size.label)}") {
                 app.board.addWidget(kind, size)
-                toast("${kind.title} (${size.label}) hinzugefügt")
+                toast(tr("${kind.title} (${size.label}) hinzugefügt", "${Lang.auto(kind.title)} (${Lang.auto(size.label)}) added"))
             }
         }
         val r = row(info, *chips.toTypedArray(), spacingDp = 8).apply {
@@ -518,7 +521,7 @@ private fun Context.widgetsTab(app: RoomApp): View {
         if (widgets.isEmpty()) onBoard.addView(label("Noch keine Widgets.", 14f, C.TEXT3))
         widgets.forEach { w ->
             onBoard.addView(
-                switchRow("${w.kind.title} · ${w.size.label}", w.glass, if (w.glass) "Glas-Container" else "ohne Container – durchsichtig wie die Uhr") {
+                switchRow("${Lang.auto(w.kind.title)} · ${Lang.auto(w.size.label)}", w.glass, if (w.glass) "Glas-Container" else "ohne Container – durchsichtig wie die Uhr") {
                     app.board.setGlass(w.id, it)
                 },
             )
@@ -526,8 +529,12 @@ private fun Context.widgetsTab(app: RoomApp): View {
     }
     root.addView(
         label(
-            "Tipp: Leere Stelle auf dem Board gedrückt halten → alles wackelt: ziehen zum Verschieben, „Größe“ zum Ändern, „–“ zum Entfernen. " +
-                "Ein Widget gedrückt halten öffnet seine große Ansicht.",
+            tr(
+                "Tipp: Leere Stelle auf dem Board gedrückt halten → alles wackelt: ziehen zum Verschieben, „Größe“ zum Ändern, „Glas“ an/aus, „–“ zum Entfernen. " +
+                    "Ein Widget gedrückt halten öffnet seine große Ansicht.",
+                "Tip: hold an empty spot on the board → everything wiggles: drag to move, “Size” to resize, “Glass” on/off, “–” to remove. " +
+                    "Holding a widget opens its large view.",
+            ),
             13f, C.TEXT3, lines = 3,
         ),
         lp().margins(t = dp(14)),
@@ -670,8 +677,12 @@ private fun Context.devicesTab(app: RoomApp, onOpenGovee: () -> Unit, onOpenAirP
     )
     addView(
         label(
-            "Die App repariert sich selbst: hängender Scan → Neustart, Licht antwortet nicht → neu verbinden, " +
-                "wiederholte Bluetooth-Fehler → Bluetooth-Neustart (höchstens alle 30 min).",
+            tr(
+                "Die App repariert sich selbst: hängender Scan → Neustart, Licht antwortet nicht → neu verbinden, " +
+                    "wiederholte Bluetooth-Fehler → Bluetooth-Neustart (höchstens alle 30 min).",
+                "The app repairs itself: stuck scan → restart, light not responding → reconnect, " +
+                    "repeated Bluetooth errors → Bluetooth restart (at most every 30 min).",
+            ),
             12.5f, C.TEXT3, lines = 4,
         ),
         lp().margins(t = dp(12)),
@@ -683,20 +694,21 @@ private fun Context.diagnosis(app: RoomApp): String {
     fun ok(b: Boolean) = if (b) "✓" else "✗"
     val now = System.currentTimeMillis()
     val last = app.ble.lastResultAt
-    val age = if (last == 0L) "noch keine" else "vor ${((now - last) / 1000).coerceAtLeast(0)} s"
+    val secs = ((now - last) / 1000).coerceAtLeast(0)
+    val age = if (last == 0L) Lang.auto("noch keine") else tr("vor $secs s", "$secs s ago")
     val g = app.govee.connection.value
     val a = app.airpods
     return buildString {
         val btOn = BleHub.bluetoothOn(this@diagnosis)
-        appendLine("${ok(btOn)}  Bluetooth ${if (btOn) "an" else "aus"}")
-        appendLine("${ok(BleHub.locationEnabled(this@diagnosis))}  Standort (nötig für Bluetooth-Suche)")
-        appendLine("${ok(app.ble.scanning)}  Bluetooth-Suche läuft · letztes Signal $age")
-        app.ble.lastError?.let { appendLine("    ↳ $it") }
-        appendLine("${ok(g == GoveeController.Connection.CONNECTED)}  Licht: ${g.name.lowercase()}${app.govee.deviceName.value?.let { " ($it)" } ?: ""}")
-        app.govee.lastError.value?.let { appendLine("    ↳ $it") }
-        if (app.prefs.goveeAddress != null) appendLine("    ↳ Signal: ${app.govee.signalInfo()}")
-        append("${ok(a.audioConnected.value)}  AirPods: ${a.deviceName.value ?: "keine gekoppelt"} · ${if (a.audioConnected.value) "verbunden" else "nicht verbunden"}")
-        com.amoo.roomlauncher.CrashLog.read(this@diagnosis)?.let { append("\n⚠  Letzter Fehler: $it") }
+        appendLine("${ok(btOn)}  Bluetooth " + if (btOn) tr("an", "on") else tr("aus", "off"))
+        appendLine("${ok(BleHub.locationEnabled(this@diagnosis))}  " + tr("Standort (nötig für Bluetooth-Suche)", "Location (needed for Bluetooth scanning)"))
+        appendLine("${ok(app.ble.scanning)}  " + tr("Bluetooth-Suche läuft · letztes Signal $age", "Bluetooth scan running · last signal $age"))
+        app.ble.lastError?.let { appendLine("    ↳ ${Lang.auto(it)}") }
+        appendLine("${ok(g == GoveeController.Connection.CONNECTED)}  ${Lang.auto("Licht")}: ${g.name.lowercase()}${app.govee.deviceName.value?.let { " ($it)" } ?: ""}")
+        app.govee.lastError.value?.let { appendLine("    ↳ ${Lang.auto(it)}") }
+        if (app.prefs.goveeAddress != null) appendLine("    ↳ Signal: ${Lang.auto(app.govee.signalInfo())}")
+        append("${ok(a.audioConnected.value)}  AirPods: ${a.deviceName.value ?: tr("keine gekoppelt", "none paired")} · ${Lang.auto(if (a.audioConnected.value) "verbunden" else "nicht verbunden")}")
+        com.amoo.roomlauncher.CrashLog.read(this@diagnosis)?.let { append("\n⚠  " + tr("Letzter Fehler", "Last error") + ": $it") }
     }
 }
 
@@ -705,6 +717,20 @@ private fun Context.diagnosis(app: RoomApp): String {
 private fun MainActivity.generalTab(app: RoomApp): View {
     val root = column()
     root.addView(sectionTitle("Darstellung"), lp().margins(b = dp(6)))
+    // Sprache: Umschalten baut die Oberfläche neu auf
+    root.addView(
+        row(
+            label("Sprache · Language", 16f).apply { layoutParams = lp(0, WRAP, 1f) },
+            chipGroup(listOf("Deutsch", "English"), if (Lang.english) 1 else 0) { i ->
+                val en = i == 1
+                if (en != Lang.english) {
+                    app.prefs.language = if (en) "en" else "de"
+                    Lang.english = en
+                    recreate()
+                }
+            },
+        ).apply { setPadding(0, dp(8), 0, dp(8)) },
+    )
     root.addView(
         row(
             label("App-Icons", 16f).apply { layoutParams = lp(0, WRAP, 1f) },
@@ -750,8 +776,12 @@ private fun MainActivity.exitTab(app: RoomApp, onDismiss: () -> Unit): View {
     val root = column()
     root.addView(
         label(
-            "Solange Room Launcher der Standard-Startbildschirm ist, bringt dich die Home-Taste immer hierher zurück. " +
-                "Hier kommst du zum normalen Launcher.",
+            tr(
+                "Solange Room Launcher der Standard-Startbildschirm ist, bringt dich die Home-Taste immer hierher zurück. " +
+                    "Hier kommst du zum normalen Launcher.",
+                "As long as Room Launcher is the default home screen, the home button always brings you back here. " +
+                    "This is how you get to the normal launcher.",
+            ),
             15f, C.TEXT2, lines = 3,
         ),
     )
@@ -766,7 +796,7 @@ private fun MainActivity.exitTab(app: RoomApp, onDismiss: () -> Unit): View {
                 layoutParams = lp(dp(44), dp(44))
             },
             column().apply {
-                addView(label("${l.label} öffnen", 17f, bold = true))
+                addView(label(tr("${l.label} öffnen", "Open ${l.label}"), 17f, bold = true))
                 addView(label("Home-Taste führt danach wieder hierher", 12.5f, C.TEXT3), lp().margins(t = dp(3)))
                 layoutParams = lp(0, WRAP, 1f).margins(l = dp(14))
             },
@@ -784,8 +814,12 @@ private fun MainActivity.exitTab(app: RoomApp, onDismiss: () -> Unit): View {
     root.section("Dauerhaft zurück zum normalen Launcher")
     root.addView(
         label(
-            "Hebt Room Launcher als Standard auf. Beim nächsten Druck auf Home fragt Android, welcher Startbildschirm " +
-                "verwendet werden soll – dort den alten Launcher mit „Immer“ wählen.",
+            tr(
+                "Hebt Room Launcher als Standard auf. Beim nächsten Druck auf Home fragt Android, welcher Startbildschirm " +
+                    "verwendet werden soll – dort den alten Launcher mit „Immer“ wählen.",
+                "Removes Room Launcher as the default. The next time you press Home, Android asks which home screen " +
+                    "to use – choose your old launcher with “Always”.",
+            ),
             14f, C.TEXT2, lines = 4,
         ),
     )
@@ -829,7 +863,7 @@ private fun MainActivity.exitTab(app: RoomApp, onDismiss: () -> Unit): View {
 // ------------------------------------------------------------------ Licht-Panel (große Ansicht: Steuerung + Einrichtung)
 
 private val SLEEP_OPTIONS = listOf(0 to "Aus", 30 to "30 min", 60 to "1 Std", 120 to "2 Std")
-private val CLOCK_FMT = java.text.SimpleDateFormat("HH:mm", java.util.Locale.GERMANY)
+private fun clockFmt() = java.text.SimpleDateFormat("HH:mm", Lang.locale)
 
 fun Context.goveeSheet(govee: GoveeController, prefs: Prefs, onDismiss: () -> Unit): Sheet {
     val sheet = Sheet(this, "Licht", true, onDismiss, maxWidthDp = 1120)
@@ -845,7 +879,7 @@ fun Context.goveeSheet(govee: GoveeController, prefs: Prefs, onDismiss: () -> Un
     val root = column()
     val err = label("", 13f, C.ORANGE, lines = 2)
     err.bind(govee.lastError) {
-        err.text = it.orEmpty()
+        err.text = Lang.auto(it.orEmpty())
         err.visibility = if (it == null) View.GONE else View.VISIBLE
     }
     root.addView(err, lp().margins(b = dp(8)))
@@ -855,7 +889,7 @@ fun Context.goveeSheet(govee: GoveeController, prefs: Prefs, onDismiss: () -> Un
         val connected = govee.connection.value == GoveeController.Connection.CONNECTED
         val configured = govee.connection.value != GoveeController.Connection.NOT_CONFIGURED
         signal.visibility = if (!connected && configured) View.VISIBLE else View.GONE
-        if (signal.visibility == View.VISIBLE) signal.text = "Signal: " + govee.signalInfo()
+        if (signal.visibility == View.VISIBLE) signal.text = "Signal: " + Lang.auto(govee.signalInfo())
     }
     root.addView(signal, lp().margins(b = dp(8)))
 
@@ -889,7 +923,7 @@ fun Context.goveeSheet(govee: GoveeController, prefs: Prefs, onDismiss: () -> Un
     val setup = column()
     setup.section("MAC-Adresse eingeben")
     val macField = EditText(this).apply {
-        hint = "z. B. E8:55:04:06:77:4E"
+        hint = tr("z. B. E8:55:04:06:77:4E", "e.g. E8:55:04:06:77:4E")
         setText(prefs.goveeAddress.orEmpty())
         typeface = Fonts.regular
         setHintTextColor(C.TEXT3)
@@ -904,7 +938,7 @@ fun Context.goveeSheet(govee: GoveeController, prefs: Prefs, onDismiss: () -> Un
         row(
             macField,
             glassButton("Verbinden", true) {
-                if (govee.setManual(macField.text.toString(), null)) toast("Verbinde direkt mit ${macField.text.toString().trim().uppercase()}")
+                if (govee.setManual(macField.text.toString(), null)) toast(tr("Verbinde direkt mit ", "Connecting directly to ") + macField.text.toString().trim().uppercase())
                 else toast("Ungültige MAC-Adresse – Format AA:BB:CC:DD:EE:FF")
             },
             spacingDp = 12,
@@ -917,7 +951,7 @@ fun Context.goveeSheet(govee: GoveeController, prefs: Prefs, onDismiss: () -> Un
         lp().margins(t = dp(14)),
     )
     val head = label("", 16f, bold = true)
-    head.bind(govee.scanning) { head.text = if (it) "Suche Lichter…" else if (govee.found.value.isEmpty()) "" else "Gefundene Lichter" }
+    head.bind(govee.scanning) { head.text = Lang.auto(if (it) "Suche Lichter…" else if (govee.found.value.isEmpty()) "" else "Gefundene Lichter") }
     setup.addView(head, lp().margins(t = dp(12)))
     val list = column()
     setup.addView(list, lp().margins(t = dp(8)))
@@ -927,7 +961,7 @@ fun Context.goveeSheet(govee: GoveeController, prefs: Prefs, onDismiss: () -> Un
         found.take(25).forEach { f ->
             val item = listItem(f.name, "${f.address} · ${f.rssi} dBm", if (f.likelyGovee) "Govee" else null, C.GREEN, f.likelyGovee) {
                 govee.select(f)
-                toast("${f.name} wird verbunden")
+                toast(tr("${f.name} wird verbunden", "Connecting ${f.name}"))
             }
             list.addView(item, lp().margins(b = dp(8)))
         }
@@ -996,7 +1030,11 @@ private fun Context.sleepCard(govee: GoveeController, prefs: Prefs): LinearLayou
     val timer = Segmented(this, SLEEP_OPTIONS.map { it.second }, textSp = 14f, heightDp = 44) { i ->
         govee.setSleepTimer(SLEEP_OPTIONS[i].first)
         if (i > 0) {
-            toast("In ${SLEEP_OPTIONS[i].second}: Licht aus" + (if (prefs.sleepScreenOff) ", Bildschirm aus" else "") + (if (prefs.sleepCloseApps) ", Apps zu" else ""))
+            toast(
+                tr("In ${SLEEP_OPTIONS[i].second}: Licht aus", "In ${Lang.auto(SLEEP_OPTIONS[i].second)}: light off") +
+                    (if (prefs.sleepScreenOff) tr(", Bildschirm aus", ", screen off") else "") +
+                    (if (prefs.sleepCloseApps) tr(", Apps zu", ", apps closed") else ""),
+            )
             if (prefs.sleepScreenOff && !com.amoo.roomlauncher.SleepActions.canLock(this)) com.amoo.roomlauncher.SleepActions.requestLock(this)
         }
     }
@@ -1005,9 +1043,9 @@ private fun Context.sleepCard(govee: GoveeController, prefs: Prefs): LinearLayou
         val at = govee.sleepAt.value
         timer.selected = if (at == 0L) 0 else SLEEP_OPTIONS.indexOfFirst { it.first == govee.sleepMinutes }
         info.text = if (at == 0L) {
-            "Am Ende dimmt das Licht in der letzten Minute sanft aus."
+            Lang.auto("Am Ende dimmt das Licht in der letzten Minute sanft aus.")
         } else {
-            "Um ${CLOCK_FMT.format(java.util.Date(at))} ist Schluss · noch ${sleepLeft(at)}"
+            tr("Um ${clockFmt().format(java.util.Date(at))} ist Schluss · noch ${sleepLeft(at)}", "Ends at ${clockFmt().format(java.util.Date(at))} · ${sleepLeft(at)} left")
         }
         info.setTextColor(if (at == 0L) C.white(0.6f) else LightColors.MOON)
     }
@@ -1020,7 +1058,7 @@ private fun Context.sleepCard(govee: GoveeController, prefs: Prefs): LinearLayou
     fun refreshHint() {
         val need = prefs.sleepScreenOff && !com.amoo.roomlauncher.SleepActions.canLock(this)
         hint.visibility = if (need) View.VISIBLE else View.GONE
-        hint.text = "Bildschirm-aus braucht einmal das Recht „Bildschirm sperren“ – hier tippen."
+        hint.text = Lang.auto("Bildschirm-aus braucht einmal das Recht „Bildschirm sperren“ – hier tippen.")
     }
     hint.pressable { com.amoo.roomlauncher.SleepActions.requestLock(this) }
     hint.everyWhileAttached(2000) { refreshHint() }
@@ -1051,15 +1089,15 @@ fun Context.airPodsSheet(airpods: AirPodsController, prefs: Prefs, onDismiss: ()
     fun refresh() {
         val n = airpods.deviceName.value
         val c = airpods.audioConnected.value
-        name.text = n ?: "Keine AirPods gekoppelt"
-        status.text = when {
+        name.text = n ?: Lang.auto("Keine AirPods gekoppelt")
+        status.text = Lang.auto(when {
             n == null -> "einmalig in den Bluetooth-Einstellungen koppeln"
             c -> "verbunden"
             else -> "nicht verbunden"
-        }
+        })
         (dotV.background as? RoundDrawable)?.color = if (c) C.GREEN else C.TEXT3
         dotV.invalidate()
-        toggle.text = if (c) "Trennen" else "Verbinden"
+        toggle.text = Lang.auto(if (c) "Trennen" else "Verbinden")
         toggle.visibility = if (n == null) View.GONE else View.VISIBLE
     }
     root.bind(airpods.deviceName) { refresh() }

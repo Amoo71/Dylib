@@ -10,7 +10,7 @@ mit Widgets für **Uhr** und **Licht**, deinen **Apps** und zwei Mini-Widgets ob
   Ist der Platz belegt, landet das Element im nächsten freien Feld; ein Schatten zeigt beim Ziehen die Landestelle.
   **Leere Stelle** (oder App) gedrückt halten → Bearbeiten: alles wackelt weich, **ziehen** zum Verschieben, **„–“** entfernen, **„Größe“** (Klein/Mittel).
   **Widget** gedrückt halten → seine **große Ansicht** wächst aus dem Widget heraus.
-- **Widgets**: Uhr · Licht (Govee) – klein oder mittel. Pro Widget abschaltbarer **Glas-Container** (im Bearbeiten-Modus „Glas: an/aus“ unten links am Widget oder unter Einstellungen → Widgets) – ohne ist es durchsichtig wie die Uhr.
+- **Widgets**: Uhr · Licht (Govee) · AirPods – klein oder mittel. Pro Widget abschaltbarer **Glas-Container** (im Bearbeiten-Modus „Glas: an/aus“ unten links am Widget oder unter Einstellungen → Widgets) – ohne ist es durchsichtig wie die Uhr.
   Die Uhr zeigt klein und mittig den **Akku des Tablets** (beim Laden mit Blitz, unter 15 % rot).
 - **Mini-Widgets oben**: links **AirPods** (Symbol, Name, verbunden/nicht verbunden), rechts **Licht**
   (leuchtender Farbpunkt, an/aus mit Helligkeit, Mond + Restzeit beim Nacht-Timer, kleiner Power-Knopf). Antippen = große Ansicht.
@@ -20,6 +20,7 @@ mit Widgets für **Uhr** und **Licht**, deinen **Apps** und zwei Mini-Widgets ob
 - **Nothing-OS-Look**: Punktmatrix-Schrift für Uhr, Titel und Zahlen, klare Grotesk für Text.
 - **Selbstreparatur**: hängender Bluetooth-Scan wird neu gestartet, ein stummes Licht neu verbunden, bei wiederholten Bluetooth-Fehlern startet die App Bluetooth neu. Live-Diagnose unter Einstellungen → Geräte.
 - **App-Icons** im Stil Original, Glas-Kachel oder Klar (einfarbig auf Glas).
+- **Sprache**: Deutsch oder Englisch (Einstellungen → Allgemein; anfangs die Systemsprache).
 - **Hintergründe**:
   - *Regen*: dünne Tropfen mit Wind-Böen (Stärke, Wind, Tempo einstellbar)
   - *Schwarz*: schwarz mit weichen grauen schwebenden Blasen
@@ -29,11 +30,11 @@ mit Widgets für **Uhr** und **Licht**, deinen **Apps** und zwei Mini-Widgets ob
   Modell wird am Namen erkannt (z. B. `Govee_H617E_774E`). Für RGBIC-Leisten wie die **H617E** (15 Segmente) gilt der geprüfte Bauplan:
   Write Without Response, Helligkeit 1–100, RGB in 8er-Stufen, nach jedem Verbinden kompletter Segment-Stand (ein Paket pro Farbe), danach nur Änderungen.
   - **Lumen-Oberfläche** (nach der iOS-Vorlage „Lumen Remote“): **3D-LED-Ring** mit 15 Segmenten auf geneigter Ebene
-    (Perspektive, 4 Lagen mit Glow und Glanz), schwebt und schwingt sanft, darunter eine holografische Plattform, die atmet.
+    (Perspektive, 4 Lagen mit Glow und Glanz), schwebt und schwingt sanft.
     Mitte: Power-Knopf (tippen = an/aus, 0,7 s halten = Reset). Ring wischen = Anzahl (Modus „Alle“) bzw. Segment wählen
     („Einzeln“), tippen = setzen/malen, halten = Segment löschen. Dazu HSV-**Farbrad**, **Glow-Helligkeitsleiste**, Modus-Chip
     und ein dunkler Hintergrund in der gewählten Farbe. Schrift: Nunito (abgerundet).
-  - **Widget klein** = Bühne mit Ring · **mittel** = Ring + Farbrad + Helligkeit · **große Ansicht** (Widget gedrückt halten)
+  - **Widget klein** = nur der Ring · **mittel** = Ring + Statuszeile + Farbrad + Helligkeit · **große Ansicht** (Widget gedrückt halten)
     zusätzlich Nacht-Timer, Szenen & Musik.
   - **Nacht-Timer** 30 min · 1 Std · 2 Std: Licht dimmt in der letzten Minute sanft aus, danach (einstellbar) **Bildschirm aus**
     und **offene Apps schließen** (Musik pausiert). Fürs Bildschirm-Ausschalten einmalig das Recht „Bildschirm sperren“ erlauben
@@ -43,7 +44,7 @@ mit Widgets für **Uhr** und **Licht**, deinen **Apps** und zwei Mini-Widgets ob
 
 ## Installation
 
-1. APK laden: GitHub → *Releases* → **Room Launcher v2.7.1** (neueste) → `RoomLauncher.apk`.
+1. APK laden: GitHub → *Releases* → **Room Launcher v2.8.0** (neueste) → `RoomLauncher.apk`.
 2. Auf dem Tablet installieren („Unbekannte Quellen“ erlauben).
 3. App öffnen, Bluetooth-/Standortberechtigung erlauben und den **Standort einschalten** – ohne ihn findet Android 7 keine Bluetooth-LE-Geräte (für die Licht-Suche). Der Launcher zeigt oben einen Hinweis, falls etwas fehlt.
 4. Home-Taste drücken → **Room Launcher** als Standard wählen („Immer“).
@@ -57,7 +58,7 @@ Falls die Farbe nicht reagiert: anderen „Farb-Befehl“ probieren (02 / 0D / 0
 
 ## AirPods
 
-Einmal in den Android-Bluetooth-Einstellungen koppeln. Das Abzeichen oben zeigt Name und Verbindung;
+Einmal in den Android-Bluetooth-Einstellungen koppeln. Das Mini-Widget oben links und das AirPods-Widget (klein/mittel) zeigen Name und Verbindung;
 antippen → Verbinden/Trennen (versteckte A2DP-`connect()`-API, klappt auf Android 7 ohne Root) oder anderes Gerät wählen.
 
 ## Bauen

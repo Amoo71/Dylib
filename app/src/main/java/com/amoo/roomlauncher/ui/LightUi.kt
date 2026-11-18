@@ -142,8 +142,8 @@ private val GLOW_PASSES = arrayOf(1.0f to 0.16f, 0.6f to 0.24f, 0.28f to 0.36f)
 
 /**
  * Der LED-Ring: 15 Segmente auf einer geneigten Ebene (Perspektive 650, Neigung 49°, beim Wischen 17°),
- * je 4 Lagen (Unterseite, Seite, Oberfläche mit Glow, Glanz), darunter die holografische Plattform,
- * in der Mitte der Power-Knopf bzw. kurz die Mittenanzeige.
+ * je 4 Lagen (Unterseite, Seite, Oberfläche mit Glow, Glanz), in der Mitte der Power-Knopf
+ * bzw. kurz die Mittenanzeige.
  *
  * Effizienz: Jede Lage ist ein normaler Bogen, die Projektion steckt in einer Perspektiv-Matrix der
  * Zeichenfläche – die GPU zeichnet, die Bögen selbst bleiben gleich und werden gecacht.
@@ -259,7 +259,6 @@ class LumenRing(context: Context, private val board: Boolean) : View(context) {
     private var r = 0f
     private var capDeg = 0f
     private var gapDeg = 0f
-    private var py = 0f
     private var powerSize = 0f
     private val camera = context.dpf(650)
 
@@ -269,7 +268,6 @@ class LumenRing(context: Context, private val board: Boolean) : View(context) {
         strokeCap = Paint.Cap.ROUND
     }
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val glowP = Paint(Paint.ANTI_ALIAS_FLAG)
     private val haloP = Paint(Paint.ANTI_ALIAS_FLAG)
     private val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
     private val glyph = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -289,7 +287,6 @@ class LumenRing(context: Context, private val board: Boolean) : View(context) {
     private val oval = RectF()
     private val m = Matrix()
     private val vals = FloatArray(9)
-    private var glowKey = 0
     private var haloKey = 0
 
     init {
@@ -314,20 +311,19 @@ class LumenRing(context: Context, private val board: Boolean) : View(context) {
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
-        rr = max(40 * d1, minOf(w * 0.42f, h * 0.55f, (h * 0.58f - 30 * d1) / 0.83f))
+        // Ohne Plattform: Ring mittig, etwas größer
+        rr = max(40 * d1, minOf(w * 0.44f, h * 0.6f))
         cx = w / 2f
-        cy = h * 0.42f
+        cy = h * 0.47f
         lw = max(12 * d1, rr * 0.14f)
         r = rr - lw
         capDeg = Math.toDegrees(((lw / 2) / r).toDouble()).toFloat()
         gapDeg = Math.toDegrees(0.05).toFloat()
-        py = cy + rr * cos(REST) + 18 * d1
         powerSize = min(92 * d1, rr * 0.84f)
         val sc = (powerSize / (92 * d1)).coerceIn(0.6f, 1f)
         num.textSize = 46 * d1 * sc
         capP.textSize = 12 * d1 * sc.coerceAtLeast(0.8f)
         num.setShadowLayer(10 * d1, 0f, 0f, C.white(0.6f))
-        glowKey = 0
         haloKey = 0
     }
 
@@ -406,10 +402,8 @@ class LumenRing(context: Context, private val board: Boolean) : View(context) {
         val twoPi = 2 * PI.toFloat()
         val floatY = if (motion) 5 * d1 * sin(twoPi * t / 6f) else 0f
         val phi = if (motion) SWAY * swayAmp * sin(twoPi * t / 8.4f) else 0f
-        val breathe = if (motion) 0.825f + 0.175f * sin(twoPi * t / 6.8f) else 1f
         val k = 0.3f + 0.7f * brightness
 
-        drawPlatform(canvas, now, k, breathe)
         drawRing(canvas, now, floatY, phi, k)
         drawCenter(canvas, now)
 
@@ -538,37 +532,6 @@ class LumenRing(context: Context, private val board: Boolean) : View(context) {
         }
     }
 
-    /** Holografische Plattform: Glow-Fläche (atmet) + 3 Ellipsen, nicht geneigt. */
-    private fun drawPlatform(canvas: Canvas, now: Long, k: Float, breathe: Float) {
-        val a = shownAccent
-        val on = onT
-        val gw = rr * 2.3f
-        val gh = rr * 0.64f
-        val key = a xor (rr.toInt() shl 4) xor py.toInt()
-        if (key != glowKey) {
-            glowKey = key
-            glowP.shader = RadialGradient(cx, py, gw * 0.62f, a, LightColors.withAlpha(a, 0), Shader.TileMode.CLAMP).apply {
-                setLocalMatrix(Matrix().apply { setScale(1f, gh / gw, cx, py) })
-            }
-        }
-        glowP.alpha = ((0.06f + (0.5f * k - 0.06f) * on) * breathe * 255).roundToInt().coerceIn(0, 255)
-        oval.set(cx - gw * 0.62f, py - gh * 0.62f, cx + gw * 0.62f, py + gh * 0.62f)
-        canvas.drawOval(oval, glowP)
-
-        val tOn = if (powerOnAt >= 0) now - powerOnAt else -1L
-        for (e in 0..2) {
-            val w = rr * ELLIPSE_W[e]
-            val h = w * 0.19f
-            val sc = if (tOn >= 0) 0.8f + 0.2f * easeOut((tOn - 100 - e * 80f) / 600f) else 1f
-            ring.strokeWidth = ELLIPSE_STROKE[e] * d1
-            val onA = ELLIPSE_ON[e] * k
-            val offA = ELLIPSE_OFF[e]
-            ring.color = LightColors.withAlpha(a, offA + (onA - offA) * on)
-            oval.set(cx - w / 2 * sc, py - h / 2 * sc, cx + w / 2 * sc, py + h / 2 * sc)
-            canvas.drawOval(oval, ring)
-        }
-    }
-
     /** Power-Knopf (bewegt sich nicht mit) bzw. die Mittenanzeige. */
     private fun drawCenter(canvas: Canvas, now: Long) {
         val vis = 1f - midAlpha
@@ -652,7 +615,7 @@ class LumenRing(context: Context, private val board: Boolean) : View(context) {
         val now = SystemClock.uptimeMillis()
         if (n != midNum && midAlpha > 0.1f) midPopAt = now
         midNum = n
-        midCap = caption
+        midCap = com.amoo.roomlauncher.Lang.auto(caption)
         midUntil = now + 900
         invalidate()
     }
@@ -832,11 +795,6 @@ class LumenRing(context: Context, private val board: Boolean) : View(context) {
     }
 }
 
-private val ELLIPSE_W = floatArrayOf(1.80f, 1.38f, 0.96f)
-private val ELLIPSE_STROKE = floatArrayOf(2f, 1.2f, 1.2f)
-private val ELLIPSE_ON = floatArrayOf(0.55f, 0.35f, 0.20f)
-private val ELLIPSE_OFF = floatArrayOf(0.11f, 0.07f, 0.04f)
-
 // ------------------------------------------------------------------ Modus-Chip
 
 /** Glas-Kapsel "Alle" (gestrichelter Kreis) / "Einzeln" (Tipp-Symbol). Tippen wechselt den Modus. */
@@ -869,7 +827,7 @@ class ModeChip(context: Context, var onToggle: () -> Unit) : View(context) {
     }
     private val rect = RectF()
 
-    private val label get() = if (single) "Einzeln" else "Alle"
+    private val label get() = com.amoo.roomlauncher.Lang.auto(if (single) "Einzeln" else "Alle")
 
     init {
         isClickable = true
@@ -937,7 +895,8 @@ class StatusDot(context: Context) : View(context) {
  * Neon-Rand und Regler in der gewählten Farbe. Ziehen auch außerhalb des Rads möglich.
  */
 class HueWheel(context: Context, private val wheelDp: Int, var onColor: (Int) -> Unit = {}) : View(context) {
-    private val pad = context.dpf(20)
+    /** Rand für Regler (16 × 1,3) + Glow (10) – sonst wird er am Kartenrand abgeschnitten. */
+    private val pad = context.dpf(32)
     private var hue = 0.97f * 360f
     private var sat = 0.82f
     private var dragging = false
@@ -1322,10 +1281,11 @@ class LumenCard(context: Context, private val glass: Boolean, radiusDp: Float = 
 fun Context.lumenPanel(): LinearLayout = column().apply {
     background = RoundDrawable(context, 26f, C.white(0.08f), C.white(0.12f))
     setPadding(dp(18), dp(14), dp(18), dp(14))
+    clipToPadding = false // Glow von Farbrad und Reglern darf in den Rand reichen
 }
 
 /** Panel-Titel: 12, fett, Großbuchstaben, gesperrt. */
-fun Context.lumenTitle(text: String): android.widget.TextView = label(text.uppercase(Locale.GERMANY), 12f, C.white(0.6f)).apply {
+fun Context.lumenTitle(text: String): android.widget.TextView = label(com.amoo.roomlauncher.Lang.auto(text).uppercase(com.amoo.roomlauncher.Lang.locale), 12f, C.white(0.6f)).apply {
     typeface = Fonts.roundBold
     letterSpacing = 0.15f
 }

@@ -15,7 +15,7 @@ class CommandActivity : Activity() {
         val app = application as RoomApp
         if (BtPerms.granted(this)) app.startBluetooth()
         val uri = intent?.data
-        if (uri == null || !app.govee.command(uri)) toast("Unbekannter Befehl: $uri")
+        if (uri == null || !app.govee.command(uri)) toast("${tr("Unbekannter Befehl", "Unknown command")}: $uri")
         finish()
     }
 }

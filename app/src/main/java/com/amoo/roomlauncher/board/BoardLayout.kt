@@ -482,7 +482,7 @@ class BoardLayout(
         return RectF(cx - r - dp(6), cy - r - dp(6), cx + r + dp(6), cy + r + dp(6))
     }
 
-    private fun resizeText(label: String) = "Größe: $label"
+    private fun resizeText(label: String) = com.amoo.roomlauncher.Lang.auto("Größe") + ": " + com.amoo.roomlauncher.Lang.auto(label)
 
     private fun resizeRect(v: View, label: String): RectF {
         val tw = badgeText.measureText(resizeText(label))
@@ -491,7 +491,7 @@ class BoardLayout(
         return RectF(right - tw - dp(24), bottom - dp(28), right, bottom)
     }
 
-    private fun glassText(on: Boolean) = if (on) "Glas: an" else "Glas: aus"
+    private fun glassText(on: Boolean) = com.amoo.roomlauncher.Lang.auto(if (on) "Glas: an" else "Glas: aus")
 
     /** Knopf unten links: Glas-Container an/aus. */
     private fun glassRect(v: View, on: Boolean): RectF {

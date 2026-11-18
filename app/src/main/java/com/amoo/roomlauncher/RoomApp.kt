@@ -55,6 +55,7 @@ class RoomApp : Application() {
         CrashLog.install(this)
         com.amoo.roomlauncher.ui.Fonts.init(this)
         prefs = Prefs(this)
+        Lang.init(prefs)
         ble = BleHub(this)
         // Bekannte Leiste (H617E aus dem Bauplan) direkt eintragen → verbindet sofort über die MAC, ohne Suche
         if (prefs.goveeAddress == null && !prefs.goveeDefaultApplied) {

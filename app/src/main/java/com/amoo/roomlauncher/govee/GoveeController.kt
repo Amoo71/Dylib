@@ -600,7 +600,11 @@ class GoveeController(
         if (_connection.value == Connection.CONNECTED) return "verbunden"
         val s = hub.lastSeen(prefs.goveeAddress) ?: return "kein Signal von der Leiste – aus, zu weit weg oder mit der Govee-App am Handy verbunden?"
         val age = (System.currentTimeMillis() - s.at) / 1000
-        return if (age < 30) "Leiste funkt (${s.rssi} dBm, vor $age s)" else "zuletzt gehört vor $age s (${s.rssi} dBm)"
+        return if (age < 30) {
+            com.amoo.roomlauncher.tr("Leiste funkt (${s.rssi} dBm, vor $age s)", "strip is transmitting (${s.rssi} dBm, $age s ago)")
+        } else {
+            com.amoo.roomlauncher.tr("zuletzt gehört vor $age s (${s.rssi} dBm)", "last heard $age s ago (${s.rssi} dBm)")
+        }
     }
 
     /** Bluetooth wurde eingeschaltet: veraltete Meldung weg und sofort verbinden. */

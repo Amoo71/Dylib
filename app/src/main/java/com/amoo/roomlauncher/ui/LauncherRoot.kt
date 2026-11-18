@@ -222,9 +222,11 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
                 // Ein fehlerhaftes Widget darf nie den ganzen Launcher abstürzen lassen
                 try {
                     when (val item = items.first { it.id == cell.id }) {
-                        is BoardItem.Widget -> context.widgetView(item.kind, item.size, app.govee, item.glass) {
-                            if (!editMode) showOverlay(context.goveeSheet(app.govee, app.prefs) { closeOverlay() })
-                        }
+                        is BoardItem.Widget -> context.widgetView(
+                            item.kind, item.size, app.govee, app.airpods, item.glass,
+                            onOpenLight = { if (!editMode) showOverlay(context.goveeSheet(app.govee, app.prefs) { closeOverlay() }) },
+                            onOpenAirPods = { if (!editMode) showOverlay(context.airPodsSheet(app.airpods, app.prefs) { closeOverlay() }) },
+                        )
                         is BoardItem.App -> {
                             val entry = appMap[item.component]
                             context.appIcon(entry, style) { if (!editMode && entry != null) app.apps.launch(entry) }
@@ -355,6 +357,7 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
         val item = app.board.items.value.firstOrNull { it.id == id } as? BoardItem.Widget ?: return false
         val sheet = when (item.kind) {
             com.amoo.roomlauncher.board.WidgetKind.LIGHT -> context.goveeSheet(app.govee, app.prefs) { closeOverlay() }
+            com.amoo.roomlauncher.board.WidgetKind.AIRPODS -> context.airPodsSheet(app.airpods, app.prefs) { closeOverlay() }
             com.amoo.roomlauncher.board.WidgetKind.CLOCK -> context.clockSheet(
                 onEdit = {
                     closeOverlay()
@@ -403,10 +406,10 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
             val on = g.power.value
             val c = g.connection.value
             state.text = when (c) {
-                com.amoo.roomlauncher.govee.GoveeController.Connection.NOT_CONFIGURED -> "nicht eingerichtet"
+                com.amoo.roomlauncher.govee.GoveeController.Connection.NOT_CONFIGURED -> com.amoo.roomlauncher.Lang.auto("nicht eingerichtet")
                 com.amoo.roomlauncher.govee.GoveeController.Connection.CONNECTED ->
-                    if (on) "an · ${(g.brightness.value * 100).toInt().coerceAtLeast(1)}%" else "aus"
-                else -> "sucht…"
+                    if (on) com.amoo.roomlauncher.tr("an", "on") + " · ${(g.brightness.value * 100).toInt().coerceAtLeast(1)}%" else com.amoo.roomlauncher.tr("aus", "off")
+                else -> com.amoo.roomlauncher.Lang.auto("sucht…")
             }
             state.setTextColor(if (on && c == com.amoo.roomlauncher.govee.GoveeController.Connection.CONNECTED) C.TEXT else C.TEXT2)
             val col = if (g.segmented.value) LightColors.average(g.segments.value) ?: g.color.value else g.color.value
@@ -450,11 +453,11 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
             val n = app.airpods.deviceName.value
             val c = app.airpods.audioConnected.value
             name.text = n ?: "AirPods"
-            state.text = when {
+            state.text = com.amoo.roomlauncher.Lang.auto(when {
                 n == null -> "nicht gekoppelt"
                 c -> "verbunden"
                 else -> "nicht verbunden"
-            }
+            })
             state.setTextColor(if (c) C.TEXT else C.TEXT2)
             (dot.background as? RoundDrawable)?.color = if (c) C.GREEN else C.TEXT3
             dot.invalidate()
