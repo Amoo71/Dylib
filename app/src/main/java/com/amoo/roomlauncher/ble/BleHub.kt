@@ -80,13 +80,31 @@ class BleHub(private val context: Context) {
     /** [fast] = schneller Suchmodus (z. B. beim Einrichten), sonst stromsparend. */
     fun add(l: Listener, fast: Boolean = false) {
         if (entries.none { it.listener === l }) entries.add(Entry(l, fast))
-        handler.post { sync() }
+        scheduleSync()
     }
 
     fun remove(l: Listener) {
         entries.removeAll { it.listener === l }
-        handler.post { sync() }
+        scheduleSync()
     }
+
+    /** Mehrere Änderungen kurz hintereinander (z. B. "Erneut suchen") → nur ein Abgleich, nur ein Neustart. */
+    private val syncRunnable = Runnable { sync() }
+
+    private fun scheduleSync(delayMs: Long = 300) {
+        handler.removeCallbacks(syncRunnable)
+        handler.postDelayed(syncRunnable, delayMs)
+    }
+
+    /** Schneller Modus bleibt nach dem letzten schnellen Nutzer noch kurz an – verhindert Hin-und-Her-Neustarts. */
+    private var fastUntil = 0L
+
+    /** Zuletzt gesehene Geräte (Adresse → Signal), z. B. um zu zeigen, ob die Leiste überhaupt funkt. */
+    class Seen(val rssi: Int, val at: Long, val name: String?)
+
+    private val seen = java.util.concurrent.ConcurrentHashMap<String, Seen>()
+
+    fun lastSeen(address: String?): Seen? = address?.let { seen[it.uppercase()] }
 
     fun restart() {
         handler.post {
@@ -103,18 +121,30 @@ class BleHub(private val context: Context) {
             stopInternal()
             return
         }
-        val wantFast = entries.any { it.fast }
-        if (callback != null && wantFast == runningFast) return
-        stopInternal()
-        val scanner = adapter?.takeIf { runCatching { it.isEnabled }.getOrDefault(false) }?.bluetoothLeScanner ?: return
-
-        // Schutz vor Androids "zu viele Scans"-Sperre
         val now = System.currentTimeMillis()
-        while (starts.isNotEmpty() && now - starts.first() > 30_000) starts.removeFirst()
-        if (starts.size >= 4) {
-            handler.postDelayed({ sync() }, 30_000 - (now - starts.first()) + 500)
+        var wantFast = entries.any { it.fast }
+        if (wantFast) {
+            fastUntil = now + 5_000
+        } else if (runningFast && now < fastUntil) {
+            // noch kurz schnell weiterscannen, statt sofort neu zu starten
+            wantFast = true
+            scheduleSync(fastUntil - now + 50)
+        }
+        if (callback != null && wantFast == runningFast) return
+        val scanner = adapter?.takeIf { runCatching { it.isEnabled }.getOrDefault(false) }?.bluetoothLeScanner ?: run {
+            stopInternal()
             return
         }
+
+        // Schutz vor Androids "zu viele Scans"-Sperre (5 Starts / 30 s): lieber den laufenden Scan behalten
+        // (auch im "falschen" Modus) und später umschalten, als gar nicht zu scannen.
+        while (starts.isNotEmpty() && now - starts.first() > 30_000) starts.removeFirst()
+        if (starts.size >= 4) {
+            com.amoo.roomlauncher.L.i("BLE-Scan: Neustart-Sperre aktiv, laufender Scan bleibt")
+            scheduleSync(30_000 - (now - starts.first()) + 500)
+            return
+        }
+        stopInternal()
         starts.addLast(now)
 
         val cb = object : ScanCallback() {
@@ -174,9 +204,14 @@ class BleHub(private val context: Context) {
     }
 
     private fun dispatch(r: ScanResult) {
-        lastResultAt = System.currentTimeMillis()
+        val now = System.currentTimeMillis()
+        lastResultAt = now
         failures = 0
         val rec = r.scanRecord?.bytes
+        val addr = r.device.address.uppercase()
+        val name = r.scanRecord?.deviceName ?: seen[addr]?.name
+        seen[addr] = Seen(r.rssi, now, name)
+        if (seen.size > 400) seen.entries.removeAll { now - it.value.at > 60_000 }
         for (e in entries) e.listener.onAdvert(r.device, r.rssi, rec)
     }
 

@@ -486,6 +486,17 @@ class GoveeController(
         }
     }
 
+    /**
+     * Hört die Tablet-Suche die Leiste? (Signalstärke + Alter.) Funkt sie gar nicht, ist sie aus,
+     * außer Reichweite – oder noch mit der Govee-App am Handy verbunden (dann sendet sie nicht).
+     */
+    fun signalInfo(): String {
+        if (_connection.value == Connection.CONNECTED) return "verbunden"
+        val s = hub.lastSeen(prefs.goveeAddress) ?: return "kein Signal von der Leiste – aus, zu weit weg oder mit der Govee-App am Handy verbunden?"
+        val age = (System.currentTimeMillis() - s.at) / 1000
+        return if (age < 30) "Leiste funkt (${s.rssi} dBm, vor $age s)" else "zuletzt gehört vor $age s (${s.rssi} dBm)"
+    }
+
     /** Bluetooth wurde eingeschaltet: veraltete Meldung weg und sofort verbinden. */
     fun onBluetoothOn() {
         if (_lastError.value == BT_OFF) _lastError.value = null
@@ -724,7 +735,8 @@ class GoveeController(
 
     private val scanListener = BleHub.Listener { device, rssi, record ->
         val adv = BleHub.parse(record)
-        val name = adv.name ?: runCatching { device.name }.getOrNull()
+        val own = device.address.equals(prefs.goveeAddress, true)
+        val name = adv.name ?: runCatching { device.name }.getOrNull() ?: (if (own) prefs.goveeName ?: device.address else null)
         if (name.isNullOrBlank()) return@Listener
         val f = FoundDevice(name, device.address, rssi, isLikelyGovee(name))
         _found.update { list ->

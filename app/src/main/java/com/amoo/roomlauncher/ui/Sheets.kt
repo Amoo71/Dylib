@@ -647,6 +647,7 @@ private fun Context.diagnosis(app: RoomApp): String {
         app.ble.lastError?.let { appendLine("    ↳ $it") }
         appendLine("${ok(g == GoveeController.Connection.CONNECTED)}  Licht: ${g.name.lowercase()}${app.govee.deviceName.value?.let { " ($it)" } ?: ""}")
         app.govee.lastError.value?.let { appendLine("    ↳ $it") }
+        if (app.prefs.goveeAddress != null) appendLine("    ↳ Signal: ${app.govee.signalInfo()}")
         appendLine("${ok(a.audioConnected.value)}  AirPods Audio ${if (a.audioConnected.value) "verbunden" else "nicht verbunden"}")
         val learned = app.prefs.airpodsModelId != null
         appendLine(
@@ -805,6 +806,24 @@ fun Context.goveeSheet(govee: GoveeController, prefs: Prefs, onDismiss: () -> Un
         err.visibility = if (it == null) View.GONE else View.VISIBLE
     }
     root.addView(err, lp().margins(t = dp(4)))
+    // Funkt die Leiste? – sekündlich aktualisiert, solange sie nicht verbunden ist
+    val signal = label("", 12.5f, C.TEXT3, lines = 2)
+    val signalTick = object : Runnable {
+        override fun run() {
+            val connected = govee.connection.value == GoveeController.Connection.CONNECTED
+            val configured = govee.connection.value != GoveeController.Connection.NOT_CONFIGURED
+            signal.visibility = if (!connected && configured) View.VISIBLE else View.GONE
+            signal.text = "Signal: " + govee.signalInfo()
+            signal.postDelayed(this, 1000)
+        }
+    }
+    signal.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+        override fun onViewAttachedToWindow(v: View) = signalTick.run()
+        override fun onViewDetachedFromWindow(v: View) {
+            v.removeCallbacks(signalTick)
+        }
+    })
+    root.addView(signal, lp().margins(t = dp(4)))
 
     // ---- Steuerung: nur das Nötige
     val control = column()
