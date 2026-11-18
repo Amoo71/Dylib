@@ -96,20 +96,28 @@ private val DATE = SimpleDateFormat("d. MMMM yyyy", Locale.GERMANY)
 /** Uhr ohne Kasten – Punktmatrix-Ziffern schweben frei über dem Hintergrund. */
 fun Context.clockWidget(size: WidgetSize): View {
     val small = size == WidgetSize.S
+    // Alles mittig – waagerecht und senkrecht
     val card = column().apply {
-        gravity = Gravity.CENTER_VERTICAL
+        gravity = Gravity.CENTER
         setPadding(dp(8), dp(8), dp(8), dp(8))
     }
-    fun TextView.shadow() = apply { setShadowLayer(dpf(10), 0f, dpf(2), 0x8C000000.toInt()) }
+    fun TextView.shadow() = apply {
+        setShadowLayer(dpf(10), 0f, dpf(2), 0x8C000000.toInt())
+        gravity = Gravity.CENTER
+    }
     val sp = if (small) 66f else 112f
     val day = label("", if (small) 15f else 18f, C.RED, bold = true).shadow()
     val hours = label("", sp, display = true).shadow()
     val minutes = label("", sp, display = true).shadow()
-    val time = row(hours, ColonDots(this, sp), minutes)
+    val time = row(hours, ColonDots(this, sp), minutes).apply { gravity = Gravity.CENTER }
     val date = label("", if (small) 14f else 17f, C.TEXT2).shadow()
-    card.addView(day)
-    card.addView(time, lp(WRAP, WRAP).margins(t = dp(4), b = dp(6)))
-    card.addView(date)
+    card.addView(day, lp(MATCH, WRAP))
+    card.addView(time, lp(WRAP, WRAP).apply {
+        gravity = Gravity.CENTER_HORIZONTAL
+        topMargin = dp(4)
+        bottomMargin = dp(6)
+    })
+    card.addView(date, lp(MATCH, WRAP))
     val tick = object : Runnable {
         override fun run() {
             val now = Date()
@@ -276,25 +284,9 @@ fun Context.lightWidget(size: WidgetSize, govee: GoveeController, onOpen: () -> 
             spacingDp = 12,
         ),
     )
-    // Segmente: nur bei RGBIC-Leisten
+    // Segmente: nur bei RGBIC-Leisten (Alle/Einzeln umschalten im Panel)
     val segBox = column()
-    if (!small) {
-        val info = label("", 12.5f, C.TEXT2)
-        fun refreshInfo() {
-            info.text = if (govee.segMode.value == GoveeController.SegMode.ALL) {
-                "${govee.count.value}/15 Segmente"
-            } else {
-                "Tippen = malen · Halten = löschen"
-            }
-        }
-        info.bind(govee.count) { refreshInfo() }
-        info.bind(govee.segMode) { refreshInfo() }
-        segBox.addView(
-            row(info.also { it.layoutParams = lp(0, WRAP, 1f) }, segModeSwitch(govee).also { it.layoutParams = lp(dp(170), WRAP) }),
-            lp().margins(t = dp(10)),
-        )
-    }
-    segBox.addView(segmentBar(govee, if (small) 26 else 30), lp(MATCH, dp(if (small) 26 else 30)).margins(t = dp(if (small) 10 else 8)))
+    segBox.addView(segmentBar(govee, if (small) 26 else 32), lp(MATCH, dp(if (small) 26 else 32)).margins(t = dp(if (small) 10 else 14)))
     segBox.bind(govee.segmented) { segBox.visibility = if (it) View.VISIBLE else View.GONE }
     body.addView(segBox)
     body.addView(colorPicker(govee, if (small) 30 else 34), lp().margins(t = dp(if (small) 10 else 12)))

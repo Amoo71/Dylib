@@ -64,6 +64,7 @@ class RoomApp : Application() {
         iconStyle = MutableStateFlow(prefs.iconStyle)
         smooth = MutableStateFlow(prefs.smooth)
         apps.start()
+        watchBluetooth()
     }
 
     fun startBluetooth() {
@@ -71,16 +72,34 @@ class RoomApp : Application() {
         bluetoothStarted = true
         govee.start()
         airpods.start()
+    }
+
+    /** Bluetooth an/aus – live, damit Hinweise und Fehlermeldungen nie veralten. */
+    val bluetoothOn = MutableStateFlow(false)
+
+    private fun adapterEnabled(): Boolean =
+        runCatching { (getSystemService(BLUETOOTH_SERVICE) as? android.bluetooth.BluetoothManager)?.adapter?.isEnabled == true }
+            .getOrDefault(false)
+
+    /** Beobachtet den Bluetooth-Zustand ab App-Start (nicht erst, wenn die Geräte gestartet sind). */
+    private fun watchBluetooth() {
+        bluetoothOn.value = adapterEnabled()
         registerSystemReceiver(
             object : BroadcastReceiver() {
                 override fun onReceive(context: Context, intent: Intent) {
                     when (intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, -1)) {
                         BluetoothAdapter.STATE_ON -> {
-                            ble.restart()
-                            govee.reconnectNow()
-                            airpods.onBluetoothOn()
+                            bluetoothOn.value = true
+                            if (bluetoothStarted) {
+                                ble.restart()
+                                govee.onBluetoothOn()
+                                airpods.onBluetoothOn()
+                            }
                         }
-                        BluetoothAdapter.STATE_OFF -> ble.stop()
+                        BluetoothAdapter.STATE_OFF -> {
+                            bluetoothOn.value = false
+                            ble.stop()
+                        }
                     }
                 }
             },

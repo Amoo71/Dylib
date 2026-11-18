@@ -61,7 +61,11 @@ class MainActivity : Activity() {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus) hideSystemBars()
+        if (hasFocus) {
+            hideSystemBars()
+            // z. B. Bluetooth/Standort über die Schnelleinstellungen geändert → Hinweise neu prüfen
+            root.refreshBanner()
+        }
     }
 
     override fun onDestroy() {

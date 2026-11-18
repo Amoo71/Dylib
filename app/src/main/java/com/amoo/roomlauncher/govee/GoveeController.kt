@@ -383,6 +383,7 @@ class GoveeController(
             scheduleReconnect()
             return
         }
+        if (_lastError.value == BT_OFF) _lastError.value = null
         val device = try {
             a.getRemoteDevice(address)
         } catch (e: IllegalArgumentException) {
@@ -481,6 +482,12 @@ class GoveeController(
             delay(wait)
             if (_connection.value == Connection.DISCONNECTED) connect()
         }
+    }
+
+    /** Bluetooth wurde eingeschaltet: veraltete Meldung weg und sofort verbinden. */
+    fun onBluetoothOn() {
+        if (_lastError.value == BT_OFF) _lastError.value = null
+        reconnectNow()
     }
 
     /** Sofort (neu) verbinden – Knopf "Neu verbinden" oder Selbstheilung. */
@@ -721,9 +728,10 @@ class GoveeController(
 
     fun startScan() {
         if (adapter?.isEnabled != true) {
-            _lastError.value = "Bluetooth ist aus"
+            _lastError.value = BT_OFF
             return
         }
+        if (_lastError.value == BT_OFF) _lastError.value = null
         stopScan()
         _found.value = emptyList()
         _scanning.value = true
@@ -741,6 +749,8 @@ class GoveeController(
     }
 
     companion object {
+        private const val BT_OFF = "Bluetooth ist aus"
+
         val SERVICE_UUID: UUID = UUID.fromString("00010203-0405-0607-0809-0a0b0c0d1910")
         val WRITE_UUID: UUID = UUID.fromString("00010203-0405-0607-0809-0a0b0c0d2b11")
         val NOTIFY_UUID: UUID = UUID.fromString("00010203-0405-0607-0809-0a0b0c0d2b10")

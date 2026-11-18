@@ -782,9 +782,30 @@ private fun MainActivity.exitTab(app: RoomApp, onDismiss: () -> Unit): View {
 fun Context.goveeSheet(govee: GoveeController, prefs: Prefs, onDismiss: () -> Unit): Sheet {
     val sheet = Sheet(this, "Licht", true, onDismiss)
     val root = column()
-    locationHint()?.let { root.addView(it, lp().margins(b = dp(14))) }
 
-    // ---- Steuerung (nur wenn ein Licht eingerichtet ist)
+    // ---- Status (eine Zeile) + Fehlermeldung, falls es eine gibt
+    val status = label("", 14f, C.TEXT2)
+    fun refreshStatus() {
+        val name = govee.model.value ?: govee.deviceName.value ?: "Licht"
+        status.text = "$name · " + when (govee.connection.value) {
+            GoveeController.Connection.CONNECTED -> "verbunden"
+            GoveeController.Connection.CONNECTING -> "verbinde…"
+            GoveeController.Connection.DISCONNECTED -> "getrennt"
+            GoveeController.Connection.NOT_CONFIGURED -> "nicht eingerichtet"
+        }
+    }
+    status.bind(govee.deviceName) { refreshStatus() }
+    status.bind(govee.model) { refreshStatus() }
+    status.bind(govee.connection) { refreshStatus() }
+    root.addView(status)
+    val err = label("", 13f, C.ORANGE, lines = 2)
+    err.bind(govee.lastError) {
+        err.text = it.orEmpty()
+        err.visibility = if (it == null) View.GONE else View.VISIBLE
+    }
+    root.addView(err, lp().margins(t = dp(4)))
+
+    // ---- Steuerung: nur das Nötige
     val control = column()
     val pct = label("", 15f, C.TEXT2, display = true)
     pct.bind(govee.brightness) { pct.text = "${(it * 100).roundToInt()}%" }
@@ -792,83 +813,53 @@ fun Context.goveeSheet(govee: GoveeController, prefs: Prefs, onDismiss: () -> Un
         addView(pct)
         addView(brightnessSlider(govee, 48), lp().margins(t = dp(8)))
     }
-    control.addView(row(powerButton(govee, 76), bright.also { it.layoutParams = lp(0, WRAP, 1f) }, spacingDp = 18))
-    control.section("Segmente")
-    val segInfo = label("", 13f, C.TEXT3, lines = 2)
+    control.addView(row(powerButton(govee, 76), bright.also { it.layoutParams = lp(0, WRAP, 1f) }, spacingDp = 18), lp().margins(t = dp(16)))
+    val segInfo = label("", 12.5f, C.TEXT3)
     fun refreshSegInfo() {
         segInfo.text = if (govee.segMode.value == GoveeController.SegMode.ALL) {
-            "${govee.count.value} von 15 Segmenten leuchten – Leiste antippen/ziehen ändert die Anzahl, die Farbe färbt alle leuchtenden."
+            "${govee.count.value}/15 Segmente"
         } else {
-            "Farbe unten = Pinsel. Segment antippen oder darüberwischen = malen, Segment halten = ausschalten."
+            "Tippen = malen · Halten = löschen"
         }
     }
     segInfo.bind(govee.count) { refreshSegInfo() }
     segInfo.bind(govee.segMode) { refreshSegInfo() }
     val segBox = column().apply {
-        addView(segModeSwitch(govee, 42, 14f))
-        addView(segmentBar(govee, 40), lp(MATCH, dp(40)).margins(t = dp(14)))
-        addView(segInfo, lp().margins(t = dp(8)))
+        addView(row(segInfo.also { it.layoutParams = lp(0, WRAP, 1f) }, segModeSwitch(govee, 38, 13.5f).also { it.layoutParams = lp(dp(220), WRAP) }))
+        addView(segmentBar(govee, 40), lp(MATCH, dp(40)).margins(t = dp(10)))
     }
     segBox.bind(govee.segmented) { segBox.visibility = if (it) View.VISIBLE else View.GONE }
-    control.addView(segBox)
-    control.section("Farbe")
-    control.addView(colorPicker(govee, 40))
-    control.addView(presetRow(govee, 40, null), lp().margins(t = dp(14)))
-    control.addView(label("Power-Knopf 0,7 s halten = Reset (an, alle Segmente aus).", 12.5f, C.TEXT3), lp().margins(t = dp(12)))
-    control.section("Szenen")
-    control.addView(hScroll(*GoveeController.SCENES.map { (id, l) -> Chip(this, l) { govee.setScene(id) } }.toTypedArray()))
-    control.section("Musik-Modus (Mikrofon am Controller)")
-    control.addView(hScroll(*GoveeController.MUSIC_MODES.map { (id, l) -> Chip(this, l) { govee.setMusicMode(id) } }.toTypedArray()))
+    control.addView(segBox, lp().margins(t = dp(20)))
+    control.addView(colorPicker(govee, 40), lp().margins(t = dp(16)))
+    control.addView(presetRow(govee, 40, null), lp().margins(t = dp(12)))
+
+    // Szenen & Musik: eingeklappt
+    val more = column().apply { visibility = View.GONE }
+    more.section("Szenen")
+    more.addView(hScroll(*GoveeController.SCENES.map { (id, l) -> Chip(this, l) { govee.setScene(id) } }.toTypedArray()))
+    more.section("Musik (Mikrofon am Controller)")
+    more.addView(hScroll(*GoveeController.MUSIC_MODES.map { (id, l) -> Chip(this, l) { govee.setMusicMode(id) } }.toTypedArray()))
+    val moreToggle = Chip(this, "Szenen & Musik ▾") { c ->
+        val open = more.visibility != View.VISIBLE
+        more.visibility = if (open) View.VISIBLE else View.GONE
+        c.text = if (open) "Szenen & Musik ▴" else "Szenen & Musik ▾"
+    }
+    control.addView(moreToggle, lp(WRAP, WRAP).margins(t = dp(18)))
+    control.addView(more)
     root.addView(control)
-    control.bind(govee.connection) { c -> control.visibility = if (c == GoveeController.Connection.NOT_CONFIGURED) View.GONE else View.VISIBLE }
 
-    // ---- Status
-    root.section("Gerät")
-    val current = label("", 15f, C.TEXT2)
-    fun refreshCurrent() {
-        current.text = "Aktuell: ${govee.deviceName.value ?: "keins"} · " + when (govee.connection.value) {
-            GoveeController.Connection.CONNECTED -> "verbunden"
-            GoveeController.Connection.CONNECTING -> "verbinde…"
-            GoveeController.Connection.DISCONNECTED -> "getrennt"
-            GoveeController.Connection.NOT_CONFIGURED -> "nicht eingerichtet"
-        }
-    }
-    current.bind(govee.deviceName) { refreshCurrent() }
-    current.bind(govee.connection) { refreshCurrent() }
-    root.addView(current)
-    val modelInfo = label("", 13f, C.TEXT3, lines = 2)
-    fun refreshModel() {
-        val m = govee.model.value
-        modelInfo.text = when {
-            m == null -> "Modell unbekannt – Farb-Befehl unten ggf. anpassen."
-            govee.segmented.value -> "Erkannt: $m · RGBIC-Streifen mit 15 Segmenten"
-            else -> "Erkannt: $m"
-        }
-    }
-    modelInfo.bind(govee.model) { refreshModel() }
-    modelInfo.bind(govee.segmented) { refreshModel() }
-    root.addView(modelInfo, lp().margins(t = dp(4)))
-    val err = label("", 13f, C.ORANGE, lines = 2)
-    err.bind(govee.lastError) {
-        err.text = it.orEmpty()
-        err.visibility = if (it == null) View.GONE else View.VISIBLE
-    }
-    root.addView(err, lp().margins(t = dp(6)))
-    root.addView(
-        row(glassButton("Neu verbinden") { govee.reconnectNow() }, glassButton("Licht suchen") { govee.startScan() }, spacingDp = 12),
-        lp().margins(t = dp(10)),
+    // ---- Einrichtung / anderes Licht (nur bei Bedarf sichtbar)
+    val setup = column()
+    locationHint()?.let { setup.addView(it, lp().margins(t = dp(14))) }
+    setup.addView(
+        label("Govee-App auf dem Handy schließen – das Licht erlaubt nur eine Verbindung gleichzeitig.", 13f, C.TEXT3, lines = 2),
+        lp().margins(t = dp(14)),
     )
-    root.addView(
-        label("Wichtig: Govee-App auf dem Handy schließen – das Licht erlaubt nur eine Bluetooth-Verbindung gleichzeitig.", 13f, C.TEXT3, lines = 2),
-        lp().margins(t = dp(10)),
-    )
-
-    // ---- Suchergebnisse
     val head = label("", 16f, bold = true)
-    head.bind(govee.scanning) { head.text = if (it) "Suche Geräte…" else if (govee.found.value.isEmpty()) "" else "Gefundene Geräte" }
-    root.addView(head, lp().margins(t = dp(14)))
+    head.bind(govee.scanning) { head.text = if (it) "Suche Lichter…" else if (govee.found.value.isEmpty()) "" else "Gefundene Lichter" }
+    setup.addView(head, lp().margins(t = dp(12)))
     val list = column()
-    root.addView(list, lp().margins(t = dp(8)))
+    setup.addView(list, lp().margins(t = dp(8)))
     list.bind(govee.found) { found ->
         list.removeAllViews()
         if (found.isEmpty() && govee.scanning.value) list.addView(label("Ist das Licht an und in der Nähe?", 14f, C.TEXT3, lines = 2))
@@ -880,22 +871,46 @@ fun Context.goveeSheet(govee: GoveeController, prefs: Prefs, onDismiss: () -> Un
             list.addView(item, lp().margins(b = dp(8)))
         }
     }
+    setup.addView(glassButton("Erneut suchen") { govee.startScan() }, lp(WRAP, WRAP).margins(t = dp(4)))
 
-    root.section("Farb-Befehl (modellabhängig)")
+    // Technik-Optionen nur, wenn das Modell NICHT automatisch erkannt wurde
+    val manual = column()
+    manual.section("Farb-Befehl")
     val modes = listOf(0x02 to "Standard (02)", 0x0D to "Neuere H6xxx (0D)", 0x0B to "0B", 0x15 to "Segmente (15)")
-    root.addView(chipGroup(modes.map { it.second }, modes.indexOfFirst { it.first == prefs.goveeColorMode }) { i ->
+    manual.addView(chipGroup(modes.map { it.second }, modes.indexOfFirst { it.first == prefs.goveeColorMode }) { i ->
         govee.setColorMode(modes[i].first)
     })
-    root.section("Helligkeitsskala")
-    root.addView(chipGroup(listOf("0–255", "0–100"), if (prefs.goveeBrightness100) 1 else 0) { i ->
+    manual.section("Helligkeitsskala")
+    manual.addView(chipGroup(listOf("0–255", "0–100"), if (prefs.goveeBrightness100) 1 else 0) { i ->
         prefs.goveeBrightness100 = i == 1
         govee.resendState()
     })
-    root.addView(
-        label("Reagiert die Farbe nicht, anderen Farb-Befehl probieren. Ist die Helligkeit nur ganz hell/dunkel, Skala wechseln.", 13f, C.TEXT3, lines = 2),
-        lp().margins(t = dp(12)),
+    manual.addView(label("Modell unbekannt: Reagiert die Farbe nicht, anderen Farb-Befehl probieren.", 12.5f, C.TEXT3, lines = 2), lp().margins(t = dp(8)))
+    manual.bind(govee.model) { m -> manual.visibility = if (m == null) View.VISIBLE else View.GONE }
+    setup.addView(manual)
+    root.addView(setup)
+
+    // ---- Unten: Neu verbinden / Anderes Licht
+    var setupOpen = false
+    fun refreshSetup() {
+        val none = govee.connection.value == GoveeController.Connection.NOT_CONFIGURED
+        control.visibility = if (none) View.GONE else View.VISIBLE
+        setup.visibility = if (none || setupOpen) View.VISIBLE else View.GONE
+    }
+    val footer = row(
+        glassButton("Neu verbinden") { govee.reconnectNow() },
+        glassButton("Anderes Licht") {
+            setupOpen = !setupOpen
+            if (setupOpen) govee.startScan() else govee.stopScan()
+            refreshSetup()
+        },
+        spacingDp = 12,
     )
+    footer.bind(govee.connection) { c -> footer.visibility = if (c == GoveeController.Connection.NOT_CONFIGURED) View.GONE else View.VISIBLE }
+    root.addView(footer, lp().margins(t = dp(22)))
+    root.bind(govee.connection) { refreshSetup() }
     root.addView(spacer(16))
+
     sheet.body.addView(scroll(root), lp(MATCH, 0, 1f))
     sheet.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
         // Noch kein Licht eingerichtet → gleich suchen

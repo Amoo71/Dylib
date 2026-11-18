@@ -161,6 +161,8 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
             }
         }
         scope.launch { app.smooth.collect { bgView.smooth = it } }
+        // Bluetooth an/aus → Hinweisleiste sofort aktualisieren (auch über die Schnelleinstellungen)
+        scope.launch { app.bluetoothOn.collect { refreshBanner() } }
         scope.launch {
             app.theme.settings.collect { t ->
                 Backdrop.enabled = t.glassBlur
@@ -263,7 +265,7 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
         val adapter = (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
         val (text, action, onAction) = when {
             !BtPerms.granted(ctx) -> Triple("Bluetooth-Berechtigung fehlt", "Erlauben") { activity.requestBtPermissions() }
-            adapter != null && !adapter.isEnabled -> Triple("Bluetooth ist aus", "Einschalten") {
+            adapter != null && !app.bluetoothOn.value && !adapter.isEnabled -> Triple("Bluetooth ist aus", "Einschalten") {
                 runCatching { activity.startActivity(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)) }
                 Unit
             }
