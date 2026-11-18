@@ -56,6 +56,12 @@ class RoomApp : Application() {
         com.amoo.roomlauncher.ui.Fonts.init(this)
         prefs = Prefs(this)
         ble = BleHub(this)
+        // Bekannte Leiste (H617E aus dem Bauplan) direkt eintragen → verbindet sofort über die MAC, ohne Suche
+        if (prefs.goveeAddress == null && !prefs.goveeDefaultApplied) {
+            prefs.goveeAddress = GoveeController.DEFAULT_MAC
+            prefs.goveeName = GoveeController.DEFAULT_NAME
+        }
+        prefs.goveeDefaultApplied = true
         govee = GoveeController(this, prefs, appScope, ble)
         airpods = AirPodsController(this, prefs, appScope, ble)
         apps = AppRepository(this, appScope)

@@ -767,7 +767,19 @@ class GoveeController(
         _scanning.value = false
     }
 
+    /** MAC-Adresse von Hand eintragen (ohne Suche). Gibt false zurück, wenn die Adresse ungültig ist. */
+    fun setManual(mac: String, name: String?): Boolean {
+        val addr = mac.trim().uppercase().replace('-', ':')
+        if (!BluetoothAdapter.checkBluetoothAddress(addr)) return false
+        select(FoundDevice(name?.takeIf { it.isNotBlank() } ?: (hub.lastSeen(addr)?.name ?: "Govee-Licht"), addr, 0, true))
+        return true
+    }
+
     companion object {
+        /** Die Leiste aus dem Bauplan – wird beim ersten Start eingetragen, damit sofort direkt verbunden wird. */
+        const val DEFAULT_MAC = "E8:55:04:06:77:4E"
+        const val DEFAULT_NAME = "Govee_H617E_774E"
+
         private const val BT_OFF = "Bluetooth ist aus"
 
         val SERVICE_UUID: UUID = UUID.fromString("00010203-0405-0607-0809-0a0b0c0d1910")

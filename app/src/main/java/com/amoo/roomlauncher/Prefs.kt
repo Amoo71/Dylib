@@ -62,6 +62,11 @@ class Prefs(context: Context) {
         get() = sp.getString("govee_segments", null)?.split(",")?.mapNotNull { it.toIntOrNull() }?.takeIf { it.size == 15 }
         set(v) = later("govee_segments") { it.putString("govee_segments", v?.joinToString(",")) }
 
+    /** Wurde die bekannte Standard-Leiste schon einmal eingetragen? (Danach gilt, was der Nutzer wählt.) */
+    var goveeDefaultApplied: Boolean
+        get() = sp.getBoolean("govee_default_applied", false)
+        set(v) = sp.edit().putBoolean("govee_default_applied", v).apply()
+
     /** Modell-Erkennung für das eingerichtete Licht schon angewendet? */
     var goveeAutoDetected: Boolean
         get() = sp.getBoolean("govee_auto_detected", false)

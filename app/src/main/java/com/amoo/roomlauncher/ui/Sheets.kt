@@ -870,7 +870,32 @@ fun Context.goveeSheet(govee: GoveeController, prefs: Prefs, onDismiss: () -> Un
 
     // ---- Einrichtung / anderes Licht (nur bei Bedarf sichtbar)
     val setup = column()
-    locationHint()?.let { setup.addView(it, lp().margins(t = dp(14))) }
+    // Direkt über die MAC-Adresse eintragen – keine Suche nötig
+    setup.section("MAC-Adresse eingeben")
+    val macField = EditText(this).apply {
+        hint = "z. B. E8:55:04:06:77:4E"
+        setText(prefs.goveeAddress.orEmpty())
+        typeface = Fonts.regular
+        setHintTextColor(C.TEXT3)
+        setTextColor(C.TEXT)
+        textSize = 16f
+        isSingleLine = true
+        background = GlassDrawable(context, 20f, 0.8f, frosted = false)
+        setPadding(dp(18), dp(12), dp(18), dp(12))
+        layoutParams = lp(0, WRAP, 1f)
+    }
+    setup.addView(
+        row(
+            macField,
+            glassButton("Verbinden", true) {
+                if (govee.setManual(macField.text.toString(), null)) toast("Verbinde direkt mit ${macField.text.toString().trim().uppercase()}")
+                else toast("Ungültige MAC-Adresse – Format AA:BB:CC:DD:EE:FF")
+            },
+            spacingDp = 12,
+        ),
+    )
+    setup.section("Oder in der Nähe suchen")
+    locationHint()?.let { setup.addView(it, lp().margins(t = dp(4))) }
     setup.addView(
         label("Govee-App auf dem Handy schließen – das Licht erlaubt nur eine Verbindung gleichzeitig.", 13f, C.TEXT3, lines = 2),
         lp().margins(t = dp(14)),
@@ -891,7 +916,7 @@ fun Context.goveeSheet(govee: GoveeController, prefs: Prefs, onDismiss: () -> Un
             list.addView(item, lp().margins(b = dp(8)))
         }
     }
-    setup.addView(glassButton("Erneut suchen") { govee.startScan() }, lp(WRAP, WRAP).margins(t = dp(4)))
+    setup.addView(glassButton("Suchen") { govee.startScan() }, lp(WRAP, WRAP).margins(t = dp(4)))
 
     // Technik-Optionen nur, wenn das Modell NICHT automatisch erkannt wurde
     val manual = column()
@@ -921,7 +946,7 @@ fun Context.goveeSheet(govee: GoveeController, prefs: Prefs, onDismiss: () -> Un
         glassButton("Neu verbinden") { govee.reconnectNow() },
         glassButton("Anderes Licht") {
             setupOpen = !setupOpen
-            if (setupOpen) govee.startScan() else govee.stopScan()
+            if (!setupOpen) govee.stopScan()
             refreshSetup()
         },
         spacingDp = 12,
@@ -933,10 +958,7 @@ fun Context.goveeSheet(govee: GoveeController, prefs: Prefs, onDismiss: () -> Un
 
     sheet.body.addView(scroll(root), lp(MATCH, 0, 1f))
     sheet.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
-        // Noch kein Licht eingerichtet → gleich suchen
-        override fun onViewAttachedToWindow(v: View) {
-            if (govee.connection.value == GoveeController.Connection.NOT_CONFIGURED) govee.startScan()
-        }
+        override fun onViewAttachedToWindow(v: View) = Unit
         override fun onViewDetachedFromWindow(v: View) = govee.stopScan()
     })
     return sheet
