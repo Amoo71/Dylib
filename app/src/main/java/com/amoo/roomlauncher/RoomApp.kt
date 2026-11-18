@@ -77,9 +77,7 @@ class RoomApp : Application() {
     /** Bluetooth an/aus – live, damit Hinweise und Fehlermeldungen nie veralten. */
     val bluetoothOn = MutableStateFlow(false)
 
-    private fun adapterEnabled(): Boolean =
-        runCatching { (getSystemService(BLUETOOTH_SERVICE) as? android.bluetooth.BluetoothManager)?.adapter?.isEnabled == true }
-            .getOrDefault(false)
+    private fun adapterEnabled(): Boolean = BleHub.bluetoothOn(this)
 
     /** Beobachtet den Bluetooth-Zustand ab App-Start (nicht erst, wenn die Geräte gestartet sind). */
     private fun watchBluetooth() {

@@ -264,8 +264,8 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
         val ctx: Context = context
         val adapter = (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
         val (text, action, onAction) = when {
-            !BtPerms.granted(ctx) -> Triple("Bluetooth-Berechtigung fehlt", "Erlauben") { activity.requestBtPermissions() }
-            adapter != null && !app.bluetoothOn.value && !adapter.isEnabled -> Triple("Bluetooth ist aus", "Einschalten") {
+            !BtPerms.granted(ctx) -> Triple(BtPerms.missingText(), "Erlauben") { activity.requestBtPermissions() }
+            adapter != null && !app.bluetoothOn.value && !BleHub.bluetoothOn(ctx) -> Triple("Bluetooth ist aus", "Einschalten") {
                 runCatching { activity.startActivity(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)) }
                 Unit
             }

@@ -17,6 +17,14 @@ object BtPerms {
             arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
         }
 
+    /**
+     * Was im Hinweis steht. Bis Android 11 gibt es keine eigenen Bluetooth-Rechte (BLUETOOTH ist
+     * automatisch erteilt) – dort fehlt dann die Standort-Berechtigung, die Android für die BLE-Suche verlangt.
+     */
+    fun missingText(): String =
+        if (Build.VERSION.SDK_INT >= 31) "Bluetooth-Berechtigung fehlt"
+        else "Standort-Berechtigung fehlt – Android braucht sie für die Bluetooth-Suche"
+
     /** Bis Android 5.1 werden Rechte bei der Installation erteilt. */
     fun granted(context: Context): Boolean {
         if (Build.VERSION.SDK_INT < 23) return true

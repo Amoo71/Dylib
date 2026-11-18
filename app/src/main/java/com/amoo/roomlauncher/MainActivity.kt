@@ -30,7 +30,26 @@ class MainActivity : Activity() {
         if (BtPerms.granted(this)) app.startBluetooth() else requestBtPermissions()
     }
 
-    fun requestBtPermissions() = requestPermissions(BtPerms.required(), REQ_PERMS)
+    /**
+     * Fragt die nötigen Rechte ab. Wurde einmal "Nicht mehr fragen" gewählt, zeigt Android keinen Dialog
+     * mehr – dann öffnen wir direkt die App-Einstellungen, wo man das Recht von Hand erteilen kann.
+     */
+    fun requestBtPermissions() {
+        val first = BtPerms.required().first()
+        val askedBefore = getSharedPreferences("room_launcher", MODE_PRIVATE).getBoolean("perms_asked", false)
+        if (askedBefore && !shouldShowRequestPermissionRationale(first) && checkSelfPermission(first) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            toast("Bitte unter „Berechtigungen“ den Standort erlauben")
+            runCatching {
+                startActivity(
+                    Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:$packageName"))
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+            }
+            return
+        }
+        getSharedPreferences("room_launcher", MODE_PRIVATE).edit().putBoolean("perms_asked", true).apply()
+        requestPermissions(BtPerms.required(), REQ_PERMS)
+    }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)

@@ -379,7 +379,7 @@ class GoveeController(
         }
         if (_connection.value == Connection.CONNECTED || _connection.value == Connection.CONNECTING) return
         val a = adapter
-        if (a == null || !a.isEnabled) {
+        if (a == null || !BleHub.bluetoothOn(context)) {
             scheduleReconnect()
             return
         }
@@ -409,7 +409,7 @@ class GoveeController(
             gatt = device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
         } catch (e: SecurityException) {
             _connection.value = Connection.DISCONNECTED
-            _lastError.value = "Bluetooth-Berechtigung fehlt"
+            _lastError.value = com.amoo.roomlauncher.BtPerms.missingText()
         }
     }
 
@@ -727,7 +727,7 @@ class GoveeController(
     }
 
     fun startScan() {
-        if (adapter?.isEnabled != true) {
+        if (!BleHub.bluetoothOn(context)) {
             _lastError.value = BT_OFF
             return
         }

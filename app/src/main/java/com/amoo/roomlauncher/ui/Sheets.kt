@@ -640,7 +640,8 @@ private fun Context.diagnosis(app: RoomApp): String {
     val g = app.govee.connection.value
     val a = app.airpods
     return buildString {
-        appendLine("${ok(adapter?.isEnabled == true)}  Bluetooth ${if (adapter?.isEnabled == true) "an" else "aus"}")
+        val btOn = BleHub.bluetoothOn(this@diagnosis)
+        appendLine("${ok(btOn)}  Bluetooth ${if (btOn) "an" else "aus"}")
         appendLine("${ok(BleHub.locationEnabled(this@diagnosis))}  Standort (nötig für Bluetooth-Suche)")
         appendLine("${ok(app.ble.scanning)}  Bluetooth-Suche läuft · letztes Signal $age")
         app.ble.lastError?.let { appendLine("    ↳ $it") }

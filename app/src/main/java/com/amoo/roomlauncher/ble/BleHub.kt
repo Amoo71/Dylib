@@ -187,15 +187,36 @@ class BleHub(private val context: Context) {
     companion object {
         private const val RESTART_EVERY_MS = 20 * 60 * 1000L
 
-        /** Ohne eingeschalteten Standort liefert Android 6–9 keine BLE-Suchergebnisse. */
+        /**
+         * Ohne eingeschalteten Standort liefert Android 6–9 keine BLE-Suchergebnisse.
+         * Achtung: Manche ROMs (z. B. LineageOS 14 auf dem Galaxy Tab E) haben gar kein "location_mode" –
+         * dann ergäbe getInt() den Standardwert "aus", obwohl GPS/Netzwerk an sind. Deshalb zuerst den
+         * LocationManager fragen und die Einstellungen nur als Rückfall nutzen.
+         */
         fun locationEnabled(context: Context): Boolean {
-            if (Build.VERSION.SDK_INT >= 28) {
-                return (context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager)?.isLocationEnabled ?: true
+            val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+            if (Build.VERSION.SDK_INT >= 28 && lm != null) return lm.isLocationEnabled
+            val providers = lm?.let {
+                runCatching {
+                    it.isProviderEnabled(LocationManager.GPS_PROVIDER) || it.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
+                }.getOrNull()
+            }
+            if (providers == true) return true
+            val cr = context.contentResolver
+            @Suppress("DEPRECATION")
+            Settings.Secure.getString(cr, Settings.Secure.LOCATION_MODE)?.toIntOrNull()?.let {
+                @Suppress("DEPRECATION")
+                return it != Settings.Secure.LOCATION_MODE_OFF
             }
             @Suppress("DEPRECATION")
-            val mode = Settings.Secure.getInt(context.contentResolver, Settings.Secure.LOCATION_MODE, Settings.Secure.LOCATION_MODE_OFF)
-            @Suppress("DEPRECATION")
-            return mode != Settings.Secure.LOCATION_MODE_OFF
+            Settings.Secure.getString(cr, Settings.Secure.LOCATION_PROVIDERS_ALLOWED)?.let { return it.isNotBlank() }
+            return providers ?: true // unbekannt → lieber nicht fälschlich warnen
+        }
+
+        /** Bluetooth wirklich an? (Adapter-Zustand zusätzlich zu isEnabled.) */
+        fun bluetoothOn(context: Context): Boolean {
+            val a = (context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter ?: return false
+            return runCatching { a.isEnabled || a.state == BluetoothAdapter.STATE_ON }.getOrDefault(false)
         }
 
         /** Werbedaten zerlegen: Gerätename und Herstellerdaten (Firmen-ID -> Bytes). */
