@@ -403,6 +403,7 @@ class GoveeController(
     }
 
     private fun connectGatt(device: BluetoothDevice) {
+        com.amoo.roomlauncher.L.i("Govee: verbinde mit ${device.address}")
         _connection.value = Connection.CONNECTING
         _lastError.value = null
         try {
@@ -439,6 +440,7 @@ class GoveeController(
     }
 
     private fun fallbackScan() {
+        com.amoo.roomlauncher.L.i("Govee: Direktverbindung klappt nicht – suche gezielt nach ${prefs.goveeAddress}")
         _connection.value = Connection.CONNECTING
         hub.add(fallbackListener, fast = true)
         fallbackJob?.cancel()
@@ -516,6 +518,7 @@ class GoveeController(
                 return
             }
             val wasConnected = _connection.value == Connection.CONNECTED
+            com.amoo.roomlauncher.L.i("Govee: Verbindung beendet (status=$status, newState=$newState, warVerbunden=$wasConnected)")
             runCatching { g.close() }
             gatt = null
             writeChar = null
@@ -541,6 +544,7 @@ class GoveeController(
             val n = all.firstOrNull { it.uuid == NOTIFY_UUID }
             // Gegenprüfung: beide Characteristics müssen da sein – sonst ist es nicht die Leiste
             if (w == null || n == null) {
+                com.amoo.roomlauncher.L.w("Govee: Characteristics fehlen (2b11=${w != null}, 2b10=${n != null})")
                 _lastError.value = "Gerät hat keinen Govee-Steuerkanal – falsches Gerät?"
                 g.disconnect()
                 return
@@ -580,6 +584,7 @@ class GoveeController(
 
     /** Verbindung steht: Zustand abfragen, Keep-Alive läuft, kompletter Segment-Stand folgt. */
     private fun onReady() {
+        com.amoo.roomlauncher.L.i("Govee: bereit (Notify an, Modell=${_model.value}, Segmente=${_segmented.value})")
         connectTimeout?.cancel()
         failures = 0
         failedWrites = 0
@@ -614,6 +619,7 @@ class GoveeController(
         val now = lastStatusAt
         when (val st = GoveeProtocol.parseStatus(v)) {
             is GoveeProtocol.Status.Power -> {
+                if (!powerKnown) com.amoo.roomlauncher.L.i("Govee: Power-Status ${if (st.on) "an" else "aus"}")
                 // Antwort kurz nach eigenem Power-Befehl ignorieren – sonst springt der Schalter zurück
                 if (now - lastPowerCmd > 1_000) {
                     _power.value = st.on
@@ -701,6 +707,7 @@ class GoveeController(
             ok = runCatching { g.writeCharacteristic(ch) }.getOrDefault(false)
         }
         if (!ok) {
+            com.amoo.roomlauncher.L.w("Govee: Schreiben fehlgeschlagen (${bytes.take(3).joinToString(" ") { "%02x".format(it) }} …)")
             if (++failedWrites >= 6) {
                 failedWrites = 0
                 _lastError.value = "Senden klappt nicht – verbinde neu"

@@ -274,6 +274,9 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
             }
             else -> Triple(null, null, null)
         }
+        com.amoo.roomlauncher.L.i(
+            "Prüfung: Rechte=${BtPerms.granted(ctx)}, Bluetooth=${BleHub.bluetoothOn(ctx)}, Standort=${BleHub.locationEnabled(ctx)} → Hinweis: ${text ?: "keiner"}",
+        )
         banner.removeAllViews()
         if (text == null || editMode) {
             banner.visibility = View.GONE

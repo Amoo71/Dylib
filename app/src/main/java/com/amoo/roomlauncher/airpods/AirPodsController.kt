@@ -237,6 +237,7 @@ class AirPodsController(
             runCatching { it.getConnectionState(dev) == BluetoothProfile.STATE_CONNECTED }.getOrDefault(false)
         }
         val was = _audioConnected.value
+        if (was != connected) com.amoo.roomlauncher.L.i("AirPods: Audio ${if (connected) "verbunden" else "getrennt"} (${dev?.address})")
         _audioConnected.value = connected
         if (connected && !was) {
             retries = 0
@@ -390,6 +391,7 @@ class AirPodsController(
                     for (packet in Aap.split(buf.copyOf(n))) {
                         frames++
                         if (frames == 1) {
+                            com.amoo.roomlauncher.L.i("AirPods: Steuerkanal antwortet")
                             deadChannels = 0
                             _controlReady.value = true
                             _controlStatus.value = "Steuerkanal verbunden"
@@ -423,6 +425,7 @@ class AirPodsController(
 
     /** Apples Steuerkanal geht auf diesem Gerät nicht – nicht weiter versuchen, sondern erklären. */
     private fun markUnsupported(reason: String) {
+        com.amoo.roomlauncher.L.w("AirPods: Steuerkanal nicht verfügbar – $reason")
         _controlUnsupported.value = true
         _controlStatus.value = "$reason. ANC/Transparenz bitte am AirPods-Stiel wechseln (gedrückt halten). " +
             "Akku, Ohrerkennung und Verbinden funktionieren trotzdem."

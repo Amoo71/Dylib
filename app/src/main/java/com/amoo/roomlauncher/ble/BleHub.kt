@@ -132,8 +132,10 @@ class BleHub(private val context: Context) {
             callback = cb
             runningFast = wantFast
             scanning = true
+            com.amoo.roomlauncher.L.i("BLE-Scan gestartet (${if (wantFast) "schnell" else "sparsam"}, ${entries.size} Nutzer)")
             if (lastResultAt == 0L) lastResultAt = System.currentTimeMillis()
         } catch (e: Throwable) {
+            com.amoo.roomlauncher.L.w("BLE-Scan-Start fehlgeschlagen", e)
             lastError = "Scan-Start fehlgeschlagen: ${e.javaClass.simpleName}"
         }
     }
@@ -143,6 +145,7 @@ class BleHub(private val context: Context) {
      * ein Bluetooth-Neustart. Den macht die App selbst (höchstens alle 30 Minuten).
      */
     private fun onFailed(code: Int) {
+        com.amoo.roomlauncher.L.w("BLE-Scan-Fehler $code")
         callback = null
         scanning = false
         failures++
@@ -179,6 +182,7 @@ class BleHub(private val context: Context) {
 
     private fun stopInternal() {
         val cb = callback ?: return
+        com.amoo.roomlauncher.L.i("BLE-Scan gestoppt")
         callback = null
         scanning = false
         runCatching { adapter?.bluetoothLeScanner?.stopScan(cb) }
