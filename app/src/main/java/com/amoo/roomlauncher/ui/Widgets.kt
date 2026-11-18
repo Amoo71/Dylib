@@ -21,6 +21,7 @@ import com.amoo.roomlauncher.apps.AppEntry
 import com.amoo.roomlauncher.board.WidgetKind
 import com.amoo.roomlauncher.board.WidgetSize
 import com.amoo.roomlauncher.govee.GoveeController
+import com.amoo.roomlauncher.toast
 import kotlinx.coroutines.flow.StateFlow
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -190,8 +191,15 @@ private fun Context.lightHeader(govee: GoveeController, gear: Boolean, onOpen: (
     return h
 }
 
+/** Tippen = an/aus · 0,7 s halten = Reset (an, alle Segmente aus, Anzahl 0). */
 internal fun Context.powerButton(govee: GoveeController, sizeDp: Int): PowerButton {
-    val b = PowerButton(this, sizeDp) { govee.setPower(!govee.power.value) }
+    val b = PowerButton(
+        this, sizeDp,
+        onHold = {
+            govee.reset()
+            toast("Licht zurückgesetzt")
+        },
+    ) { govee.togglePower() }
     b.bind(govee.power) { b.on = it }
     b.bind(govee.color) { b.ringColor = it }
     return b
@@ -225,25 +233,34 @@ internal fun Context.presetRow(govee: GoveeController, sizeDp: Int, hue: GlassSl
     return hScroll(*swatches.toTypedArray(), spacingDp = 8)
 }
 
-/** Segment-Leiste, verbunden mit dem Licht (zeigt die echten Segmentfarben). */
+/** Segment-Leiste, verbunden mit dem Licht: zeigt die echten Segmentfarben, Modus "Alle" oder "Einzeln". */
 internal fun Context.segmentBar(govee: GoveeController, heightDp: Int): SegmentBar {
     val bar = SegmentBar(this)
     bar.layoutParams = lp(MATCH, dp(heightDp))
+    bar.onCount = { govee.setCount(it) }
+    bar.onPaint = { govee.paintSegment(it) }
+    bar.onClear = { govee.clearSegment(it) }
     bar.bind(govee.segments) { bar.colors = it }
     bar.bind(govee.power) { bar.dimmed = !it }
+    bar.bind(govee.segMode) { bar.single = it == GoveeController.SegMode.SINGLE }
     return bar
 }
 
-/** Farbwähler: färbt die ausgewählten Segmente – oder die ganze Leiste, wenn nichts gewählt ist. */
-internal fun Context.colorPicker(govee: GoveeController, bar: SegmentBar?, heightDp: Int): ColorStrip =
-    ColorStrip(this, heightDp) { c ->
-        val mask = bar?.selection ?: 0
-        if (mask != 0 && govee.segmented.value) govee.setSegmentColor(mask, c) else govee.setColor(c)
-    }
+/** Farbwähler: "Alle" färbt die leuchtenden Segmente, "Einzeln" wählt die Pinselfarbe. */
+internal fun Context.colorPicker(govee: GoveeController, heightDp: Int): ColorStrip =
+    ColorStrip(this, heightDp) { c -> govee.setColor(c) }
+
+/** Kleine Umschaltung "Alle | Einzeln" für RGBIC-Leisten. */
+internal fun Context.segModeSwitch(govee: GoveeController, heightDp: Int = 34, textSp: Float = 12.5f): Segmented {
+    val modes = GoveeController.SegMode.entries
+    val seg = Segmented(this, listOf("Alle", "Einzeln"), textSp = textSp, heightDp = heightDp) { i -> govee.setSegMode(modes[i]) }
+    seg.bind(govee.segMode) { seg.selected = modes.indexOf(it) }
+    return seg
+}
 
 /**
- * Licht-Widget. Ist das Licht einmal erkannt, ist es kompakt:
- * Ein/Aus · Helligkeit · 15 Segmente (bei RGBIC-Streifen) · Farbwähler. Alles Weitere im Panel.
+ * Licht-Widget. Ist die Leiste erkannt, ist es kompakt:
+ * Ein/Aus (halten = Reset) · Helligkeit · 15-Segment-Leiste · Farbwähler. Alles Weitere im Panel.
  */
 fun Context.lightWidget(size: WidgetSize, govee: GoveeController, onOpen: () -> Unit): View {
     val small = size == WidgetSize.S
@@ -252,11 +269,35 @@ fun Context.lightWidget(size: WidgetSize, govee: GoveeController, onOpen: () -> 
     card.addView(flexSpace())
 
     val body = column()
-    body.addView(row(powerButton(govee, if (small) 48 else 60), brightnessSlider(govee, if (small) 40 else 46).also { it.layoutParams = lp(0, WRAP, 1f) }, spacingDp = 12))
-    val bar = segmentBar(govee, if (small) 26 else 32)
-    body.addView(bar, lp(MATCH, dp(if (small) 26 else 32)).margins(t = dp(if (small) 10 else 14)))
-    body.addView(colorPicker(govee, bar, if (small) 30 else 36), lp().margins(t = dp(if (small) 10 else 12)))
-    bar.bind(govee.segmented) { bar.visibility = if (it) View.VISIBLE else View.GONE }
+    body.addView(
+        row(
+            powerButton(govee, if (small) 48 else 58),
+            brightnessSlider(govee, if (small) 40 else 44).also { it.layoutParams = lp(0, WRAP, 1f) },
+            spacingDp = 12,
+        ),
+    )
+    // Segmente: nur bei RGBIC-Leisten
+    val segBox = column()
+    if (!small) {
+        val info = label("", 12.5f, C.TEXT2)
+        fun refreshInfo() {
+            info.text = if (govee.segMode.value == GoveeController.SegMode.ALL) {
+                "${govee.count.value}/15 Segmente"
+            } else {
+                "Tippen = malen · Halten = löschen"
+            }
+        }
+        info.bind(govee.count) { refreshInfo() }
+        info.bind(govee.segMode) { refreshInfo() }
+        segBox.addView(
+            row(info.also { it.layoutParams = lp(0, WRAP, 1f) }, segModeSwitch(govee).also { it.layoutParams = lp(dp(170), WRAP) }),
+            lp().margins(t = dp(10)),
+        )
+    }
+    segBox.addView(segmentBar(govee, if (small) 26 else 30), lp(MATCH, dp(if (small) 26 else 30)).margins(t = dp(if (small) 10 else 8)))
+    segBox.bind(govee.segmented) { segBox.visibility = if (it) View.VISIBLE else View.GONE }
+    body.addView(segBox)
+    body.addView(colorPicker(govee, if (small) 30 else 34), lp().margins(t = dp(if (small) 10 else 12)))
 
     val setup = column().apply {
         addView(label("Noch kein Licht verbunden.", 14f, C.TEXT2, lines = 2))
@@ -346,6 +387,7 @@ internal fun Context.noiseSelector(airpods: AirPodsController, short: Boolean): 
     ) { i -> airpods.setNoise(modes[i]) }
     seg.bind(airpods.noise) { n -> seg.selected = n?.let { modes.indexOf(it) } ?: -1 }
     seg.bind(airpods.controlReady) { seg.isEnabled = it }
+    seg.onDisabledTap = { airpods.explainUnavailable() }
     return seg
 }
 

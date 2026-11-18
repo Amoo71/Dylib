@@ -699,7 +699,12 @@ fun blend(a: Int, b: Int, t: Float): Int {
 
 // ------------------------------------------------------------------ Power-Knopf
 
-class PowerButton(context: Context, sizeDp: Int, onClick: () -> Unit) : View(context) {
+class PowerButton(
+    context: Context,
+    sizeDp: Int,
+    private val onHold: (() -> Unit)? = null,
+    private val onClick: () -> Unit,
+) : View(context) {
     var on = false
         set(v) {
             if (field != v) {
@@ -721,9 +726,43 @@ class PowerButton(context: Context, sizeDp: Int, onClick: () -> Unit) : View(con
     }
     private val arc = RectF()
 
+    private var held = false
+    private val hold = Runnable {
+        held = true
+        performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+        animate().scaleX(1.12f).scaleY(1.12f).setDuration(120).withEndAction {
+            animate().scaleX(1f).scaleY(1f).setDuration(260).setInterpolator(SPRING).start()
+        }.start()
+        onHold?.invoke()
+    }
+
     init {
         layoutParams = lp(dp(sizeDp), dp(sizeDp))
-        pressable(onClick = onClick)
+        isClickable = true
+    }
+
+    override fun onTouchEvent(e: MotionEvent): Boolean {
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                // Halten gehört dem Knopf (Reset), nicht dem Board
+                if (onHold != null) parent?.requestDisallowInterceptTouchEvent(true)
+                held = false
+                animate().scaleX(0.92f).scaleY(0.92f).setDuration(110).setInterpolator(EASE_OUT).start()
+                if (onHold != null) postDelayed(hold, 700)
+            }
+            MotionEvent.ACTION_UP -> {
+                removeCallbacks(hold)
+                if (!held) {
+                    animate().scaleX(1f).scaleY(1f).setDuration(260).setInterpolator(SPRING).start()
+                    if (e.x in 0f..width.toFloat() && e.y in 0f..height.toFloat()) onClick()
+                }
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                removeCallbacks(hold)
+                animate().scaleX(1f).scaleY(1f).setDuration(200).start()
+            }
+        }
+        return true
     }
 
     private fun animateGlow() {
@@ -828,7 +867,14 @@ class Segmented(
         }
     }
 
+    /** Wird bei Tippen im deaktivierten Zustand aufgerufen (z. B. für eine Erklärung). */
+    var onDisabledTap: (() -> Unit)? = null
+
     override fun onTouchEvent(e: MotionEvent): Boolean {
+        if (e.actionMasked == MotionEvent.ACTION_UP && !isEnabled) {
+            onDisabledTap?.invoke()
+            return true
+        }
         if (e.actionMasked == MotionEvent.ACTION_UP && labels.isNotEmpty()) {
             val inner = width - paddingLeft - paddingRight
             val i = ((e.x - paddingLeft) / (inner / labels.size.toFloat())).toInt().coerceIn(0, labels.size - 1)
@@ -982,11 +1028,13 @@ class AirPodsGlyph(context: Context) : View(context) {
 // ------------------------------------------------------------------ LED-Segmente (RGBIC)
 
 /**
- * 15 Felder = 15 Segmente des LED-Streifens, gefüllt mit ihrer aktuellen Farbe.
- * Tippen wählt ein Segment aus/ab, Wischen wählt einen Bereich. Keine Auswahl = ganze Leiste.
+ * 15 Felder = 15 Segmente der LED-Leiste in ihrer echten Farbe (0 = aus).
+ *  - Modus "Alle":    Tippen/Ziehen setzt die Anzahl leuchtender Segmente (ganz links = 0).
+ *  - Modus "Einzeln": Tippen/Wischen malt mit dem Pinsel, Halten löscht das Segment.
+ * Fängt die Berührung selbst ab, damit das Board dabei nicht in den Bearbeiten-Modus springt.
  */
 class SegmentBar(context: Context, private val count: Int = 15) : View(context) {
-    var colors: List<Int> = List(count) { Color.WHITE }
+    var colors: List<Int> = List(count) { 0 }
         set(v) {
             field = v
             invalidate()
@@ -996,53 +1044,53 @@ class SegmentBar(context: Context, private val count: Int = 15) : View(context) 
             field = v
             invalidate()
         }
-
-    /** Bitmaske der ausgewählten Segmente (Bit 0 = Segment 1). 0 = keine Auswahl. */
-    var selection = 0
-        private set
-    var onSelectionChanged: (Int) -> Unit = {}
+    var single = false
+    var onCount: (Int) -> Unit = {}
+    var onPaint: (Int) -> Unit = {}
+    var onClear: (Int) -> Unit = {}
 
     private val cell = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    private val off = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        color = Color.WHITE
+        color = C.white(0.18f)
     }
     private val r = RectF()
-    private val slop = ViewConfiguration.get(context).scaledTouchSlop
-    private var downX = 0f
+    private val holdMs = ViewConfiguration.getLongPressTimeout().toLong()
     private var downIndex = -1
-    private var dragging = false
-
-    fun clearSelection() {
-        selection = 0
-        invalidate()
-        onSelectionChanged(0)
+    private var lastIndex = -1
+    private var moved = false
+    private var held = false
+    private val hold = Runnable {
+        held = true
+        performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+        onClear(downIndex)
     }
 
-    private fun cellWidth(): Float {
-        val gap = dp(3).toFloat()
-        return (width - gap * (count - 1)) / count
-    }
+    private val gap get() = dp(3).toFloat()
+    private fun cellWidth(): Float = (width - gap * (count - 1)) / count
+    private fun indexAt(x: Float): Int = (x / (cellWidth() + gap)).toInt().coerceIn(0, count - 1)
 
-    private fun indexAt(x: Float): Int = (x / (cellWidth() + dp(3))).toInt().coerceIn(0, count - 1)
+    /** Anzahl für Modus "Alle": bis einschließlich des berührten Segments, ganz links = 0. */
+    private fun countAt(x: Float): Int = if (x < cellWidth() * 0.45f) 0 else indexAt(x) + 1
 
     override fun onDraw(canvas: Canvas) {
-        val gap = dp(3).toFloat()
         val w = cellWidth()
         val h = height.toFloat()
         val rad = min(w, h) * 0.32f
-        ring.strokeWidth = dp(2).toFloat()
+        off.strokeWidth = dp(1).toFloat()
         for (i in 0 until count) {
             val left = i * (w + gap)
-            val sel = selection and (1 shl i) != 0
-            val inset = if (sel) 0f else dp(2).toFloat()
-            r.set(left, inset, left + w, h - inset)
-            cell.color = colors.getOrElse(i) { Color.WHITE }
-            cell.alpha = if (dimmed) 70 else 255
-            canvas.drawRoundRect(r, rad, rad, cell)
-            if (sel) {
-                r.inset(ring.strokeWidth / 2, ring.strokeWidth / 2)
-                canvas.drawRoundRect(r, rad, rad, ring)
+            r.set(left, 0f, left + w, h)
+            val c = colors.getOrElse(i) { 0 } and 0xFFFFFF
+            if (c == 0) {
+                cell.color = C.white(0.07f)
+                canvas.drawRoundRect(r, rad, rad, cell)
+                r.inset(off.strokeWidth / 2, off.strokeWidth / 2)
+                canvas.drawRoundRect(r, rad, rad, off)
+            } else {
+                cell.color = 0xFF000000.toInt() or c
+                cell.alpha = if (dimmed) 80 else 255
+                canvas.drawRoundRect(r, rad, rad, cell)
             }
         }
     }
@@ -1050,38 +1098,39 @@ class SegmentBar(context: Context, private val count: Int = 15) : View(context) 
     override fun onTouchEvent(e: MotionEvent): Boolean {
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                downX = e.x
+                parent?.requestDisallowInterceptTouchEvent(true)
                 downIndex = indexAt(e.x)
-                dragging = false
+                lastIndex = downIndex
+                moved = false
+                held = false
+                if (single) {
+                    postDelayed(hold, holdMs)
+                } else {
+                    onCount(countAt(e.x))
+                }
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
-                if (!dragging && abs(e.x - downX) > slop) {
-                    dragging = true
-                    parent?.requestDisallowInterceptTouchEvent(true)
-                }
-                if (dragging) {
-                    // Bereich vom Startsegment bis zum Finger auswählen
-                    val a = min(downIndex, indexAt(e.x))
-                    val b = max(downIndex, indexAt(e.x))
-                    var m = 0
-                    for (i in a..b) m = m or (1 shl i)
-                    if (m != selection) {
-                        selection = m
-                        invalidate()
-                        onSelectionChanged(m)
+                val i = indexAt(e.x)
+                if (single) {
+                    if (i != downIndex) {
+                        removeCallbacks(hold)
+                        if (!held) {
+                            if (!moved) onPaint(downIndex)
+                            moved = true
+                            if (i != lastIndex) onPaint(i)
+                        }
                     }
+                } else {
+                    onCount(countAt(e.x))
                 }
+                lastIndex = i
             }
             MotionEvent.ACTION_UP -> {
-                if (!dragging) {
-                    selection = selection xor (1 shl indexAt(e.x))
-                    invalidate()
-                    onSelectionChanged(selection)
-                }
-                dragging = false
+                removeCallbacks(hold)
+                if (single && !held && !moved) onPaint(downIndex)
             }
-            MotionEvent.ACTION_CANCEL -> dragging = false
+            MotionEvent.ACTION_CANCEL -> removeCallbacks(hold)
         }
         return true
     }

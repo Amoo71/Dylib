@@ -6,10 +6,13 @@ import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothGattCharacteristic
+import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.content.Context
+import android.net.Uri
 import com.amoo.roomlauncher.Prefs
+import com.amoo.roomlauncher.ble.BleHub
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -22,37 +25,49 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
-import kotlin.math.roundToInt
 
 /**
- * Steuert Govee-LED-Streifen/Lampen direkt über Bluetooth Low Energy.
+ * Steuert Govee-LED-Leisten direkt per Bluetooth LE – nach dem geprüften H617E-Bauplan:
  *
- * Protokoll (reverse engineered, u.a. govee_btled / Home-Assistant-Community):
- *  - Service 00010203-0405-0607-0809-0a0b0c0d1910, Schreib-Charakteristik ...2b11
- *  - 20-Byte-Pakete, letztes Byte = XOR über die ersten 19 Bytes
- *  - 33 01 xx       Power (01 an / 00 aus)
- *  - 33 04 xx       Helligkeit
- *  - 33 05 MM r g b Farbe (MM = Modus, modellabhängig 02 / 0D / 0B / 15)
- *  - AA 01          Keep-Alive, alle ~2 s
+ *  - Verbinden direkt über die gespeicherte MAC; schlägt das fehl oder dauert > 5 s → gezielter Scan
+ *    nur nach diesem Gerät. Nach einem Abbruch Queue leeren und nach 2,5 s neu verbinden.
+ *  - Gegenprüfung: Schreib- (2b11) UND Notify-Characteristic (2b10) müssen da sein.
+ *  - Notify einschalten, dann AA 01 + AA 04 abfragen, alle 2 s AA 01 als Keep-Alive.
+ *  - Sende-Queue: immer nur ein Schreibvorgang (Write Without Response), 35 ms Pause für
+ *    Power/Helligkeit, 30 ms für Segmente; gleiche Schlüssel werden gebündelt.
+ *  - Segmente: Modell mit 15 Farben. Nach jedem (Neu-)Verbinden/Reset den KOMPLETTEN Stand senden
+ *    (sonst ignoriert die Leiste Einzelsegmente), danach nur Änderungen – ein Paket pro Farbe,
+ *    geplant erst wenn die Queue leer ist, und nur wenn die Leiste bekanntermaßen an ist.
  */
 @SuppressLint("MissingPermission")
 class GoveeController(
     private val context: Context,
     private val prefs: Prefs,
     private val scope: CoroutineScope,
-    private val hub: com.amoo.roomlauncher.ble.BleHub,
+    private val hub: BleHub,
 ) {
     enum class Connection { NOT_CONFIGURED, DISCONNECTED, CONNECTING, CONNECTED }
 
+    /** "Alle": Anzahl 0–15 leuchtet in der aktuellen Farbe. "Einzeln": Segmente mit dem Pinsel färben. */
+    enum class SegMode { ALL, SINGLE }
+
     data class FoundDevice(val name: String, val address: String, val rssi: Int, val likelyGovee: Boolean)
 
-    private val _connection = MutableStateFlow(
-        if (prefs.goveeAddress == null) Connection.NOT_CONFIGURED else Connection.DISCONNECTED,
-    )
+    // ---------------------------------------------------------------- Zustand (für die UI)
+
+    private val _connection = MutableStateFlow(if (prefs.goveeAddress == null) Connection.NOT_CONFIGURED else Connection.DISCONNECTED)
     val connection: StateFlow<Connection> = _connection.asStateFlow()
 
     private val _deviceName = MutableStateFlow(prefs.goveeName)
     val deviceName: StateFlow<String?> = _deviceName.asStateFlow()
+
+    private val _model = MutableStateFlow(GoveeProtocol.modelOf(prefs.goveeName))
+    /** Erkanntes Modell, z. B. "H617E" (aus dem Bluetooth-Namen). */
+    val model: StateFlow<String?> = _model.asStateFlow()
+
+    private val _segmented = MutableStateFlow(prefs.goveeColorMode == GoveeProtocol.MODE_SEGMENTS)
+    /** true = RGBIC-Leiste, 15 Segmente einzeln steuerbar. */
+    val segmented: StateFlow<Boolean> = _segmented.asStateFlow()
 
     private val _power = MutableStateFlow(prefs.lastPower)
     val power: StateFlow<Boolean> = _power.asStateFlow()
@@ -60,19 +75,32 @@ class GoveeController(
     private val _brightness = MutableStateFlow(prefs.lastBrightness)
     val brightness: StateFlow<Float> = _brightness.asStateFlow()
 
+    /** Farbe für "Alle" (bzw. die ganze Leiste bei einfachen Modellen). */
     private val _color = MutableStateFlow(prefs.lastColor)
     val color: StateFlow<Int> = _color.asStateFlow()
 
-    private val _model = MutableStateFlow(GoveeProtocol.modelOf(prefs.goveeName))
-    /** Erkanntes Modell, z. B. "H6199" (aus dem Bluetooth-Namen). */
-    val model: StateFlow<String?> = _model.asStateFlow()
+    private val _brush = MutableStateFlow(prefs.goveeBrush)
+    /** Pinselfarbe im Modus "Einzeln". */
+    val brush: StateFlow<Int> = _brush.asStateFlow()
 
-    private val _segmented = MutableStateFlow(prefs.goveeColorMode == GoveeProtocol.MODE_SEGMENTS)
-    /** true = RGBIC-Streifen, einzelne Segmente steuerbar. */
-    val segmented: StateFlow<Boolean> = _segmented.asStateFlow()
+    private val _segMode = MutableStateFlow(if (prefs.goveeSegMode == 1) SegMode.SINGLE else SegMode.ALL)
+    val segMode: StateFlow<SegMode> = _segMode.asStateFlow()
 
-    private val _segments = MutableStateFlow(prefs.goveeSegments ?: List(GoveeProtocol.SEGMENTS) { prefs.lastColor })
-    /** Zuletzt gesetzte Farbe je Segment (für die Anzeige im Widget). */
+    private val _count = MutableStateFlow(prefs.goveeCount.coerceIn(0, GoveeProtocol.SEGMENTS))
+    /** Anzahl leuchtender Segmente im Modus "Alle". */
+    val count: StateFlow<Int> = _count.asStateFlow()
+
+    /** Segment-Modell: 15 RGB-Farben (0 = aus). */
+    private val segModel = IntArray(GoveeProtocol.SEGMENTS).also { m ->
+        val saved = prefs.goveeSegments
+        if (saved != null) {
+            saved.forEachIndexed { i, c -> m[i] = c and 0xFFFFFF }
+        } else {
+            for (i in 0 until GoveeProtocol.SEGMENTS) m[i] = if (i < prefs.goveeCount) prefs.lastColor and 0xFFFFFF else 0
+        }
+    }
+    private val _segments = MutableStateFlow(segModel.toList())
+    /** Aktuelle Farbe je Segment (RGB, 0 = aus) – für die Anzeige. */
     val segments: StateFlow<List<Int>> = _segments.asStateFlow()
 
     private val _found = MutableStateFlow<List<FoundDevice>>(emptyList())
@@ -84,6 +112,8 @@ class GoveeController(
     private val _lastError = MutableStateFlow<String?>(null)
     val lastError: StateFlow<String?> = _lastError.asStateFlow()
 
+    // ---------------------------------------------------------------- Intern
+
     private val adapter: BluetoothAdapter?
         get() = (context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
 
@@ -91,24 +121,46 @@ class GoveeController(
     @Volatile private var writeChar: BluetoothGattCharacteristic? = null
     @Volatile private var writeAck: CompletableDeferred<Unit>? = null
 
-    /** Ausstehende Befehle je Typ – neuere Werte ersetzen ältere (Slider-Drosselung). */
-    private val pending = LinkedHashMap<String, ByteArray>()
+    /** Gesendeter Segment-Stand und ob die Leiste synchron ist (false → kompletten Stand senden). */
+    private val sent = IntArray(GoveeProtocol.SEGMENTS) { -1 }
+    @Volatile private var synced = false
+    @Volatile private var segDirty = true
+
+    /** Power-Zustand der Leiste bekannt (Antwort auf AA 01 oder eigener Befehl)? */
+    @Volatile private var powerKnown = false
+    @Volatile private var pendingToggle = false
+    @Volatile private var lastPowerCmd = 0L
+    @Volatile private var lastBrightCmd = 0L
+    @Volatile private var lastStatusAt = 0L
+
+    private class Cmd(val bytes: ByteArray, val pauseMs: Long)
+
+    /** Sende-Queue: Schlüssel → Befehl; ein neuer Befehl ersetzt einen wartenden mit gleichem Schlüssel. */
+    private val queue = LinkedHashMap<String, Cmd>()
     private val wake = Channel<Unit>(Channel.CONFLATED)
 
     private var started = false
     private var reconnectJob: Job? = null
     private var connectTimeout: Job? = null
-    private var failures = 0
-    private var silentWrites = 0
+    private var fallbackJob: Job? = null
+    private var knownJob: Job? = null
     private var scanStopJob: Job? = null
+    private var failures = 0
+    private var failedWrites = 0
 
     init {
-        // Schon eingerichtetes Licht: Modell aus dem Namen erkennen, falls noch der Standard-Befehl aktiv ist
-        val model = GoveeProtocol.modelOf(prefs.goveeName)
-        if (prefs.goveeColorMode == GoveeProtocol.MODE_CLASSIC && GoveeProtocol.isSegmented(model)) {
-            prefs.goveeColorMode = GoveeProtocol.MODE_SEGMENTS
-            _segmented.value = true
+        // Bereits eingerichtete Leiste: Modell aus dem Namen erkennen (einmalig, danach gilt die Einstellung)
+        val m = GoveeProtocol.modelOf(prefs.goveeName)
+        if (m != null && !prefs.goveeAutoDetected) {
+            applyModelDefaults(m)
+            prefs.goveeAutoDetected = true
         }
+    }
+
+    private fun applyModelDefaults(m: String?) {
+        prefs.goveeColorMode = GoveeProtocol.colorModeFor(m)
+        if (GoveeProtocol.brightness100(m)) prefs.goveeBrightness100 = true
+        _segmented.value = prefs.goveeColorMode == GoveeProtocol.MODE_SEGMENTS
     }
 
     fun start() {
@@ -118,95 +170,206 @@ class GoveeController(
         scope.launch {
             while (true) {
                 delay(2000)
-                if (_connection.value == Connection.CONNECTED) enqueue("keepalive", GoveeProtocol.KEEP_ALIVE)
+                if (_connection.value != Connection.CONNECTED) continue
+                enqueue("keepalive", GoveeProtocol.KEEP_ALIVE, 35)
+                // Selbstheilung: Notify aktiv, aber seit 30 s keine Antwort → Verbindung hängt
+                if (lastStatusAt > 0 && System.currentTimeMillis() - lastStatusAt > 30_000) {
+                    lastStatusAt = 0
+                    _lastError.value = "Leiste antwortet nicht mehr – verbinde neu"
+                    reconnectNow()
+                }
             }
         }
         connect()
     }
 
-    // ---------------------------------------------------------------- Befehle
+    // ================================================================ Befehle
 
     fun setPower(on: Boolean) {
         _power.value = on
         prefs.lastPower = on
-        enqueue("power", GoveeProtocol.power(on))
+        powerKnown = true
+        lastPowerCmd = System.currentTimeMillis()
+        enqueue("power", GoveeProtocol.power(on), 35)
+    }
+
+    fun togglePower() {
+        if (_connection.value == Connection.CONNECTED && !powerKnown) {
+            pendingToggle = true // erst, wenn der echte Zustand bekannt ist
+            return
+        }
+        setPower(!_power.value)
+    }
+
+    /** Halten des Power-Knopfs: Leiste an, alle 15 Segmente schwarz, Anzahl 0. */
+    fun reset() {
+        setPower(true)
+        _count.value = 0
+        prefs.goveeCount = 0
+        for (i in segModel.indices) segModel[i] = 0
+        synced = false
+        segmentsChanged()
     }
 
     fun setBrightness(value: Float) {
         val v = value.coerceIn(0.01f, 1f)
         _brightness.value = v
         prefs.lastBrightness = v
-        enqueue("brightness", GoveeProtocol.brightness(v, prefs.goveeBrightness100))
+        lastBrightCmd = System.currentTimeMillis()
+        enqueue("bright", GoveeProtocol.brightness(v, prefs.goveeBrightness100), 35)
     }
 
-    /** Ganze Leiste in einer Farbe. */
+    /**
+     * Farbe wählen. "Alle": färbt alle leuchtenden Segmente. "Einzeln": nur Pinselfarbe.
+     * Einfache (nicht segmentierte) Modelle: ganze Leiste.
+     */
     fun setColor(argb: Int) {
-        _color.value = argb
-        prefs.lastColor = argb
-        if (!_power.value) setPower(true)
-        if (prefs.goveeColorMode == GoveeProtocol.MODE_SEGMENTS) {
-            setSegmentsState(List(GoveeProtocol.SEGMENTS) { argb })
+        if (!_segmented.value) {
+            _color.value = argb
+            prefs.lastColor = argb
+            if (!_power.value) setPower(true)
+            enqueue("color", GoveeProtocol.color(argb, prefs.goveeColorMode), 35)
+            return
         }
-        enqueue("color", GoveeProtocol.color(argb, prefs.goveeColorMode))
-    }
-
-    /** Nur die Segmente in [mask] (Bit 0 = Segment 1) färben – RGBIC-Streifen. */
-    fun setSegmentColor(mask: Int, argb: Int) {
-        if (mask == 0) return
-        if (mask == GoveeProtocol.ALL_SEGMENTS) return setColor(argb)
-        if (!_power.value) setPower(true)
+        if (_segMode.value == SegMode.SINGLE) {
+            _brush.value = argb
+            prefs.goveeBrush = argb
+            return
+        }
         _color.value = argb
         prefs.lastColor = argb
-        setSegmentsState(_segments.value.mapIndexed { i, c -> if (mask and (1 shl i) != 0) argb else c })
-        enqueue("seg$mask", GoveeProtocol.color(argb, GoveeProtocol.MODE_SEGMENTS, mask))
+        if (_count.value == 0) {
+            // Farbe wählen bei 0 leuchtenden Segmenten → ganze Leiste
+            _count.value = GoveeProtocol.SEGMENTS
+            prefs.goveeCount = GoveeProtocol.SEGMENTS
+        }
+        fillAll()
+        if (!_power.value) setPower(true)
     }
 
-    private fun setSegmentsState(list: List<Int>) {
-        _segments.value = list
-        prefs.goveeSegments = list
+    /** Modus "Alle": wie viele Segmente (0–15) leuchten. */
+    fun setCount(n: Int) {
+        val c = n.coerceIn(0, GoveeProtocol.SEGMENTS)
+        if (c == _count.value && _segMode.value == SegMode.ALL) return
+        _count.value = c
+        prefs.goveeCount = c
+        if (_segMode.value == SegMode.ALL) fillAll()
+        if (c > 0 && !_power.value) setPower(true)
     }
 
-    /** Eingebaute Szenen: 33 05 04 <id>. */
+    fun setSegMode(m: SegMode) {
+        if (_segMode.value == m) return
+        _segMode.value = m
+        prefs.goveeSegMode = if (m == SegMode.SINGLE) 1 else 0
+        if (m == SegMode.ALL) fillAll() // zurück zu "Alle": wieder einheitlich
+    }
+
+    /** Modus "Einzeln": Segment [i] mit der Pinselfarbe färben. */
+    fun paintSegment(i: Int) {
+        if (i !in segModel.indices) return
+        val c = _brush.value and 0xFFFFFF
+        if (segModel[i] == c) return
+        segModel[i] = c
+        segmentsChanged()
+        if (!_power.value) setPower(true)
+    }
+
+    /** Modus "Einzeln": Segment [i] ausschalten. */
+    fun clearSegment(i: Int) {
+        if (i !in segModel.indices || segModel[i] == 0) return
+        segModel[i] = 0
+        segmentsChanged()
+    }
+
+    private fun fillAll() {
+        val rgb = _color.value and 0xFFFFFF
+        for (i in segModel.indices) segModel[i] = if (i < _count.value) rgb else 0
+        segmentsChanged()
+    }
+
+    private fun segmentsChanged() {
+        _segments.value = segModel.toList()
+        prefs.goveeSegments = segModel.toList()
+        segDirty = true
+        wake.trySend(Unit)
+    }
+
+    /** Eingebaute Szene. Danach muss der Segment-Stand beim nächsten Mal komplett gesendet werden. */
     fun setScene(id: Int) {
         if (!_power.value) setPower(true)
-        enqueue("color", GoveeProtocol.scene(id))
+        synced = false
+        enqueue("mode", GoveeProtocol.scene(id), 35)
     }
 
-    /** Musikmodus (Mikrofon im Controller). */
+    /** Musikmodus (Mikrofon am Controller). */
     fun setMusicMode(sub: Int) {
         if (!_power.value) setPower(true)
-        enqueue("color", GoveeProtocol.music(sub, _color.value))
+        synced = false
+        enqueue("mode", GoveeProtocol.music(sub, _color.value), 35)
     }
 
-    /** Farb-Befehl manuell ändern (überschreibt die automatische Modell-Erkennung). */
+    /** Farb-Befehl manuell ändern (überschreibt die Modell-Erkennung). */
     fun setColorMode(mode: Int) {
         prefs.goveeColorMode = mode
         _segmented.value = mode == GoveeProtocol.MODE_SEGMENTS
         resendState()
     }
 
-    /** Sendet die aktuellen Werte erneut (z.B. nach Ändern des Farbmodus). */
+    /** Aktuellen Stand erneut senden (z. B. nach Ändern von Farb-Befehl oder Helligkeitsskala). */
     fun resendState() {
         setBrightness(_brightness.value)
-        setColor(_color.value)
+        if (_segmented.value) {
+            synced = false
+            segmentsChanged()
+        } else {
+            setColor(_color.value)
+        }
     }
 
-    // ---------------------------------------------------------------- Verbindung
+    /**
+     * Externe Befehle (z. B. aus Tasker/Automatisierung):
+     * lumen://power/on|off|toggle · lumen://reset · lumen://brightness/50 · lumen://level/8 · lumen://color/RRGGBB
+     * Bis die Verbindung steht, bleiben sie in der Warteschlange.
+     */
+    fun command(uri: Uri): Boolean {
+        val arg = uri.pathSegments.firstOrNull()
+        when (uri.host?.lowercase()) {
+            "power" -> when (arg) {
+                "on" -> setPower(true)
+                "off" -> setPower(false)
+                "toggle" -> togglePower()
+                else -> return false
+            }
+            "reset" -> reset()
+            "brightness" -> setBrightness((arg?.toIntOrNull() ?: return false).coerceIn(1, 100) / 100f)
+            "level" -> {
+                val n = arg?.toIntOrNull() ?: return false
+                setSegMode(SegMode.ALL)
+                setCount(n)
+            }
+            "color" -> {
+                val rgb = arg?.removePrefix("#")?.toIntOrNull(16) ?: return false
+                setColor(0xFF000000.toInt() or rgb)
+            }
+            else -> return false
+        }
+        if (_connection.value == Connection.DISCONNECTED) connect()
+        return true
+    }
+
+    // ================================================================ Verbindung
 
     fun select(device: FoundDevice) {
         stopScan()
         failures = 0
         prefs.goveeAddress = device.address
         prefs.goveeName = device.name
-        // Modell erkennen → passenden Farb-Befehl automatisch setzen (RGBIC-Streifen: Segmente)
-        val model = GoveeProtocol.modelOf(device.name)
-        _model.value = model
-        prefs.goveeColorMode = GoveeProtocol.colorModeFor(model)
-        _segmented.value = prefs.goveeColorMode == GoveeProtocol.MODE_SEGMENTS
         _deviceName.value = device.name
-        disconnectInternal()
-        _connection.value = Connection.DISCONNECTED
-        connect()
+        val m = GoveeProtocol.modelOf(device.name)
+        _model.value = m
+        applyModelDefaults(m)
+        prefs.goveeAutoDetected = true
+        reconnectNow()
     }
 
     fun connect() {
@@ -226,6 +389,19 @@ class GoveeController(
             _lastError.value = "Ungültige Adresse"
             return
         }
+        connectGatt(device)
+        // Direktverbindung steht nach 5 s nicht → gezielt nach genau diesem Gerät suchen
+        connectTimeout?.cancel()
+        connectTimeout = scope.launch {
+            delay(5_000)
+            if (_connection.value == Connection.CONNECTING) {
+                closeGatt()
+                fallbackScan()
+            }
+        }
+    }
+
+    private fun connectGatt(device: BluetoothDevice) {
         _connection.value = Connection.CONNECTING
         _lastError.value = null
         try {
@@ -233,34 +409,73 @@ class GoveeController(
         } catch (e: SecurityException) {
             _connection.value = Connection.DISCONNECTED
             _lastError.value = "Bluetooth-Berechtigung fehlt"
-            return
         }
-        // Manche Stacks melden sich bei einem ausgeschalteten Licht nie zurück.
+    }
+
+    /** Gefilterter Scan nur auf die eigene Leiste (MAC oder exakter Name), dann sofort verbinden. */
+    private val fallbackListener: BleHub.Listener = BleHub.Listener { device, _, record ->
+        val addr = prefs.goveeAddress ?: return@Listener
+        val name = BleHub.parse(record).name
+        if (device.address.equals(addr, true) || (name != null && name == prefs.goveeName)) {
+            scope.launch { onFallbackFound(device) }
+        }
+    }
+
+    private fun onFallbackFound(device: BluetoothDevice) {
+        if (_connection.value != Connection.CONNECTING || gatt != null) return
+        hub.remove(fallbackListener)
+        fallbackJob?.cancel()
+        connectGatt(device)
         connectTimeout?.cancel()
         connectTimeout = scope.launch {
-            delay(15_000)
+            delay(8_000)
             if (_connection.value == Connection.CONNECTING) {
-                _lastError.value = "Licht antwortet nicht – ist es eingeschaltet und in Reichweite?"
-                disconnectInternal()
+                closeGatt()
                 _connection.value = Connection.DISCONNECTED
                 scheduleReconnect()
             }
         }
     }
 
-    private fun disconnectInternal() {
-        reconnectJob?.cancel()
+    private fun fallbackScan() {
+        _connection.value = Connection.CONNECTING
+        hub.add(fallbackListener, fast = true)
+        fallbackJob?.cancel()
+        fallbackJob = scope.launch {
+            delay(20_000)
+            hub.remove(fallbackListener)
+            if (_connection.value == Connection.CONNECTING && gatt == null) {
+                _lastError.value = "Leiste nicht gefunden – ist sie an und die Govee-App geschlossen?"
+                _connection.value = Connection.DISCONNECTED
+                scheduleReconnect()
+            }
+        }
+    }
+
+    private fun closeGatt() {
         gatt?.let { runCatching { it.disconnect(); it.close() } }
         gatt = null
         writeChar = null
         writeAck?.complete(Unit)
     }
 
-    /** Wiederverbinden mit wachsender Pause (4 s … 60 s), damit ein ausgeschaltetes Licht nicht stresst. */
+    /** Abbruch: Queue leeren, Zustand zurücksetzen. */
+    private fun onLinkLost() {
+        connectTimeout?.cancel()
+        knownJob?.cancel()
+        synchronized(queue) { queue.clear() }
+        synced = false
+        segDirty = true
+        powerKnown = false
+        lastStatusAt = 0
+        _connection.value = Connection.DISCONNECTED
+    }
+
+    /** Neu verbinden: 2,5 s, bei wiederholten Fehlern länger (max. 30 s). */
     private fun scheduleReconnect() {
         reconnectJob?.cancel()
         if (prefs.goveeAddress == null) return
-        val wait = (4000L shl failures.coerceAtMost(4)).coerceAtMost(60_000L)
+        val wait = (2_500L shl failures.coerceAtMost(4)).coerceAtMost(30_000L)
         failures++
         reconnectJob = scope.launch {
             delay(wait)
@@ -268,39 +483,44 @@ class GoveeController(
         }
     }
 
-    /** Sofort (neu) verbinden – z. B. Knopf "Neu verbinden" oder Selbstheilung. */
+    /** Sofort (neu) verbinden – Knopf "Neu verbinden" oder Selbstheilung. */
     fun reconnectNow() {
         failures = 0
         reconnectJob?.cancel()
-        connectTimeout?.cancel()
-        disconnectInternal()
+        fallbackJob?.cancel()
+        hub.remove(fallbackListener)
+        closeGatt()
+        onLinkLost()
         if (prefs.goveeAddress == null) {
             _connection.value = Connection.NOT_CONFIGURED
             return
         }
-        _connection.value = Connection.DISCONNECTED
         connect()
     }
 
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
             if (gatt !== g) {
-                // Callback einer alten, bereits verworfenen Verbindung
                 runCatching { g.close() }
                 return
             }
             if (newState == BluetoothProfile.STATE_CONNECTED && status == BluetoothGatt.GATT_SUCCESS) {
                 g.discoverServices()
-            } else if (newState == BluetoothProfile.STATE_DISCONNECTED || status != BluetoothGatt.GATT_SUCCESS) {
-                connectTimeout?.cancel()
-                runCatching { g.close() }
-                if (gatt === g) {
-                    gatt = null
-                    writeChar = null
+                return
+            }
+            val wasConnected = _connection.value == Connection.CONNECTED
+            runCatching { g.close() }
+            gatt = null
+            writeChar = null
+            writeAck?.complete(Unit)
+            scope.launch {
+                onLinkLost()
+                if (!wasConnected && status != BluetoothGatt.GATT_SUCCESS) {
+                    // Direktverbindung gescheitert → gezielt suchen
+                    fallbackScan()
+                } else {
+                    scheduleReconnect()
                 }
-                writeAck?.complete(Unit)
-                _connection.value = Connection.DISCONNECTED
-                scope.launch { scheduleReconnect() }
             }
         }
 
@@ -309,36 +529,34 @@ class GoveeController(
                 g.disconnect()
                 return
             }
-            val ch = g.getService(SERVICE_UUID)?.getCharacteristic(WRITE_UUID)
-                ?: g.services.flatMap { it.characteristics }.firstOrNull { it.uuid == WRITE_UUID }
-            if (ch == null) {
-                _lastError.value = "Kein Govee-Steuerkanal gefunden – falsches Gerät?"
+            val all = g.services.flatMap { it.characteristics }
+            val w = all.firstOrNull { it.uuid == WRITE_UUID }
+            val n = all.firstOrNull { it.uuid == NOTIFY_UUID }
+            // Gegenprüfung: beide Characteristics müssen da sein – sonst ist es nicht die Leiste
+            if (w == null || n == null) {
+                _lastError.value = "Gerät hat keinen Govee-Steuerkanal – falsches Gerät?"
                 g.disconnect()
                 return
             }
-            writeChar = ch
-            // Status-Meldungen abonnieren (Antworten auf aa 01 / aa 04 / aa 05 01).
-            g.getService(SERVICE_UUID)?.getCharacteristic(NOTIFY_UUID)?.let { n ->
-                runCatching {
-                    g.setCharacteristicNotification(n, true)
-                    n.getDescriptor(CCCD_UUID)?.let { d ->
-                        @Suppress("DEPRECATION")
-                        d.value = android.bluetooth.BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-                        @Suppress("DEPRECATION")
-                        g.writeDescriptor(d)
-                    }
-                }
+            writeChar = w
+            g.setCharacteristicNotification(n, true)
+            val d = n.getDescriptor(CCCD_UUID)
+            var started = false
+            if (d != null) {
+                @Suppress("DEPRECATION")
+                d.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                @Suppress("DEPRECATION")
+                started = runCatching { g.writeDescriptor(d) }.getOrDefault(false)
             }
-            connectTimeout?.cancel()
-            failures = 0
-            _connection.value = Connection.CONNECTED
             scope.launch {
-                delay(400)
-                enqueue("q_power", GoveeProtocol.packet(0xAA, 0x01))
-                enqueue("q_bright", GoveeProtocol.packet(0xAA, 0x04))
-                enqueue("q_color", GoveeProtocol.packet(0xAA, 0x05, 0x01))
+                // auf onDescriptorWrite warten; zur Sicherheit nach 1 s trotzdem weiter
+                if (started) delay(1_000)
+                if (_connection.value == Connection.CONNECTING && gatt === g) onReady()
             }
-            wake.trySend(Unit)
+        }
+
+        override fun onDescriptorWrite(g: BluetoothGatt, d: BluetoothGattDescriptor, status: Int) {
+            if (d.uuid == CCCD_UUID) scope.launch { if (_connection.value == Connection.CONNECTING && gatt === g) onReady() }
         }
 
         @Deprecated("Deprecated in Java")
@@ -347,35 +565,76 @@ class GoveeController(
             c.value?.let { handleStatus(it) }
         }
 
-        override fun onDescriptorWrite(g: BluetoothGatt, d: android.bluetooth.BluetoothGattDescriptor, status: Int) {
-            writeAck?.complete(Unit)
-        }
-
         @Deprecated("Deprecated in Java")
         override fun onCharacteristicWrite(g: BluetoothGatt, c: BluetoothGattCharacteristic, status: Int) {
             writeAck?.complete(Unit)
         }
     }
 
-    /** Zeitpunkt der letzten eigenen Änderung – kurz danach keine (veralteten) Statusmeldungen übernehmen. */
-    @Volatile private var lastLocalChange = 0L
+    /** Verbindung steht: Zustand abfragen, Keep-Alive läuft, kompletter Segment-Stand folgt. */
+    private fun onReady() {
+        connectTimeout?.cancel()
+        failures = 0
+        failedWrites = 0
+        synced = false
+        segDirty = true
+        powerKnown = false
+        _connection.value = Connection.CONNECTED
+        _lastError.value = null
+        enqueue("keepalive", GoveeProtocol.KEEP_ALIVE, 35)
+        enqueue("q_bright", GoveeProtocol.QUERY_BRIGHTNESS, 35)
+        // Keine Antwort innerhalb 2 s → angezeigter Power-Zustand gilt
+        knownJob?.cancel()
+        knownJob = scope.launch {
+            delay(2_000)
+            if (!powerKnown && _connection.value == Connection.CONNECTED) {
+                powerKnown = true
+                onPowerKnown()
+            }
+        }
+    }
+
+    private fun onPowerKnown() {
+        if (pendingToggle) {
+            pendingToggle = false
+            setPower(!_power.value)
+        }
+        wake.trySend(Unit)
+    }
 
     private fun handleStatus(v: ByteArray) {
-        if (System.currentTimeMillis() - lastLocalChange < 2000) return
+        lastStatusAt = System.currentTimeMillis()
+        val now = lastStatusAt
         when (val st = GoveeProtocol.parseStatus(v)) {
-            is GoveeProtocol.Status.Power -> _power.value = st.on
-            is GoveeProtocol.Status.Brightness -> {
+            is GoveeProtocol.Status.Power -> {
+                // Antwort kurz nach eigenem Power-Befehl ignorieren – sonst springt der Schalter zurück
+                if (now - lastPowerCmd > 1_000) {
+                    _power.value = st.on
+                    prefs.lastPower = st.on
+                }
+                if (!powerKnown) {
+                    powerKnown = true
+                    scope.launch { onPowerKnown() }
+                } else if (st.on) {
+                    wake.trySend(Unit)
+                }
+            }
+            is GoveeProtocol.Status.Brightness -> if (now - lastBrightCmd > 1_000) {
                 val f = if (prefs.goveeBrightness100) st.raw / 100f else st.raw / 254f
                 _brightness.value = f.coerceIn(0.01f, 1f)
             }
-            is GoveeProtocol.Status.Color -> _color.value = st.argb
+            is GoveeProtocol.Status.Color -> if (!_segmented.value) _color.value = st.argb
             null -> Unit
         }
     }
 
-    private fun enqueue(key: String, bytes: ByteArray) {
-        if (!key.startsWith("q_") && key != "keepalive") lastLocalChange = System.currentTimeMillis()
-        synchronized(pending) { pending[key] = bytes }
+    // ================================================================ Sende-Queue
+
+    private fun enqueue(key: String, bytes: ByteArray, pauseMs: Long) {
+        synchronized(queue) {
+            queue.remove(key) // neuer Wert ersetzt den alten
+            queue[key] = Cmd(bytes, pauseMs)
+        }
         when (_connection.value) {
             Connection.CONNECTED -> wake.trySend(Unit)
             Connection.DISCONNECTED -> connect()
@@ -383,48 +642,74 @@ class GoveeController(
         }
     }
 
-    @Suppress("DEPRECATION")
+    private fun ready() = gatt != null && writeChar != null && _connection.value == Connection.CONNECTED
+
     private suspend fun writerLoop() {
         while (true) {
             wake.receive()
-            while (true) {
-                val g = gatt
-                val ch = writeChar
-                if (g == null || ch == null || _connection.value != Connection.CONNECTED) break
-                val (key, item) = synchronized(pending) {
-                    val k = pending.keys.firstOrNull()
-                    if (k == null) null else k to pending.remove(k)!!
-                } ?: break
-                val ack = CompletableDeferred<Unit>()
-                writeAck = ack
-                ch.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-                ch.value = item
-                val ok = runCatching { g.writeCharacteristic(ch) }.getOrDefault(false)
-                if (ok) {
-                    val acked = withTimeoutOrNull(800) { ack.await() } != null
-                    // Mehrere Schreibvorgänge ohne Antwort = Verbindung hängt → neu verbinden
-                    if (acked) {
-                        silentWrites = 0
-                    } else if (++silentWrites >= 4) {
-                        silentWrites = 0
-                        _lastError.value = "Licht antwortet nicht mehr – verbinde neu"
-                        reconnectNow()
-                        break
-                    }
-                    delay(20)
-                } else {
-                    // Stack beschäftigt (z. B. Descriptor-Write): später erneut, außer ein neuerer Wert kam schon
-                    synchronized(pending) { if (key != "keepalive" && !pending.containsKey(key)) pending[key] = item }
-                    delay(120)
+            while (ready()) {
+                val next = synchronized(queue) {
+                    val k = queue.keys.firstOrNull()
+                    if (k == null) null else queue.remove(k)
                 }
+                if (next != null) {
+                    write(next.bytes)
+                    delay(next.pauseMs)
+                    continue
+                }
+                // Queue leer → jetzt (und erst jetzt) den neuesten Segment-Stand planen
+                if (_segmented.value && segDirty && powerKnown && _power.value) {
+                    segDirty = false
+                    val plan = GoveeProtocol.planSegments(segModel.copyOf(), sent, synced)
+                    var ok = true
+                    for ((rgb, mask) in plan) {
+                        if (!ready() || !write(GoveeProtocol.segment(rgb, mask))) {
+                            ok = false
+                            break
+                        }
+                        for (i in 0 until GoveeProtocol.SEGMENTS) if (mask and (1 shl i) != 0) sent[i] = rgb
+                        delay(30)
+                    }
+                    if (ok) synced = true else segDirty = true
+                    continue
+                }
+                break
             }
         }
     }
 
-    // ---------------------------------------------------------------- Suche
+    /** Ein Schreibvorgang (Write Without Response); wartet kurz auf die Bestätigung des Stacks. */
+    @Suppress("DEPRECATION")
+    private suspend fun write(bytes: ByteArray): Boolean {
+        val g = gatt ?: return false
+        val ch = writeChar ?: return false
+        val ack = CompletableDeferred<Unit>()
+        writeAck = ack
+        ch.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+        ch.value = bytes
+        var ok = runCatching { g.writeCharacteristic(ch) }.getOrDefault(false)
+        if (!ok) {
+            delay(50) // Stack beschäftigt – einmal kurz warten
+            ch.value = bytes
+            ok = runCatching { g.writeCharacteristic(ch) }.getOrDefault(false)
+        }
+        if (!ok) {
+            if (++failedWrites >= 6) {
+                failedWrites = 0
+                _lastError.value = "Senden klappt nicht – verbinde neu"
+                scope.launch { reconnectNow() }
+            }
+            return false
+        }
+        failedWrites = 0
+        withTimeoutOrNull(300) { ack.await() }
+        return true
+    }
 
-    private val scanListener = com.amoo.roomlauncher.ble.BleHub.Listener { device, rssi, record ->
-        val adv = com.amoo.roomlauncher.ble.BleHub.parse(record)
+    // ================================================================ Suche (Einrichtung)
+
+    private val scanListener = BleHub.Listener { device, rssi, record ->
+        val adv = BleHub.parse(record)
         val name = adv.name ?: runCatching { device.name }.getOrNull()
         if (name.isNullOrBlank()) return@Listener
         val f = FoundDevice(name, device.address, rssi, isLikelyGovee(name))
@@ -444,7 +729,7 @@ class GoveeController(
         _scanning.value = true
         hub.add(scanListener, fast = true)
         scanStopJob = scope.launch {
-            delay(15000)
+            delay(15_000)
             stopScan()
         }
     }

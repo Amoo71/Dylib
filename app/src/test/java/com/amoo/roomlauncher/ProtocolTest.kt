@@ -61,14 +61,57 @@ class ProtocolTest {
 
     @Test fun goveeColorClassicAndSegments() {
         val red = 0xFFFF0000.toInt()
-        assertHex("330502ff000000000000000000000000000000cb", GoveeProtocol.color(red, GoveeProtocol.MODE_CLASSIC))
+        // RGB wird auf 8er-Stufen abgerundet: FF → F8
+        assertHex("330502f8000000000000000000000000000000cc", GoveeProtocol.color(red, GoveeProtocol.MODE_CLASSIC))
         // Alle 15 Segmente = Maske FF 7F (wie Home Assistant)
         val all = GoveeProtocol.color(red, GoveeProtocol.MODE_SEGMENTS)
-        assertArrayEquals(hex("33 05 15 01 ff 00 00 00 00 00 00 00 ff 7f"), all.copyOfRange(0, 14))
+        assertArrayEquals(hex("33 05 15 01 f8 00 00 00 00 00 00 00 ff 7f"), all.copyOfRange(0, 14))
         // Nur Segment 1 und 15
         val two = GoveeProtocol.color(red, GoveeProtocol.MODE_SEGMENTS, 0b100000000000001)
         assertEquals(0x01, two[12].toInt() and 0xFF)
         assertEquals(0x40, two[13].toInt() and 0xFF)
+    }
+
+    // ---- H617E: geprüfte Pakete aus dem Bauplan (server.py / Lumen Remote erzeugen exakt diese Bytes)
+
+    @Test fun h617eSegmentOneInF82858() {
+        assertHex("33051501f82858000000000001000000000000ab", GoveeProtocol.segment(0xF82858, 0x0001))
+    }
+
+    @Test fun h617eAllSegmentsBlue() {
+        assertHex("330515010000f80000000000ff7f00000000005a", GoveeProtocol.color(0xFF0000FF.toInt(), GoveeProtocol.MODE_SEGMENTS))
+    }
+
+    @Test fun h617eBrightnessIsOneToHundred() {
+        assertEquals(100, GoveeProtocol.brightness(1f, scale100 = true)[2].toInt())
+        assertEquals(50, GoveeProtocol.brightness(0.5f, scale100 = true)[2].toInt())
+        assertEquals(1, GoveeProtocol.brightness(0f, scale100 = true)[2].toInt()) // 0 nimmt die Leiste nicht an
+    }
+
+    @Test fun h617eIsDetectedFromName() {
+        val m = GoveeProtocol.modelOf("Govee_H617E_774E")
+        assertEquals("H617E", m)
+        assertTrue(GoveeProtocol.isSegmented(m))
+        assertTrue(GoveeProtocol.brightness100(m))
+        assertEquals(GoveeProtocol.MODE_SEGMENTS, GoveeProtocol.colorModeFor(m))
+    }
+
+    @Test fun segmentPlannerSendsFullStateThenOnlyChanges() {
+        val red = 0xF80000
+        val model = IntArray(15) { if (it < 8) red else 0 }
+        val sent = IntArray(15) { -1 }
+        // Nach dem Verbinden: kompletter Stand, ein Paket pro Farbe
+        val full = GoveeProtocol.planSegments(model, sent, synced = false)
+        assertEquals(listOf(red to 0x00FF, 0 to 0x7F00), full)
+        for ((rgb, mask) in full) for (i in 0 until 15) if (mask and (1 shl i) != 0) sent[i] = rgb
+        // Danach nur Änderungen
+        model[3] = 0x0000F8
+        model[12] = 0x0000F8
+        assertEquals(listOf(0x0000F8 to ((1 shl 3) or (1 shl 12))), GoveeProtocol.planSegments(model, sent, synced = true))
+        // Nichts geändert → nichts senden
+        sent[3] = 0x0000F8
+        sent[12] = 0x0000F8
+        assertTrue(GoveeProtocol.planSegments(model, sent, synced = true).isEmpty())
     }
 
     @Test fun goveeChecksumIsXorOfAllBytes() {

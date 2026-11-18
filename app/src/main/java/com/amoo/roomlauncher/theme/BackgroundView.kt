@@ -144,7 +144,16 @@ class BackgroundView(context: Context) : View(context) {
     // ---- Animations-Takt
     private var looping = false
     private var frame = 0L
-    private val frameCallback = Choreographer.FrameCallback { tick() }
+    /** Zeitstempel des aktuellen Bildtakts (vsync) – gleichmäßiger als die Uhrzeit beim Zeichnen. */
+    private var frameTimeNanos = 0L
+    private val frameCallback = Choreographer.FrameCallback { t ->
+        frameTimeNanos = t
+        tick()
+    }
+
+    /** Bewegt sich im Milchglas etwas? (Regen nicht – der ist darin unsichtbar.) */
+    private val backdropAnimated: Boolean
+        get() = (theme.showBubbles && theme.bubbleCount > 0) || (theme.type == BgType.OWN && image?.movie != null)
 
     private val isAnimated: Boolean
         get() = (theme.showRain && theme.rainIntensity > 0.02f) ||
@@ -201,13 +210,14 @@ class BackgroundView(context: Context) : View(context) {
     }
 
     override fun onDraw(canvas: Canvas) {
-        val t = (SystemClock.uptimeMillis() - start) / 1000f
+        val now = if (frameTimeNanos > 0) frameTimeNanos / 1_000_000L else SystemClock.uptimeMillis()
+        val t = (now - start) / 1000f
         val w = width.toFloat()
         val h = height.toFloat()
-        drawScene(canvas, w, h, t)
-        // Milchglas höchstens ~30× pro Sekunde neu berechnen
-        val now = SystemClock.uptimeMillis()
-        if (Backdrop.enabled && (backdropDirty || (isAnimated && now - lastBackdrop >= 32))) {
+        drawScene(canvas, w, h, t, withRain = true)
+        // Milchglas: nur neu berechnen, wenn sich darin sichtbar etwas bewegt (Blasen/GIF), max. ~30×/s.
+        // Regen ist im verschwommenen Glas ohnehin unsichtbar → beim Regen bleibt das Glas statisch (spart viel).
+        if (Backdrop.enabled && (backdropDirty || (backdropAnimated && now - lastBackdrop >= 32))) {
             lastBackdrop = now
             backdropDirty = false
             renderBackdrop(w, h, t)
@@ -220,7 +230,7 @@ class BackgroundView(context: Context) : View(context) {
         val s = bmp.width / w
         c.save()
         c.scale(s, s)
-        drawScene(c, w, h, t)
+        drawScene(c, w, h, t, withRain = false)
         c.restore()
         val bw = bmp.width
         val bh = bmp.height
@@ -233,7 +243,7 @@ class BackgroundView(context: Context) : View(context) {
 
     // ---------------------------------------------------------------- Szene
 
-    private fun drawScene(canvas: Canvas, w: Float, h: Float, t: Float) {
+    private fun drawScene(canvas: Canvas, w: Float, h: Float, t: Float, withRain: Boolean) {
         when (theme.type) {
             BgType.RAIN -> {
                 if (gradientShader == null || gradientW != w.toInt()) {
@@ -279,7 +289,7 @@ class BackgroundView(context: Context) : View(context) {
             }
         }
         if (theme.showBubbles) drawBubbles(canvas, w, h, t)
-        if (theme.showRain) drawRain(canvas, w, h, t)
+        if (withRain && theme.showRain) drawRain(canvas, w, h, t)
     }
 
     private fun drawImage(canvas: Canvas, w: Float, h: Float, t: Float) {
@@ -323,44 +333,57 @@ class BackgroundView(context: Context) : View(context) {
         }
     }
 
+    private val rainCounts = IntArray(6)
+
+    /**
+     * Regen in 3 Tiefen-Ebenen (nah = schneller, länger, heller). Jeder Tropfen = heller Kopf + blasser Schweif,
+     * das wirkt wie Bewegungsunschärfe. Alle Linien einer Ebene gehen in einem drawLines-Aufruf raus.
+     */
     private fun drawRain(canvas: Canvas, w: Float, h: Float, t: Float) {
-        val n = (90 * theme.rainIntensity).roundToInt().coerceIn(0, 300)
+        val n = (110 * theme.rainIntensity).roundToInt().coerceIn(0, 330)
         if (n == 0) return
         // Wind mit langsamen Böen
         val wind = theme.rainWind * (0.75f + 0.35f * sin(t * 0.35f) + 0.15f * sin(t * 1.1f))
-        if (rainLines.size < n * 4 * 3) rainLines = FloatArray(n * 4 * 3)
-        val counts = IntArray(3)
+        val slot = n * 4
+        if (rainLines.size < slot * 6) rainLines = FloatArray(slot * 6)
+        rainCounts.fill(0)
+        val span = w + 40f
         for (i in 0 until n) {
-            val depth = 0.4f + rnd(i, 11) * 0.6f // nah = schneller, länger, heller
+            val depth = 0.4f + rnd(i, 11) * 0.6f
             val layer = when {
                 depth < 0.6f -> 0
                 depth < 0.8f -> 1
                 else -> 2
             }
-            val speed = h * (0.35f + 0.25f * depth) * theme.rainSpeed
-            val len = h * (0.025f + 0.035f * depth)
+            val speed = h * (0.38f + 0.30f * depth) * theme.rainSpeed
+            val len = h * (0.030f + 0.040f * depth)
             val period = (h + len * 2) / speed
-            val phase = rnd(i, 12) * period
-            val p = ((t + phase) % period) / period
+            val p = ((t + rnd(i, 12) * period) % period) / period
             val y = -len + p * (h + len * 2)
-            val drift = wind * 0.35f * y
             val x0 = rnd(i, 13) * (w + h * 0.4f) - h * 0.2f
-            val x = ((x0 + drift) % (w + 40f) + w + 40f) % (w + 40f) - 20f
+            val x = ((x0 + wind * 0.35f * y) % span + span) % span - 20f
             val dx = wind * 0.35f * len
-            val k = (layer * n + counts[layer]) * 4
-            rainLines[k] = x
-            rainLines[k + 1] = y
-            rainLines[k + 2] = x + dx
-            rainLines[k + 3] = y + len
-            counts[layer]++
+            // Schweif (obere 60 %) und Kopf (untere 40 %)
+            val mx = x + dx * 0.6f
+            val my = y + len * 0.6f
+            var k = (layer * 2) * slot + rainCounts[layer * 2] * 4
+            rainLines[k] = x; rainLines[k + 1] = y; rainLines[k + 2] = mx; rainLines[k + 3] = my
+            rainCounts[layer * 2]++
+            k = (layer * 2 + 1) * slot + rainCounts[layer * 2 + 1] * 4
+            rainLines[k] = mx; rainLines[k + 1] = my; rainLines[k + 2] = x + dx; rainLines[k + 3] = y + len
+            rainCounts[layer * 2 + 1]++
         }
         val d = resources.displayMetrics.density
         for (layer in 0 until 3) {
-            if (counts[layer] == 0) continue
             val p = rainPaints[layer]
-            p.alpha = (255 * (0.16f + 0.14f * layer)).toInt()
             p.strokeWidth = (0.9f + 0.55f * layer) * d
-            canvas.drawLines(rainLines, layer * n * 4, counts[layer] * 4, p)
+            for (part in 0 until 2) {
+                val b = layer * 2 + part
+                if (rainCounts[b] == 0) continue
+                // Schweif blass, Kopf kräftiger
+                p.alpha = (255 * (0.11f + 0.11f * layer) * (if (part == 0) 0.55f else 1.25f)).toInt().coerceIn(0, 255)
+                canvas.drawLines(rainLines, b * slot, rainCounts[b] * 4, p)
+            }
         }
     }
 

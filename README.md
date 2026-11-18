@@ -21,14 +21,20 @@ mit drei Glas-Widgets: **Licht**, **AirPods** und **Apps**.
   - *Farbig*: einfarbig oder Verlauf aus bis zu 4 Farben + Blasen (Anzahl, Größe, Tempo, Deckkraft, Farbe)
   - *Eigenes*: eigenes Bild/GIF/PNG/JPEG + optional Regen oder Blasen darüber
 - **Govee-LED** direkt per Bluetooth LE: An/Aus, Helligkeit, Farbe, Presets, Szenen, Musikmodi, Status-Rücklesen.
-  Modell wird am Namen erkannt (z. B. H6199) – RGBIC-Streifen bekommen eine **15-Segment-Leiste** zum Einfärben einzelner Abschnitte.
+  Modell wird am Namen erkannt (z. B. `Govee_H617E_774E`). Für RGBIC-Leisten wie die **H617E** (15 Segmente) gilt der geprüfte Bauplan:
+  Write Without Response, Helligkeit 1–100, RGB in 8er-Stufen, nach jedem Verbinden kompletter Segment-Stand (ein Paket pro Farbe), danach nur Änderungen.
+  - **Widget (kompakt):** Ein/Aus (0,7 s halten = Reset) · Helligkeit · 15-Segment-Leiste · Farbwähler
+  - **Modus „Alle“:** Leiste antippen/ziehen = Anzahl leuchtender Segmente 0–15, Farbe färbt alle leuchtenden
+  - **Modus „Einzeln“:** Farbe = Pinsel, Segment antippen/wischen = malen, halten = ausschalten
+  - **Schnelleinstellungs-Kachel „Licht“** (An/Aus aus jeder App)
+  - **Externe Befehle** (Tasker, NFC …): `lumen://power/on|off|toggle`, `lumen://reset`, `lumen://brightness/50`, `lumen://level/8`, `lumen://color/RRGGBB`
 - **AirPods** (Protokoll nach [GreenPods](https://github.com/andrewkomkov/GreenPods)): Verbinden/Trennen, Akku L/R/Case + Laden + „im Ohr“,
   Geräuschkontrolle Aus / Transparenz / Adaptiv / ANC, Stärke des adaptiven Audios, Gesprächserkennung,
   automatische Ohrerkennung, ANC mit einem AirPod.
 
 ## Installation
 
-1. APK laden: GitHub → *Releases* → **Room Launcher v2.3.0** (neueste) → `RoomLauncher.apk`.
+1. APK laden: GitHub → *Releases* → **Room Launcher v2.4.0** (neueste) → `RoomLauncher.apk`.
 2. Auf dem Tablet installieren („Unbekannte Quellen“ erlauben).
 3. App öffnen, Bluetooth-/Standortberechtigung erlauben und den **Standort einschalten** – ohne ihn findet Android 7 keine Bluetooth-LE-Geräte (Licht, AirPods-Akku). Der Launcher zeigt oben einen Hinweis, falls etwas fehlt.
 4. Home-Taste drücken → **Room Launcher** als Standard wählen („Immer“).
@@ -49,8 +55,9 @@ Einmal in den Android-Bluetooth-Einstellungen koppeln, dann im Zahnrad auswähle
 - Modi & Einstellungen: Apple Accessory Protocol (AAP) über einen sicheren L2CAP-Kanal (PSM `0x1001`,
   Apple-Service-UUID `74ec2172-0bad-4d01-8f77-997b2be0722a`), Socket-Aufbau wie GreenPods.
   Android hat dafür keine offizielle API. Laut GreenPods nehmen die AirPods den Kanal ohne Root
-  zuverlässig erst ab Android 16 QPR3 / 17 an. Auf älteren Tablets zeigt das Widget dann
-  „Steuerkanal fehlgeschlagen“ – Akku, Ohrerkennung und Verbinden funktionieren trotzdem.
+  zuverlässig erst ab Android 16 QPR3 / 17 an. Unter Android 7 erkennt die App das, versucht es nicht endlos weiter
+  und erklärt beim Tippen auf einen Modus, dass er am AirPods-Stiel gewechselt werden muss.
+  Akku, Ohrerkennung und Verbinden funktionieren trotzdem.
 
 ## Bauen
 

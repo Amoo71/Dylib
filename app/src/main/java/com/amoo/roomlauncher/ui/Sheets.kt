@@ -784,22 +784,28 @@ fun Context.goveeSheet(govee: GoveeController, prefs: Prefs, onDismiss: () -> Un
         addView(brightnessSlider(govee, 48), lp().margins(t = dp(8)))
     }
     control.addView(row(powerButton(govee, 76), bright.also { it.layoutParams = lp(0, WRAP, 1f) }, spacingDp = 18))
-    control.section("Farbe")
-    val segLabel = label("", 13f, C.TEXT3)
-    val bar = segmentBar(govee, 36)
+    control.section("Segmente")
+    val segInfo = label("", 13f, C.TEXT3, lines = 2)
+    fun refreshSegInfo() {
+        segInfo.text = if (govee.segMode.value == GoveeController.SegMode.ALL) {
+            "${govee.count.value} von 15 Segmenten leuchten – Leiste antippen/ziehen ändert die Anzahl, die Farbe färbt alle leuchtenden."
+        } else {
+            "Farbe unten = Pinsel. Segment antippen oder darüberwischen = malen, Segment halten = ausschalten."
+        }
+    }
+    segInfo.bind(govee.count) { refreshSegInfo() }
+    segInfo.bind(govee.segMode) { refreshSegInfo() }
     val segBox = column().apply {
-        addView(bar, lp(MATCH, dp(36)))
-        addView(segLabel, lp().margins(t = dp(6), b = dp(12)))
+        addView(segModeSwitch(govee, 42, 14f))
+        addView(segmentBar(govee, 40), lp(MATCH, dp(40)).margins(t = dp(14)))
+        addView(segInfo, lp().margins(t = dp(8)))
     }
-    bar.onSelectionChanged = { m ->
-        val n = Integer.bitCount(m)
-        segLabel.text = if (n == 0) "Keine Auswahl – Farbe gilt für die ganze Leiste" else "$n Segment(e) ausgewählt – jetzt Farbe wählen"
-    }
-    bar.onSelectionChanged(0)
     segBox.bind(govee.segmented) { segBox.visibility = if (it) View.VISIBLE else View.GONE }
     control.addView(segBox)
-    control.addView(colorPicker(govee, bar, 40))
+    control.section("Farbe")
+    control.addView(colorPicker(govee, 40))
     control.addView(presetRow(govee, 40, null), lp().margins(t = dp(14)))
+    control.addView(label("Power-Knopf 0,7 s halten = Reset (an, alle Segmente aus).", 12.5f, C.TEXT3), lp().margins(t = dp(12)))
     control.section("Szenen")
     control.addView(hScroll(*GoveeController.SCENES.map { (id, l) -> Chip(this, l) { govee.setScene(id) } }.toTypedArray()))
     control.section("Musik-Modus (Mikrofon am Controller)")
@@ -900,7 +906,7 @@ fun Context.airPodsSheet(airpods: AirPodsController, prefs: Prefs, onDismiss: ()
     locationHint()?.let { root.addView(it, lp().margins(b = dp(14))) }
 
     root.addView(ringRow(airpods, 80))
-    val ctrl = glassButton("Steuerung verbinden") { airpods.openControl() }
+    val ctrl = glassButton("Steuerung verbinden") { airpods.resync() }
     ctrl.bind(airpods.controlReady) { ctrl.visibility = if (it) View.GONE else View.VISIBLE }
     root.addView(row(connectButton(airpods, highlighted = true), ctrl, spacingDp = 12), lp().margins(t = dp(18)))
 

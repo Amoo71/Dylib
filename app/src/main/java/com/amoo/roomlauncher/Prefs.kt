@@ -62,6 +62,30 @@ class Prefs(context: Context) {
         get() = sp.getString("govee_segments", null)?.split(",")?.mapNotNull { it.toIntOrNull() }?.takeIf { it.size == 15 }
         set(v) = later("govee_segments") { it.putString("govee_segments", v?.joinToString(",")) }
 
+    /** Modell-Erkennung für das eingerichtete Licht schon angewendet? */
+    var goveeAutoDetected: Boolean
+        get() = sp.getBoolean("govee_auto_detected", false)
+        set(v) = sp.edit().putBoolean("govee_auto_detected", v).apply()
+
+    /** Licht-Modus: 0 = "Alle" (Anzahl leuchtender Segmente), 1 = "Einzeln" (Pinsel). */
+    var goveeSegMode: Int
+        get() = sp.getInt("govee_seg_mode", 0)
+        set(v) = sp.edit().putInt("govee_seg_mode", v).apply()
+
+    /** Anzahl leuchtender Segmente im Modus "Alle" (0–15). */
+    var goveeCount: Int = sp.getInt("govee_count", 15)
+        set(v) {
+            field = v
+            later("govee_count") { it.putInt("govee_count", v) }
+        }
+
+    /** Pinselfarbe im Modus "Einzeln". */
+    var goveeBrush: Int = sp.getInt("govee_brush", 0xFFFF2858.toInt())
+        set(v) {
+            field = v
+            later("govee_brush") { it.putInt("govee_brush", v) }
+        }
+
     var airpodsAddress: String?
         get() = sp.getString("airpods_address", null)
         set(v) = sp.edit().putString("airpods_address", v).apply()

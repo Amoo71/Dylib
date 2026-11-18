@@ -53,5 +53,33 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
+
+        <!-- Externe Befehle: lumen://power/toggle usw. (unsichtbar, schließt sich sofort) -->
+        <activity
+            android:name=".CommandActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="lumen" />
+            </intent-filter>
+        </activity>
+
+        <!-- Schnelleinstellungs-Kachel "Licht" -->
+        <service
+            android:name=".LightTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_tile_light"
+            android:label="Licht"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
     </application>
 </manifest>

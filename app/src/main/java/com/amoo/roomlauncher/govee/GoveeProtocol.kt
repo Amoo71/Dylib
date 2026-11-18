@@ -16,6 +16,10 @@ package com.amoo.roomlauncher.govee
  *  - 33 05 04 id              Szene
  *  - 33 05 01 sub [00 r g b]  Musikmodus (Farbe nur bei Spektrum/Rollen)
  *  - AA 01                    Keep-Alive / Status abfragen (Antwort AA 01 xx)
+ *  - AA 04                    Helligkeit abfragen (Antwort AA 04 vv)
+ *
+ * H617E (geprüft mit server.py / "Lumen Remote"): Write Without Response, Helligkeit 1–100,
+ * RGB auf 8er-Stufen abgerundet, Segment-Befehl 0x15 mit Maske (alle 15 = 0x7FFF).
  */
 object GoveeProtocol {
     const val MODE_CLASSIC = 0x02
@@ -44,10 +48,13 @@ object GoveeProtocol {
         return packet(0x33, 0x04, raw)
     }
 
+    /** Jeden Kanal auf 8er-Stufen abrunden – so macht es auch Govees eigene Steuerung. */
+    fun quantize(c: Int): Int = (c / 8) * 8
+
     fun color(argb: Int, mode: Int, segmentMask: Int = ALL_SEGMENTS): ByteArray {
-        val r = (argb shr 16) and 0xFF
-        val g = (argb shr 8) and 0xFF
-        val b = argb and 0xFF
+        val r = quantize((argb shr 16) and 0xFF)
+        val g = quantize((argb shr 8) and 0xFF)
+        val b = quantize(argb and 0xFF)
         return if (mode == MODE_SEGMENTS) {
             val m = segmentMask and ALL_SEGMENTS
             packet(0x33, 0x05, 0x15, 0x01, r, g, b, 0, 0, 0, 0, 0, m and 0xFF, (m shr 8) and 0xFF)
@@ -67,6 +74,25 @@ object GoveeProtocol {
         }
 
     val KEEP_ALIVE: ByteArray get() = packet(0xAA, 0x01)
+    val QUERY_BRIGHTNESS: ByteArray get() = packet(0xAA, 0x04)
+
+    /** Segmentpaket: [rgb] (ohne Alpha, 0 = aus) für alle Segmente in [mask]. */
+    fun segment(rgb: Int, mask: Int): ByteArray = color(rgb, MODE_SEGMENTS, mask)
+
+    /**
+     * Plant die Segmentpakete: ein Paket pro Farbe, mit allen Segmenten dieser Farbe in der Maske.
+     * [synced] = false → kompletter Stand (nach dem Verbinden – sonst ignoriert die Leiste Einzelsegmente),
+     * [synced] = true → nur Segmente, die sich gegenüber [sent] geändert haben.
+     */
+    fun planSegments(model: IntArray, sent: IntArray, synced: Boolean): List<Pair<Int, Int>> {
+        val groups = LinkedHashMap<Int, Int>()
+        for (i in 0 until SEGMENTS) {
+            val c = model[i] and 0xFFFFFF
+            if (synced && (sent[i] and 0xFFFFFF) == c) continue
+            groups[c] = (groups[c] ?: 0) or (1 shl i)
+        }
+        return groups.map { (rgb, mask) -> rgb to mask }
+    }
 
     // ---------------------------------------------------------------- Modell-Erkennung
 
@@ -79,6 +105,7 @@ object GoveeProtocol {
      * Liste aus der Home-Assistant-Integration plus verbreitete RGBIC-Streifen der gleichen Generation.
      */
     private val SEGMENTED = setOf(
+        "H617A", "H617C", "H617E", "H617F",
         "H6053", "H6072", "H6102", "H6199",
         "H619A", "H619B", "H619C", "H619D", "H619E", "H619Z",
         "H6172", "H6173", "H6175", "H6176",
@@ -89,6 +116,11 @@ object GoveeProtocol {
     private val NEW_COLOR = setOf("H6008", "H6046", "H6047", "H6051", "H6056", "H6059", "H6061", "H6062", "H6065", "H6076")
 
     fun isSegmented(model: String?) = model != null && model in SEGMENTED
+
+    /** Modelle, deren Helligkeit 1–100 statt 0–254 läuft (H617E laut Mitschnitt). */
+    private val BRIGHTNESS_100 = setOf("H617A", "H617C", "H617E", "H617F", "H6008", "H6046", "H6047", "H6076")
+
+    fun brightness100(model: String?) = model != null && model in BRIGHTNESS_100
 
     /** Passender Farb-Befehl für ein Modell (unbekannt → klassisch). */
     fun colorModeFor(model: String?): Int = when {

@@ -100,6 +100,11 @@ class AirPodsController(
     private val _controlStatus = MutableStateFlow("Steuerkanal nicht verbunden")
     val controlStatus: StateFlow<String> = _controlStatus.asStateFlow()
 
+    private val _controlUnsupported = MutableStateFlow(false)
+    /** true = dieser Bluetooth-Stack lässt Apples Steuerkanal nicht zu (z. B. Android 7 ohne Root). */
+    val controlUnsupported: StateFlow<Boolean> = _controlUnsupported.asStateFlow()
+    private var deadChannels = 0
+
     private val _deviceName = MutableStateFlow<String?>(null)
     val deviceName: StateFlow<String?> = _deviceName.asStateFlow()
 
@@ -159,7 +164,9 @@ class AirPodsController(
                     bindProfiles()
                     refreshConnectionState()
                     // Audio verbunden, Steuerkanal aber weg → still neu versuchen (max. alle 30 s)
-                    if (_audioConnected.value && !_controlReady.value && controlJob?.isActive != true && retries < 3) {
+                    if (_audioConnected.value && !_controlReady.value && !_controlUnsupported.value &&
+                        controlJob?.isActive != true && retries < 3
+                    ) {
                         retries++
                         openControl()
                     }
@@ -191,6 +198,8 @@ class AirPodsController(
     fun resync() {
         closeControl()
         retries = 0
+        deadChannels = 0
+        _controlUnsupported.value = false
         bindProfiles()
         refreshConnectionState()
         if (_audioConnected.value) openControl()
@@ -289,23 +298,52 @@ class AirPodsController(
 
     private fun send(packet: ByteArray, quiet: Boolean = false): Boolean {
         if (output == null || !_controlReady.value) {
-            if (!quiet) context.toast("Steuerkanal nicht verbunden – verbinde neu…")
-            openControl()
+            if (!quiet) explainUnavailable()
+            if (!_controlUnsupported.value && _audioConnected.value) openControl()
             return false
         }
         scope.launch(Dispatchers.IO) {
             try {
                 write(packet)
             } catch (e: IOException) {
-                _controlStatus.value = "Senden fehlgeschlagen: ${e.message}"
+                _controlStatus.value = "Verbindung zum Steuerkanal abgerissen – verbinde neu"
                 closeControl()
             }
         }
         return true
     }
 
+    private var lastExplain = 0L
+
+    /** Freundliche Erklärung statt kryptischer Fehler (höchstens alle 4 s). */
+    fun explainUnavailable() {
+        val now = System.currentTimeMillis()
+        if (now - lastExplain < 4000) return
+        lastExplain = now
+        context.toast(
+            when {
+                !_audioConnected.value -> "Erst die AirPods verbinden"
+                _controlUnsupported.value ->
+                    "Android 7 blockiert Apples Steuerkanal – Modus bitte am AirPods-Stiel wechseln (gedrückt halten)"
+                else -> "Steuerkanal wird verbunden …"
+            },
+        )
+    }
+
+    /** Typische Socket-Fehler verständlich machen. */
+    private fun friendly(e: Throwable): String {
+        val m = e.message.orEmpty().lowercase()
+        return when {
+            "broken pipe" in m || "socket might closed" in m || "read failed" in m ->
+                "Android hat den Apple-Kanal geschlossen"
+            "refused" in m -> "AirPods haben den Kanal abgelehnt"
+            "timeout" in m || "timed out" in m -> "keine Antwort (Zeitüberschreitung)"
+            else -> e.message ?: e.javaClass.simpleName
+        }
+    }
+
     fun openControl() {
-        if (controlJob?.isActive == true) return
+        if (controlJob?.isActive == true || _controlUnsupported.value) return
         val dev = device() ?: run {
             _controlStatus.value = "Keine AirPods ausgewählt"
             return
@@ -315,7 +353,7 @@ class AirPodsController(
             val s = try {
                 createAapSocket(dev)
             } catch (e: Throwable) {
-                _controlStatus.value = "Steuerkanal: Android erlaubt den Apple-Kanal nicht (${e.javaClass.simpleName})"
+                markUnsupported("Android erlaubt den Apple-Kanal nicht")
                 return@launch
             }
             var frames = 0
@@ -327,15 +365,11 @@ class AirPodsController(
                 write(Aap.HANDSHAKE)
                 write(Aap.SET_HOST_CAPABILITIES)
                 write(Aap.REQUEST_NOTIFICATIONS)
-                _controlReady.value = true
-                _controlStatus.value = "Steuerkanal verbunden"
-                // Wächter: ein Kanal, der nichts sendet, ist tot (z.B. hält ein anderes Gerät ihn).
+                // Erst bereit, wenn die AirPods wirklich antworten – sonst landet der nächste Befehl im Nichts
+                _controlStatus.value = "Warte auf Antwort der AirPods…"
                 val watchdog = launch {
                     delay(6000)
-                    if (frames == 0) {
-                        _controlStatus.value = "Kanal offen, aber AirPods antworten nicht – evtl. hält ein anderes Gerät/App ihn"
-                        runCatching { s.close() }
-                    }
+                    if (frames == 0) runCatching { s.close() }
                 }
                 val input = s.inputStream
                 val buf = ByteArray(4096)
@@ -344,28 +378,43 @@ class AirPodsController(
                     if (n <= 0) break
                     for (packet in Aap.split(buf.copyOf(n))) {
                         frames++
+                        if (frames == 1) {
+                            deadChannels = 0
+                            _controlReady.value = true
+                            _controlStatus.value = "Steuerkanal verbunden"
+                        }
                         handlePacket(packet)
                     }
                 }
                 watchdog.cancel()
                 if (frames > 0) _controlStatus.value = "Steuerkanal getrennt"
             } catch (e: IOException) {
-                if (frames == 0) {
-                    _controlStatus.value = "Steuerkanal fehlgeschlagen: ${e.message ?: "IO"} – dieser Bluetooth-Stack lässt AAP nicht zu"
-                } else {
-                    _controlStatus.value = "Steuerkanal getrennt"
-                }
+                if (frames > 0) _controlStatus.value = "Steuerkanal getrennt (${friendly(e)})"
             } finally {
                 closeSocketOnly()
             }
-            // Bei getrennter, aber noch verbundener Audio-Verbindung einmal neu versuchen.
-            if (frames > 0 && _audioConnected.value && retries < 3) {
+            if (frames == 0) {
+                // Kanal ging auf, aber nichts kam zurück: typisch für Android-Stacks ohne AAP-Unterstützung
+                if (++deadChannels >= 2) {
+                    markUnsupported("AirPods antworten auf diesem Android nicht")
+                } else {
+                    _controlStatus.value = "Keine Antwort – versuche es gleich noch einmal"
+                }
+            } else if (_audioConnected.value && retries < 3) {
+                // War schon verbunden und ist abgerissen → einmal neu versuchen
                 retries++
                 delay(3000)
                 controlJob = null
                 openControl()
             }
         }
+    }
+
+    /** Apples Steuerkanal geht auf diesem Gerät nicht – nicht weiter versuchen, sondern erklären. */
+    private fun markUnsupported(reason: String) {
+        _controlUnsupported.value = true
+        _controlStatus.value = "$reason. ANC/Transparenz bitte am AirPods-Stiel wechseln (gedrückt halten). " +
+            "Akku, Ohrerkennung und Verbinden funktionieren trotzdem."
     }
 
     private fun closeSocketOnly() {
