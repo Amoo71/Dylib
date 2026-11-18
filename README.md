@@ -10,7 +10,8 @@ mit Widgets für **Uhr** und **Licht**, deinen **Apps** und zwei Mini-Widgets ob
   Ist der Platz belegt, landet das Element im nächsten freien Feld; ein Schatten zeigt beim Ziehen die Landestelle.
   **Leere Stelle** (oder App) gedrückt halten → Bearbeiten: alles wackelt weich, **ziehen** zum Verschieben, **„–“** entfernen, **„Größe“** (Klein/Mittel).
   **Widget** gedrückt halten → seine **große Ansicht** wächst aus dem Widget heraus.
-- **Widgets**: Uhr · Licht (Govee) – klein oder mittel. Pro Widget abschaltbarer **Glas-Container** (Einstellungen → Widgets) – ohne ist es durchsichtig wie die Uhr.
+- **Widgets**: Uhr · Licht (Govee) – klein oder mittel. Pro Widget abschaltbarer **Glas-Container** (im Bearbeiten-Modus „Glas: an/aus“ unten links am Widget oder unter Einstellungen → Widgets) – ohne ist es durchsichtig wie die Uhr.
+  Die Uhr zeigt klein und mittig den **Akku des Tablets** (beim Laden mit Blitz, unter 15 % rot).
 - **Mini-Widgets oben**: links **AirPods** (Symbol, Name, verbunden/nicht verbunden), rechts **Licht**
   (leuchtender Farbpunkt, an/aus mit Helligkeit, Mond + Restzeit beim Nacht-Timer, kleiner Power-Knopf). Antippen = große Ansicht.
 - **Dock** unten (Liquid Glass): an/aus, Apps hinzufügen, per Gedrückthalten sortieren/entfernen.
@@ -42,7 +43,7 @@ mit Widgets für **Uhr** und **Licht**, deinen **Apps** und zwei Mini-Widgets ob
 
 ## Installation
 
-1. APK laden: GitHub → *Releases* → **Room Launcher v2.7.0** (neueste) → `RoomLauncher.apk`.
+1. APK laden: GitHub → *Releases* → **Room Launcher v2.7.1** (neueste) → `RoomLauncher.apk`.
 2. Auf dem Tablet installieren („Unbekannte Quellen“ erlauben).
 3. App öffnen, Bluetooth-/Standortberechtigung erlauben und den **Standort einschalten** – ohne ihn findet Android 7 keine Bluetooth-LE-Geräte (für die Licht-Suche). Der Launcher zeigt oben einen Hinweis, falls etwas fehlt.
 4. Home-Taste drücken → **Room Launcher** als Standard wählen („Immer“).

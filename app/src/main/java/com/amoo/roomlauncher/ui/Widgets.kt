@@ -87,6 +87,10 @@ fun Context.clockWidget(size: WidgetSize, glass: Boolean = false): View {
         bottomMargin = dp(6)
     })
     card.addView(date, lp(MATCH, WRAP))
+    card.addView(batteryRow(small), lp(WRAP, WRAP).apply {
+        gravity = Gravity.CENTER_HORIZONTAL
+        topMargin = dp(if (small) 6 else 10)
+    })
     val tick = object : Runnable {
         override fun run() {
             val now = Date()
@@ -106,6 +110,96 @@ fun Context.clockWidget(size: WidgetSize, glass: Boolean = false): View {
     })
     tick.run()
     return card
+}
+
+/** Tablet-Akku: kleines Batterie-Symbol + Prozent, mittig unter der Uhr. Laden = grüner Blitz, ≤ 15 % = rot. */
+private fun Context.batteryRow(small: Boolean): LinearLayout {
+    val icon = BatteryGlyph(this)
+    val pct = label("", if (small) 11.5f else 13f, C.TEXT2).apply { setShadowLayer(dpf(6), 0f, dpf(1), 0x8C000000.toInt()) }
+    val row = row(icon.also { it.layoutParams = lp(dp(if (small) 20 else 23), dp(if (small) 10 else 12)) }, pct, spacingDp = 6)
+    val receiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(c: Context, i: android.content.Intent) {
+            val level = i.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1)
+            val scale = i.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, 100).coerceAtLeast(1)
+            val status = i.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1)
+            val p = if (level < 0) -1 else level * 100 / scale
+            val charging = status == android.os.BatteryManager.BATTERY_STATUS_CHARGING || status == android.os.BatteryManager.BATTERY_STATUS_FULL
+            icon.set(p, charging)
+            pct.text = if (p < 0) "" else "$p %"
+            pct.setTextColor(if (p in 0..15 && !charging) C.RED else C.TEXT2)
+            row.visibility = if (p < 0) View.GONE else View.VISIBLE
+        }
+    }
+    row.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+        override fun onViewAttachedToWindow(v: View) {
+            // Sticky-Broadcast: liefert sofort den aktuellen Stand
+            runCatching { registerReceiver(receiver, android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED)) }
+                .getOrNull()?.let { receiver.onReceive(this@batteryRow, it) }
+        }
+
+        override fun onViewDetachedFromWindow(v: View) {
+            runCatching { unregisterReceiver(receiver) }
+        }
+    })
+    return row
+}
+
+/** Kleines Batterie-Symbol mit Füllstand; beim Laden grün mit Blitz. */
+private class BatteryGlyph(context: Context) : View(context) {
+    private var percent = 0
+    private var charging = false
+    private val outline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        color = C.TEXT2
+    }
+    private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val bolt = android.graphics.Path()
+    private val r = RectF()
+
+    fun set(p: Int, c: Boolean) {
+        if (p == percent && c == charging) return
+        percent = p
+        charging = c
+        invalidate()
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        val h = height.toFloat()
+        val w = width.toFloat()
+        val sw = maxOf(1f, h * 0.1f)
+        outline.strokeWidth = sw
+        val bodyW = w - h * 0.18f
+        r.set(sw / 2, sw / 2, bodyW - sw / 2, h - sw / 2)
+        canvas.drawRoundRect(r, h * 0.25f, h * 0.25f, outline)
+        // Pol
+        fill.color = C.TEXT2
+        r.set(bodyW + sw * 0.3f, h * 0.32f, w, h * 0.68f)
+        canvas.drawRoundRect(r, h * 0.1f, h * 0.1f, fill)
+        // Füllstand
+        val p = percent.coerceIn(0, 100) / 100f
+        fill.color = when {
+            charging -> C.GREEN
+            percent <= 15 -> C.RED
+            else -> C.TEXT
+        }
+        val inset = sw * 1.6f
+        r.set(inset, inset, inset + (bodyW - inset * 2) * p, h - inset)
+        if (p > 0f) canvas.drawRoundRect(r, h * 0.12f, h * 0.12f, fill)
+        if (charging) {
+            val cx = bodyW / 2
+            val cy = h / 2
+            bolt.reset()
+            bolt.moveTo(cx + h * 0.08f, cy - h * 0.42f)
+            bolt.lineTo(cx - h * 0.22f, cy + h * 0.06f)
+            bolt.lineTo(cx - h * 0.01f, cy + h * 0.06f)
+            bolt.lineTo(cx - h * 0.08f, cy + h * 0.42f)
+            bolt.lineTo(cx + h * 0.22f, cy - h * 0.06f)
+            bolt.lineTo(cx + h * 0.01f, cy - h * 0.06f)
+            bolt.close()
+            fill.color = 0xFF0B0B0D.toInt()
+            canvas.drawPath(bolt, fill)
+        }
+    }
 }
 
 // ------------------------------------------------------------------ Licht (Lumen-Oberfläche)

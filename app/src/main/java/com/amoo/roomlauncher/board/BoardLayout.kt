@@ -24,7 +24,16 @@ import kotlin.math.sin
  * Ein Feld auf dem Board. [sizeLabel] != null -> Größe ist änderbar.
  * [col]/[row] = fester Platz im Raster (Board); im Dock (eine Reihe) zählt nur die Reihenfolge.
  */
-data class Cell(val id: String, val w: Int, val h: Int, val sizeLabel: String? = null, val col: Int = 0, val row: Int = 0)
+data class Cell(
+    val id: String,
+    val w: Int,
+    val h: Int,
+    val sizeLabel: String? = null,
+    val col: Int = 0,
+    val row: Int = 0,
+    /** Widgets: Glas-Container an/aus (null = keine Option, z. B. Apps). */
+    val glass: Boolean? = null,
+)
 
 data class Placement(val cell: Cell, val col: Int, val row: Int)
 
@@ -46,6 +55,9 @@ class BoardLayout(
     interface Listener {
         fun onEnterEdit()
         fun onMove(id: String, toIndex: Int) {}
+
+        /** Bearbeiten: Glas-Container des Widgets umschalten. */
+        fun onToggleGlass(id: String) {}
 
         /** Board: Element an [col]/[row] abgelegt. */
         fun onDrop(id: String, col: Int, row: Int) {}
@@ -298,6 +310,13 @@ class BoardLayout(
                         listener?.onResize(p.cell.id)
                         return true
                     }
+                    val glass = p.cell.glass
+                    if (glass != null && glassRect(v, glass).contains(x, y)) {
+                        handledByBadge = true
+                        performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                        listener?.onToggleGlass(p.cell.id)
+                        return true
+                    }
                 }
                 if (!longPressFired) prepareCandidate(x, y)
             }
@@ -472,6 +491,16 @@ class BoardLayout(
         return RectF(right - tw - dp(24), bottom - dp(28), right, bottom)
     }
 
+    private fun glassText(on: Boolean) = if (on) "Glas: an" else "Glas: aus"
+
+    /** Knopf unten links: Glas-Container an/aus. */
+    private fun glassRect(v: View, on: Boolean): RectF {
+        val tw = badgeText.measureText(glassText(on))
+        val left = v.left + v.translationX + dp(6)
+        val bottom = v.bottom + v.translationY - dp(6)
+        return RectF(left, bottom - dp(28), left + tw + dp(24), bottom)
+    }
+
     override fun dispatchDraw(canvas: Canvas) {
         // Schatten der Landestelle hinter allem
         val t = dropTarget
@@ -496,6 +525,13 @@ class BoardLayout(
             canvas.drawCircle(cx, cy, r, badgeFill)
             canvas.drawCircle(cx, cy, r, badgeStroke)
             canvas.drawLine(cx - r * 0.45f, cy, cx + r * 0.45f, cy, badgeLine)
+            p.cell.glass?.let { on ->
+                val gr = glassRect(v, on)
+                tmp.set(gr)
+                canvas.drawRoundRect(tmp, dp(14).toFloat(), dp(14).toFloat(), badgeFill)
+                canvas.drawRoundRect(tmp, dp(14).toFloat(), dp(14).toFloat(), badgeStroke)
+                canvas.drawText(glassText(on), gr.left + dp(12), gr.centerY() + dp(4), badgeText)
+            }
             val label = p.cell.sizeLabel ?: continue
             val rr = resizeRect(v, label)
             tmp.set(rr)

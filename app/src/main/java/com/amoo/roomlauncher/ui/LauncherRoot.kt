@@ -133,6 +133,10 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
         board.listener = object : BoardLayout.Listener {
             override fun onEnterEdit() = setEdit(true)
             override fun onDrop(id: String, col: Int, row: Int) = app.board.place(id, col, row)
+            override fun onToggleGlass(id: String) {
+                val w = app.board.items.value.firstOrNull { it.id == id } as? BoardItem.Widget ?: return
+                app.board.setGlass(id, !w.glass)
+            }
             override fun onRemove(id: String) = app.board.remove(id)
             override fun onResize(id: String) = app.board.cycleSize(id)
             override fun onEmptyTap() = setEdit(false)
@@ -205,7 +209,7 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
         val items = app.board.items.value
         val cells = items.map { item ->
             when (item) {
-                is BoardItem.Widget -> Cell(item.id, item.w, item.h, if (item.kind.sizes.size > 1) item.size.label else null, item.col, item.row)
+                is BoardItem.Widget -> Cell(item.id, item.w, item.h, if (item.kind.sizes.size > 1) item.size.label else null, item.col, item.row, item.glass)
                 is BoardItem.App -> Cell(item.id, 1, 1, null, item.col, item.row)
             }
         }
