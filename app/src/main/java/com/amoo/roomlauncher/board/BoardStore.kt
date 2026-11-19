@@ -18,6 +18,7 @@ enum class WidgetKind(val title: String, val sizes: List<WidgetSize>, val defaul
     CLOCK("Uhr", listOf(WidgetSize.S, WidgetSize.M), false),
     LIGHT("Licht", listOf(WidgetSize.S, WidgetSize.M), true),
     AIRPODS("AirPods", listOf(WidgetSize.S, WidgetSize.M), true),
+    AIRPLAY("AirPlay", listOf(WidgetSize.S, WidgetSize.M), true),
 }
 
 /** Ein Element auf dem Board mit festem Platz ([col]/[row] = Zelle oben links). */

@@ -492,6 +492,7 @@ private fun Context.widgetsTab(app: RoomApp): View {
                         WidgetKind.CLOCK -> tr("Uhrzeit, Datum und Tablet-Akku", "Time, date and tablet battery")
                         WidgetKind.LIGHT -> tr("Govee-LED: 3D-Ring, Farbrad, Helligkeit, Nacht-Timer", "Govee LED: 3D ring, color wheel, brightness, sleep timer")
                         WidgetKind.AIRPODS -> tr("Name, Verbindung, Verbinden/Trennen", "Name, connection, connect/disconnect")
+                        WidgetKind.AIRPLAY -> tr("AirPlay Server (jqssun): Status, läuft gerade, Steuerung", "AirPlay Server (jqssun): status, now playing, controls")
                     },
                     13f, C.TEXT3,
                 ),

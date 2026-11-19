@@ -87,6 +87,17 @@
             </intent-filter>
         </receiver>
 
+        <!-- AirPlay-Widget: liest nur die Medien-Sitzung der AirPlay-App (Titel, Cover, Steuerung) -->
+        <service
+            android:name=".airplay.MediaListener"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
         <!-- Schnelleinstellungs-Kachel "Licht" -->
         <service
             android:name=".LightTileService"

@@ -29,6 +29,7 @@ class RoomApp : Application() {
     lateinit var govee: GoveeController
         private set
     lateinit var airpods: AirPodsController
+    lateinit var airplay: com.amoo.roomlauncher.airplay.AirPlayController
         private set
     lateinit var apps: AppRepository
         private set
@@ -67,6 +68,8 @@ class RoomApp : Application() {
         govee = GoveeController(this, prefs, appScope, ble)
         govee.onSleepEnd = { SleepActions.run(this) }
         airpods = AirPodsController(this, prefs, appScope)
+        airplay = com.amoo.roomlauncher.airplay.AirPlayController(this, appScope)
+        airplay.start()
         apps = AppRepository(this, appScope)
         board = BoardStore(this)
         theme = ThemeStore(this)

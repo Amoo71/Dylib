@@ -79,8 +79,11 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
         // ---- Oben: AirPods-Abzeichen (rechts) · Board · Dock
         val content = context.column().apply { setPadding(dp(30), dp(10), dp(30), dp(14)) }
         val topBar = FrameLayout(activity)
-        // Zwei Mini-Widgets: AirPods links, Licht rechts
-        topBar.addView(airPodsBadge(), LayoutParams(WRAP, WRAP, Gravity.START or Gravity.CENTER_VERTICAL))
+        // Mini-Widgets: AirPods und AirPlay links, Licht rechts
+        topBar.addView(
+            context.row(airPodsBadge(), airPlayBadge(), spacingDp = 10),
+            LayoutParams(WRAP, WRAP, Gravity.START or Gravity.CENTER_VERTICAL),
+        )
         topBar.addView(lightBadge(), LayoutParams(WRAP, WRAP, Gravity.END or Gravity.CENTER_VERTICAL))
         content.addView(topBar, lp(MATCH, dp(38)).margins(b = dp(10)))
         boardScroll.isVerticalScrollBarEnabled = false
@@ -227,9 +230,10 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
                 try {
                     when (val item = items.first { it.id == cell.id }) {
                         is BoardItem.Widget -> context.widgetView(
-                            item.kind, item.size, app.govee, app.airpods, item.glass,
+                            item.kind, item.size, app.govee, app.airpods, app.airplay, item.glass,
                             onOpenLight = { if (!editMode) showOverlay(context.goveeSheet(app.govee, app.prefs) { closeOverlay() }) },
                             onOpenAirPods = { if (!editMode) showOverlay(context.airPodsSheet(app.airpods, app.prefs) { closeOverlay() }) },
+                            onOpenAirPlay = { if (!editMode) showOverlay(context.airPlaySheet(app.airplay) { closeOverlay() }) },
                         )
                         is BoardItem.App -> {
                             val entry = appMap[item.component]
@@ -362,6 +366,7 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
         val sheet = when (item.kind) {
             com.amoo.roomlauncher.board.WidgetKind.LIGHT -> context.goveeSheet(app.govee, app.prefs) { closeOverlay() }
             com.amoo.roomlauncher.board.WidgetKind.AIRPODS -> context.airPodsSheet(app.airpods, app.prefs) { closeOverlay() }
+            com.amoo.roomlauncher.board.WidgetKind.AIRPLAY -> context.airPlaySheet(app.airplay) { closeOverlay() }
             com.amoo.roomlauncher.board.WidgetKind.CLOCK -> context.clockSheet(
                 onEdit = {
                     closeOverlay()
@@ -439,6 +444,47 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
         badge.bind(g.segments) { refresh() }
         badge.bind(g.sleepAt) { refresh() }
         badge.everyWhileAttached(30_000) { refresh() }
+        return badge
+    }
+
+    /** Mini-Widget AirPlay: Symbol, Status (bereit/aus/spielt) bzw. der laufende Titel. Tippen = große Ansicht. */
+    private fun airPlayBadge(): View {
+        val ctx: Context = context
+        val a = app.airplay
+        val glyph = AirPlayGlyph(ctx)
+        val title = ctx.label("AirPlay", 13.5f, bold = true)
+        val state = ctx.label("", 12.5f, C.TEXT2).apply { maxWidth = dp(190) }
+        val dot = ctx.dot(C.TEXT3, 7)
+        val badge = ctx.row(
+            glyph.also { it.layoutParams = lp(dp(18), dp(18)) },
+            title,
+            dot.also { it.layoutParams = lp(dp(7), dp(7)).margins(l = dp(4)) },
+            state,
+            spacingDp = 7,
+        ).apply {
+            background = GlassDrawable(ctx, 19f, 1.1f)
+            setPadding(dp(12), dp(7), dp(16), dp(7))
+            pressable { showOverlay(ctx.airPlaySheet(a) { closeOverlay() }, this) }
+        }
+        fun refresh() {
+            val np = a.nowPlaying.value
+            val text = when {
+                !a.installed.value -> com.amoo.roomlauncher.Lang.auto("nicht installiert")
+                np?.title != null && np.playing -> "♪ " + np.title
+                a.running.value -> com.amoo.roomlauncher.Lang.auto("bereit")
+                else -> com.amoo.roomlauncher.Lang.auto("aus")
+            }
+            if (state.text.toString() != text) state.text = text
+            val c = if (a.running.value) C.GREEN else C.TEXT3
+            if ((dot.background as? RoundDrawable)?.color != c) {
+                (dot.background as? RoundDrawable)?.color = c
+                dot.invalidate()
+            }
+            badge.alpha = if (a.running.value) 1f else 0.8f
+        }
+        badge.bind(a.installed) { refresh() }
+        badge.bind(a.running) { refresh() }
+        badge.bind(a.nowPlaying) { refresh() }
         return badge
     }
 

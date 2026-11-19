@@ -74,6 +74,7 @@ class MainActivity : Activity() {
         super.onResume()
         hideSystemBars()
         app.apps.refresh()
+        app.airplay.refresh() // z. B. Mitteilungszugriff gerade erlaubt oder Server gestartet
         if (BtPerms.granted(this)) app.startBluetooth()
         root.refreshBanner()
     }

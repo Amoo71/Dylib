@@ -33,13 +33,16 @@ fun Context.widgetView(
     size: WidgetSize,
     govee: GoveeController,
     airpods: AirPodsController,
+    airplay: com.amoo.roomlauncher.airplay.AirPlayController,
     glass: Boolean,
     onOpenLight: () -> Unit,
     onOpenAirPods: () -> Unit,
+    onOpenAirPlay: () -> Unit,
 ): View = when (kind) {
     WidgetKind.CLOCK -> clockWidget(size, glass)
     WidgetKind.LIGHT -> lightWidget(size, govee, glass, onOpenLight)
     WidgetKind.AIRPODS -> airPodsWidget(size, airpods, glass, onOpenAirPods)
+    WidgetKind.AIRPLAY -> airPlayWidget(size, airplay, glass, onOpenAirPlay)
 }
 
 /** Führt [block] sofort und dann alle [periodMs] aus, solange die View im Fenster hängt. */

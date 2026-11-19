@@ -10,7 +10,7 @@ mit Widgets für **Uhr** und **Licht**, deinen **Apps** und zwei Mini-Widgets ob
   Ist der Platz belegt, landet das Element im nächsten freien Feld; ein Schatten zeigt beim Ziehen die Landestelle.
   **Leere Stelle** (oder App) gedrückt halten → Bearbeiten: alles wackelt weich, **ziehen** zum Verschieben, **„–“** entfernen, **„Größe“** (Klein/Mittel).
   **Widget** gedrückt halten → seine **große Ansicht** wächst aus dem Widget heraus.
-- **Widgets**: Uhr · Licht (Govee) · AirPods – klein oder mittel. Pro Widget abschaltbarer **Glas-Container** (im Bearbeiten-Modus „Glas: an/aus“ unten links am Widget oder unter Einstellungen → Widgets) – ohne ist es durchsichtig wie die Uhr.
+- **Widgets**: Uhr · Licht (Govee) · AirPods · AirPlay – klein oder mittel. Pro Widget abschaltbarer **Glas-Container** (im Bearbeiten-Modus „Glas: an/aus“ unten links am Widget oder unter Einstellungen → Widgets) – ohne ist es durchsichtig wie die Uhr.
   Die Uhr zeigt klein und mittig den **Akku des Tablets** (beim Laden mit Blitz, unter 15 % rot).
 - **Mini-Widgets oben**: links **AirPods** (Symbol, Name, verbunden/nicht verbunden), rechts **Licht**
   (leuchtender Farbpunkt, an/aus mit Helligkeit, Mond + Restzeit beim Nacht-Timer, kleiner Power-Knopf). Antippen = große Ansicht.
@@ -48,7 +48,7 @@ mit Widgets für **Uhr** und **Licht**, deinen **Apps** und zwei Mini-Widgets ob
 
 ## Installation
 
-1. APK laden: GitHub → *Releases* → **Room Launcher v2.8.1** (neueste) → `RoomLauncher.apk`.
+1. APK laden: GitHub → *Releases* → **Room Launcher v2.9.0** (neueste) → `RoomLauncher.apk`.
 2. Auf dem Tablet installieren („Unbekannte Quellen“ erlauben).
 3. App öffnen, Bluetooth-/Standortberechtigung erlauben und den **Standort einschalten** – ohne ihn findet Android 7 keine Bluetooth-LE-Geräte (für die Licht-Suche). Der Launcher zeigt oben einen Hinweis, falls etwas fehlt.
 4. Home-Taste drücken → **Room Launcher** als Standard wählen („Immer“).
@@ -59,6 +59,19 @@ mit Widgets für **Uhr** und **Licht**, deinen **Apps** und zwei Mini-Widgets ob
 Licht-Widget gedrückt halten (oder Zahnrad) → MAC-Adresse eintragen oder Gerät suchen (meist `ihoment_H6xxx_XXXX` oder `Govee_…`).
 Die Govee-App auf dem Handy schließen – das Licht akzeptiert nur eine BLE-Verbindung.
 Falls die Farbe nicht reagiert: anderen „Farb-Befehl“ probieren (02 / 0D / 0B / 15), je nach Modell.
+
+## AirPlay
+
+Arbeitet mit der App **[AirPlay Server](https://github.com/jqssun/android-airplay-server)** von jqssun (`io.github.jqssun.airplay`, F-Droid/Play):
+das Tablet wird AirPlay-2-Bildschirm und -Lautsprecher. Mini-Widget oben links, Widget klein/mittel und große Ansicht zeigen:
+
+- ob die App installiert ist und ob der Server läuft (über die Liste laufender Dienste – unter Android 7 noch möglich),
+- was gerade läuft: Titel, Interpret, Cover, mit Zurück / Abspielen-Pause / Weiter (Medien-Sitzung der App; dafür einmal
+  „Mitteilungszugriff“ für Room Launcher erlauben – es werden keine Mitteilungen gelesen),
+- **Starten/Öffnen** öffnet die App, **Stoppen** führt zu „Beenden erzwingen“, **Installieren** öffnet die F-Droid-Seite.
+
+Die AirPlay-App bietet von außen keine Start-/Stopp- oder Einstellungs-Schnittstelle (nur per adb); Auflösung, Bildrate,
+PIN und Name werden in der App selbst eingestellt.
 
 ## AirPods
 

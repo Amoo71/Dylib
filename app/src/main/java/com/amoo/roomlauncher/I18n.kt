@@ -240,6 +240,30 @@ private val EN: Map<String, String> = mapOf(
     "Rollen" to "Rolling",
     "Rhythmus" to "Rhythm",
 
+    // ---- AirPlay
+    "AirPlay" to "AirPlay",
+    "nicht installiert" to "not installed",
+    "bereit" to "ready",
+    "spielt" to "playing",
+    "aus" to "off",
+    "Starten" to "Start",
+    "Öffnen" to "Open",
+    "Installieren" to "Install",
+    "Stoppen" to "Stop",
+    "Server stoppen" to "Stop server",
+    "Download-Seite" to "Download page",
+    "Server ist aus" to "Server is off",
+    "Server ist aus – Starten öffnet die App." to "Server is off – Start opens the app.",
+    "AirPlay Server von jqssun installieren" to "Install AirPlay Server by jqssun",
+    "AirPlay-Empfänger" to "AirPlay receiver",
+    "AirPlay Server" to "AirPlay Server",
+    "Die App „AirPlay Server“ (jqssun) macht das Tablet zum AirPlay-Bildschirm und -Lautsprecher." to
+        "The “AirPlay Server” app (jqssun) turns the tablet into an AirPlay display and speaker.",
+    "Für Titel und Steuerung: Mitteilungszugriff erlauben (große Ansicht)." to "For title and controls: allow notification access (large view).",
+    "Mitteilungszugriff erlauben" to "Allow notification access",
+    "Bereit für AirPlay" to "Ready for AirPlay",
+    "Nichts läuft" to "Nothing playing",
+
     // ---- AirPods
     "Keine AirPods gekoppelt" to "No AirPods paired",
     "Keine AirPods gekoppelt – bitte in den Bluetooth-Einstellungen koppeln" to "No AirPods paired – please pair them in the Bluetooth settings",
