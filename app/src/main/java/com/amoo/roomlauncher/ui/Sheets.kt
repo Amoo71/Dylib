@@ -157,7 +157,7 @@ private fun Context.sliderRow(title: String, value: Float, format: (Float) -> St
     return row(name, slider, shown).apply { setPadding(0, dp(6), 0, dp(6)) }
 }
 
-private fun Context.switchRow(title: String, checked: Boolean, subtitle: String? = null, onChange: (Boolean) -> Unit): LinearLayout {
+internal fun Context.switchRow(title: String, checked: Boolean, subtitle: String? = null, onChange: (Boolean) -> Unit): LinearLayout {
     val text = column().apply {
         addView(label(title, 16f))
         if (subtitle != null) addView(label(subtitle, 12.5f, C.TEXT3, lines = 2), lp().margins(t = dp(3)))
@@ -166,7 +166,7 @@ private fun Context.switchRow(title: String, checked: Boolean, subtitle: String?
     return row(text, GlassSwitch(this, checked, onChange)).apply { setPadding(0, dp(8), 0, dp(8)) }
 }
 
-private fun Context.chipGroup(labels: List<String>, selected: Int, onSelect: (Int) -> Unit): View {
+internal fun Context.chipGroup(labels: List<String>, selected: Int, onSelect: (Int) -> Unit): View {
     val chips = ArrayList<Chip>()
     labels.forEachIndexed { i, l ->
         chips += Chip(this, l, i == selected) {

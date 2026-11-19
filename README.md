@@ -10,7 +10,7 @@ mit Widgets für **Uhr** und **Licht**, deinen **Apps** und zwei Mini-Widgets ob
   Ist der Platz belegt, landet das Element im nächsten freien Feld; ein Schatten zeigt beim Ziehen die Landestelle.
   **Leere Stelle** (oder App) gedrückt halten → Bearbeiten: alles wackelt weich, **ziehen** zum Verschieben, **„–“** entfernen, **„Größe“** (Klein/Mittel).
   **Widget** gedrückt halten → seine **große Ansicht** wächst aus dem Widget heraus.
-- **Widgets**: Uhr · Licht (Govee) · AirPods · AirPlay – klein oder mittel. Pro Widget abschaltbarer **Glas-Container** (im Bearbeiten-Modus „Glas: an/aus“ unten links am Widget oder unter Einstellungen → Widgets) – ohne ist es durchsichtig wie die Uhr.
+- **Widgets**: Uhr · Licht (Govee) · AirPods · AirPlay (eingebauter Empfänger) – klein oder mittel. Pro Widget abschaltbarer **Glas-Container** (im Bearbeiten-Modus „Glas: an/aus“ unten links am Widget oder unter Einstellungen → Widgets) – ohne ist es durchsichtig wie die Uhr.
   Die Uhr zeigt klein und mittig den **Akku des Tablets** (beim Laden mit Blitz, unter 15 % rot).
 - **Mini-Widgets oben**: links **AirPods** (Symbol, Name, verbunden/nicht verbunden), rechts **Licht**
   (leuchtender Farbpunkt, an/aus mit Helligkeit, Mond + Restzeit beim Nacht-Timer, kleiner Power-Knopf). Antippen = große Ansicht.
@@ -48,7 +48,7 @@ mit Widgets für **Uhr** und **Licht**, deinen **Apps** und zwei Mini-Widgets ob
 
 ## Installation
 
-1. APK laden: GitHub → *Releases* → **Room Launcher v2.9.0** (neueste) → `RoomLauncher.apk`.
+1. APK laden: GitHub → *Releases* → **Room Launcher v3.0.0** (neueste) → `RoomLauncher.apk`.
 2. Auf dem Tablet installieren („Unbekannte Quellen“ erlauben).
 3. App öffnen, Bluetooth-/Standortberechtigung erlauben und den **Standort einschalten** – ohne ihn findet Android 7 keine Bluetooth-LE-Geräte (für die Licht-Suche). Der Launcher zeigt oben einen Hinweis, falls etwas fehlt.
 4. Home-Taste drücken → **Room Launcher** als Standard wählen („Immer“).
@@ -60,18 +60,20 @@ Licht-Widget gedrückt halten (oder Zahnrad) → MAC-Adresse eintragen oder Ger�
 Die Govee-App auf dem Handy schließen – das Licht akzeptiert nur eine BLE-Verbindung.
 Falls die Farbe nicht reagiert: anderen „Farb-Befehl“ probieren (02 / 0D / 0B / 15), je nach Modell.
 
-## AirPlay
+## AirPlay (eingebaut)
 
-Arbeitet mit der App **[AirPlay Server](https://github.com/jqssun/android-airplay-server)** von jqssun (`io.github.jqssun.airplay`, F-Droid/Play):
-das Tablet wird AirPlay-2-Bildschirm und -Lautsprecher. Mini-Widget oben links, Widget klein/mittel und große Ansicht zeigen:
+Room Launcher ist selbst ein **AirPlay-2-Empfänger** – keine Zusatz-App nötig. Der Empfänger stammt aus
+[jqssun/android-airplay-server](https://github.com/jqssun/android-airplay-server) (UxPlay, GPL-3.0) und ist fest eingebaut:
 
-- ob die App installiert ist und ob der Server läuft (über die Liste laufender Dienste – unter Android 7 noch möglich),
-- was gerade läuft: Titel, Interpret, Cover, mit Zurück / Abspielen-Pause / Weiter (Medien-Sitzung der App; dafür einmal
-  „Mitteilungszugriff“ für Room Launcher erlauben – es werden keine Mitteilungen gelesen),
-- **Starten/Öffnen** öffnet die App, **Stoppen** führt zu „Beenden erzwingen“, **Installieren** öffnet die F-Droid-Seite.
+- **Bildschirmspiegelung** von iPhone/iPad/Mac (H.264/H.265 per Hardware-Decoder), **AirPlay-Video** (HLS, z. B. YouTube)
+  mit Pause/±10 s, **Musik** (AAC/ALAC) mit Titel, Interpret, Cover und Zurück/Pause/Weiter.
+- Vollbild öffnet sich bei einer Verbindung von selbst – auch aus dem Standby – und schließt sich danach wieder.
+- Mini-Widget oben links, Widget klein/mittel und große Ansicht: Status, läuft gerade, Ein/Aus, Ansehen,
+  Einstellungen (Name im WLAN, immer eingeschaltet, Vollbild bei Verbindung, PIN, Auflösung, Bildrate, H.265).
+- Im Leerlauf wartet der Server nur auf Verbindungen (praktisch keine CPU).
 
-Die AirPlay-App bietet von außen keine Start-/Stopp- oder Einstellungs-Schnittstelle (nur per adb); Auflösung, Bildrate,
-PIN und Name werden in der App selbst eingestellt.
+Gebaut wird nur für 32-Bit-ARM (Galaxy Tab E). Tablet und iPhone/Mac müssen im selben WLAN sein;
+geschützte Inhalte (z. B. Apple TV+) gehen nicht.
 
 ## AirPods
 
@@ -82,7 +84,8 @@ antippen → Verbinden/Trennen (versteckte A2DP-`connect()`-API, klappt auf Andr
 
 GitHub Actions baut bei jedem Push automatisch (`.github/workflows/build-apk.yml`) und veröffentlicht
 die Release `v<versionName>` aus `app/build.gradle.kts`.
-Lokal: Android SDK installieren, dann `./gradlew assembleRelease`.
+Lokal: Android SDK installieren, `git submodule update --init --recursive --depth 1`, dann `./gradlew assembleRelease`
+(NDK und CMake lädt Gradle selbst).
 
 Die APK ist mit einem im Repo liegenden Schlüssel (`keystore/`) signiert, damit Updates sich drüber installieren lassen.
 Nur für den privaten Gebrauch gedacht.
@@ -100,3 +103,9 @@ SIL Open Font License 1.1 (Lizenztexte liegen in `app/src/main/assets/fonts/`):
 - **Doto** – Punktmatrix-Schrift (Copyright The Doto Project Authors)
 - **Space Grotesk** – Grotesk (Copyright The Space Grotesk Project Authors)
 - **Nunito** – abgerundete Schrift der Licht-Oberfläche (Copyright The Nunito Project Authors)
+
+## Lizenz
+
+Room Launcher enthält den AirPlay-Empfänger aus [jqssun/android-airplay-server](https://github.com/jqssun/android-airplay-server)
+(Paket `io.github.jqssun.airplay`, nativer Code unter `app/src/main/cpp`) sowie UxPlay, libplist, OpenSSL und FFmpeg als
+Untermodule. Deshalb steht das gesamte Projekt unter der **GNU General Public License v3.0** (siehe `LICENSE`).

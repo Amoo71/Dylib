@@ -3,3 +3,7 @@ build/
 local.properties
 .idea/
 *.iml
+
+# CMake/NDK
+.cxx/
+app/.cxx/

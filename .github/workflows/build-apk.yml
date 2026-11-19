@@ -11,8 +11,12 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
+      # Untermodule: UxPlay, libplist, OpenSSL-CMake, FFmpeg (eingebauter AirPlay-Empfänger)
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - uses: actions/setup-java@v4
         with:
@@ -29,15 +33,15 @@ jobs:
         run: |
           chmod +x gradlew
           set -o pipefail
-          ./gradlew --no-daemon testDebugUnitTest assembleRelease assembleDebug 2>&1 | tee build.log || {
-            echo "::group::Fehler"; grep -E "^e: |FAILED|AssertionError|ComparisonFailure" build.log || true; echo "::endgroup::"; exit 1; }
+          # Nur Release bauen: der native AirPlay-Teil (OpenSSL, FFmpeg, UxPlay) würde sonst doppelt kompiliert
+          ./gradlew --no-daemon testDebugUnitTest assembleRelease 2>&1 | tee build.log || {
+            echo "::group::Fehler"; grep -E "^e: |FAILED|AssertionError|ComparisonFailure|error:|CMake Error|ninja: build stopped" build.log | head -80 || true; echo "::endgroup::"; exit 1; }
 
       - name: Collect APKs
         id: collect
         run: |
           mkdir -p out
           cp app/build/outputs/apk/release/app-release.apk out/RoomLauncher.apk
-          cp app/build/outputs/apk/debug/app-debug.apk out/RoomLauncher-debug.apk
           VERSION=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 

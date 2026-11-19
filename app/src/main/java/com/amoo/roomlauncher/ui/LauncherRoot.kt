@@ -469,8 +469,9 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
         fun refresh() {
             val np = a.nowPlaying.value
             val text = when {
-                !a.installed.value -> com.amoo.roomlauncher.Lang.auto("nicht installiert")
                 np?.title != null && np.playing -> "♪ " + np.title
+                a.video.value -> com.amoo.roomlauncher.Lang.auto("Video")
+                a.connections.value > 0 -> com.amoo.roomlauncher.Lang.auto("spiegelt")
                 a.running.value -> com.amoo.roomlauncher.Lang.auto("bereit")
                 else -> com.amoo.roomlauncher.Lang.auto("aus")
             }
@@ -482,9 +483,7 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
             }
             badge.alpha = if (a.running.value) 1f else 0.8f
         }
-        badge.bind(a.installed) { refresh() }
-        badge.bind(a.running) { refresh() }
-        badge.bind(a.nowPlaying) { refresh() }
+        badge.bindAirPlay(a) { refresh() }
         return badge
     }
 

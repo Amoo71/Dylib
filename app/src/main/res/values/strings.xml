@@ -1,4 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Room Launcher</string>
+    <!-- AirPlay-Empfänger (Benachrichtigung) -->
+    <string name="notification_channel">AirPlay</string>
+    <string name="notification_title">AirPlay bereit</string>
+    <string name="notification_text">Room Launcher empfängt AirPlay</string>
+    <string name="notification_pin_title">AirPlay-PIN</string>
+    <string name="notification_pin_text">PIN: %1$s</string>
 </resources>
