@@ -113,6 +113,18 @@ object LightColors {
     }
 }
 
+/**
+ * Farbe schrittweise zum Ziel – rastet ein, sobald sie nah genug ist. (Reines Überblenden bleibt durch
+ * Rundung sonst knapp vor dem Ziel hängen und würde die Animation nie beenden → Dauer-CPU.)
+ */
+private fun approach(from: Int, to: Int, t: Float): Int {
+    val next = blend(from, to, t)
+    fun close(a: Int, b: Int) = abs(a - b) <= 3
+    return if (close(Color.red(next), Color.red(to)) && close(Color.green(next), Color.green(to)) &&
+        close(Color.blue(next), Color.blue(to)) && close(Color.alpha(next), Color.alpha(to))
+    ) to else next
+}
+
 private fun easeOut(p: Float): Float {
     val c = p.coerceIn(0f, 1f)
     return 1f - (1f - c) * (1f - c) * (1f - c)
@@ -357,8 +369,8 @@ class LumenRing(context: Context, private val board: Boolean) : View(context) {
             val on = if (power && target != 0) 1f else 0f
             act[i] = if (!initialized) on else act[i] + (on - act[i]) * k
             if (abs(act[i] - on) > 0.01f) busy = true else act[i] = on
-            if (target != 0) {
-                col[i] = if (!initialized || col[i] == 0) target else (blend(col[i] or 0xFF000000.toInt(), target or 0xFF000000.toInt(), k) and 0xFFFFFF)
+            if (target != 0 && col[i] != target) {
+                col[i] = if (!initialized || col[i] == 0) target else approach(col[i] or 0xFF000000.toInt(), target or 0xFF000000.toInt(), k) and 0xFFFFFF
                 if (col[i] != target) busy = true
             }
             if (popAt[i] >= 0) busy = true
@@ -367,8 +379,8 @@ class LumenRing(context: Context, private val board: Boolean) : View(context) {
         onT = if (!initialized) onTarget else onT + (onTarget - onT) * (1f - exp(-dt / 115f))
         if (abs(onT - onTarget) > 0.01f) busy = true else onT = onTarget
         if (shownAccent != accent) {
-            shownAccent = if (!initialized) accent else blend(shownAccent, accent, 1f - exp(-dt / 150f))
-            busy = true
+            shownAccent = if (!initialized) accent else approach(shownAccent, accent, 1f - exp(-dt / 150f))
+            if (shownAccent != accent) busy = true
         }
         if (tiltDur > 0) {
             val p = (now - tiltAt) / tiltDur.toFloat()
@@ -398,7 +410,8 @@ class LumenRing(context: Context, private val board: Boolean) : View(context) {
         val busy = step(now)
         lastDraw = now
         val t = (now - t0) / 1000f
-        val motion = !reduced
+        // Auf dem Board kein Dauer-Schweben (spart CPU) – bewegt wird nur bei Berührung oder Änderung
+        val motion = !reduced && !board
         val twoPi = 2 * PI.toFloat()
         val floatY = if (motion) 5 * d1 * sin(twoPi * t / 6f) else 0f
         val phi = if (motion) SWAY * swayAmp * sin(twoPi * t / 8.4f) else 0f

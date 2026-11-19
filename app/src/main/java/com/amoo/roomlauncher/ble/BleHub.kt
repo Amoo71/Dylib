@@ -29,12 +29,14 @@ class BleHub(private val context: Context) {
         fun onAdvert(device: BluetoothDevice, rssi: Int, record: ByteArray?)
     }
 
-    private class Entry(val listener: Listener, val fast: Boolean)
+    /** [address] != null → nur dieses Gerät (Filter im Bluetooth-Stack/Chip, kostet die App fast nichts). */
+    private class Entry(val listener: Listener, val fast: Boolean, val address: String?)
 
     private val entries = CopyOnWriteArrayList<Entry>()
     private val handler = Handler(Looper.getMainLooper())
     private var callback: ScanCallback? = null
     private var runningFast = false
+    private var runningFilter = ""
     private val starts = ArrayDeque<Long>()
 
     // ---- Selbstüberwachung
@@ -51,7 +53,7 @@ class BleHub(private val context: Context) {
     private val watchdog = object : Runnable {
         override fun run() {
             val now = System.currentTimeMillis()
-            if (callback != null && lastResultAt > 0 && now - lastResultAt > 3 * 60_000) {
+            if (callback != null && runningFilter.isEmpty() && lastResultAt > 0 && now - lastResultAt > 3 * 60_000) {
                 lastError = "Keine Signale seit 3 min – Scan neu gestartet"
                 stopInternal()
                 sync()
@@ -77,9 +79,9 @@ class BleHub(private val context: Context) {
         handler.postDelayed(watchdog, 60_000)
     }
 
-    /** [fast] = schneller Suchmodus (z. B. beim Einrichten), sonst stromsparend. */
-    fun add(l: Listener, fast: Boolean = false) {
-        if (entries.none { it.listener === l }) entries.add(Entry(l, fast))
+    /** [fast] = schneller Suchmodus (nur beim Einrichten), sonst stromsparend. [address] = nur dieses Gerät melden. */
+    fun add(l: Listener, fast: Boolean = false, address: String? = null) {
+        if (entries.none { it.listener === l }) entries.add(Entry(l, fast, address?.uppercase()))
         scheduleSync()
     }
 
@@ -130,7 +132,9 @@ class BleHub(private val context: Context) {
             wantFast = true
             scheduleSync(fastUntil - now + 50)
         }
-        if (callback != null && wantFast == runningFast) return
+        // Haben alle Nutzer ein Zielgerät, filtert der Bluetooth-Stack – sonst wird alles gemeldet
+        val filterKey = if (entries.all { it.address != null }) entries.mapNotNull { it.address }.toSortedSet().joinToString(",") else ""
+        if (callback != null && wantFast == runningFast && filterKey == runningFilter) return
         val scanner = adapter?.takeIf { runCatching { it.isEnabled }.getOrDefault(false) }?.bluetoothLeScanner ?: run {
             stopInternal()
             return
@@ -155,12 +159,16 @@ class BleHub(private val context: Context) {
             }
         }
         val settings = ScanSettings.Builder()
-            .setScanMode(if (wantFast) ScanSettings.SCAN_MODE_LOW_LATENCY else ScanSettings.SCAN_MODE_LOW_POWER)
+            .setScanMode(if (wantFast) ScanSettings.SCAN_MODE_LOW_LATENCY else ScanSettings.SCAN_MODE_BALANCED)
             .build()
+        val filters = if (filterKey.isEmpty()) null else filterKey.split(",").map {
+            android.bluetooth.le.ScanFilter.Builder().setDeviceAddress(it).build()
+        }
         try {
-            scanner.startScan(null, settings, cb)
+            scanner.startScan(filters, settings, cb)
             callback = cb
             runningFast = wantFast
+            runningFilter = filterKey
             scanning = true
             com.amoo.roomlauncher.L.i("BLE-Scan gestartet (${if (wantFast) "schnell" else "sparsam"}, ${entries.size} Nutzer)")
             if (lastResultAt == 0L) lastResultAt = System.currentTimeMillis()
@@ -212,7 +220,7 @@ class BleHub(private val context: Context) {
         val name = r.scanRecord?.deviceName ?: seen[addr]?.name
         seen[addr] = Seen(r.rssi, now, name)
         if (seen.size > 400) seen.entries.removeAll { now - it.value.at > 60_000 }
-        for (e in entries) e.listener.onAdvert(r.device, r.rssi, rec)
+        for (e in entries) if (e.address == null || e.address == addr) e.listener.onAdvert(r.device, r.rssi, rec)
     }
 
     private fun stopInternal() {

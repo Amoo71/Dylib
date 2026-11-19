@@ -43,6 +43,7 @@ class RoomApp : Application() {
 
     /** 60 fps (true) oder 30 fps (false) für animierte Hintergründe. */
     lateinit var smooth: MutableStateFlow<Boolean>
+    lateinit var eco: MutableStateFlow<Boolean>
         private set
 
     private var bluetoothStarted = false
@@ -71,6 +72,7 @@ class RoomApp : Application() {
         theme = ThemeStore(this)
         iconStyle = MutableStateFlow(prefs.iconStyle)
         smooth = MutableStateFlow(prefs.smooth)
+        eco = MutableStateFlow(prefs.eco)
         apps.start()
         watchBluetooth()
     }

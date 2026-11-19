@@ -99,8 +99,35 @@ class BackgroundView(context: Context) : View(context) {
             ensureLoop()
         }
 
-    /** true = 60 fps, false = 30 fps. */
+    /** true = 60 fps, false = 30 fps (ohne Energiesparen). */
     var smooth: Boolean = true
+
+    /**
+     * Energiesparen: 20 Bilder/s, Milchglas nur 2×/s neu, und nach [IDLE_PAUSE_MS] ohne Berührung
+     * pausiert die Animation ganz (ruhiges Standbild ohne Regenstriche) – bis zur nächsten Berührung.
+     */
+    var eco: Boolean = true
+        set(v) {
+            field = v
+            wake()
+        }
+
+    private var lastActivity = SystemClock.uptimeMillis()
+    private var paused = false
+    private var lastFrameMs = 0L
+
+    /** Berührung o. Ä.: Animation (wieder) laufen lassen. */
+    fun wake() {
+        lastActivity = SystemClock.uptimeMillis()
+        if (paused) {
+            paused = false
+            backdropDirty = true
+            invalidate()
+        }
+        ensureLoop()
+    }
+
+    private val frameIntervalMs: Long get() = if (eco) 50L else if (smooth) 16L else 33L
 
     private val start = SystemClock.uptimeMillis()
     private val bg = Paint()
@@ -161,7 +188,7 @@ class BackgroundView(context: Context) : View(context) {
             (theme.type == BgType.OWN && image?.movie != null)
 
     private fun ensureLoop() {
-        if (looping || !isAttachedToWindow || windowVisibility != VISIBLE) return
+        if (looping || paused || !isAttachedToWindow || windowVisibility != VISIBLE) return
         looping = true
         Choreographer.getInstance().postFrameCallback(frameCallback)
     }
@@ -171,8 +198,20 @@ class BackgroundView(context: Context) : View(context) {
             looping = false
             return
         }
+        val now = frameTimeNanos / 1_000_000L
+        if (eco && SystemClock.uptimeMillis() - lastActivity > IDLE_PAUSE_MS) {
+            // Leerlauf: einmal ein ruhiges Standbild zeichnen, dann schlafen
+            paused = true
+            looping = false
+            invalidate()
+            return
+        }
         frame++
-        if (smooth || frame % 2 == 0L) invalidate()
+        // Bildrate begrenzen: nur zeichnen, wenn das Intervall erreicht ist
+        if (now - lastFrameMs >= frameIntervalMs - 4) {
+            lastFrameMs = now
+            invalidate()
+        }
         Choreographer.getInstance().postFrameCallback(frameCallback)
     }
 
@@ -214,10 +253,11 @@ class BackgroundView(context: Context) : View(context) {
         val t = (now - start) / 1000f
         val w = width.toFloat()
         val h = height.toFloat()
-        drawScene(canvas, w, h, t, withRain = true)
-        // Milchglas: nur neu berechnen, wenn sich darin sichtbar etwas bewegt (Blasen/GIF), max. ~30×/s.
+        drawScene(canvas, w, h, t, withRain = !paused)
+        // Milchglas: nur neu berechnen, wenn sich darin sichtbar etwas bewegt (Blasen/GIF) – sparsam 2×/s.
         // Regen ist im verschwommenen Glas ohnehin unsichtbar → beim Regen bleibt das Glas statisch (spart viel).
-        if (Backdrop.enabled && (backdropDirty || (backdropAnimated && now - lastBackdrop >= 32))) {
+        val every = if (eco) 500L else 100L
+        if (Backdrop.enabled && (backdropDirty || (backdropAnimated && !paused && now - lastBackdrop >= every))) {
             lastBackdrop = now
             backdropDirty = false
             renderBackdrop(w, h, t)
@@ -401,6 +441,9 @@ class BackgroundView(context: Context) : View(context) {
     companion object {
         /** Milchglas-Auflösung: 1/10 des Bildschirms reicht, es wird ohnehin weichgezeichnet. */
         private const val BACKDROP_DOWNSCALE = 10
+
+        /** Energiesparen: nach 2 min ohne Berührung pausiert die Animation. */
+        private const val IDLE_PAUSE_MS = 2 * 60_000L
 
         /** Schneller Kastenfilter (horizontal + vertikal) – zweimal angewendet ≈ Gauß. */
         private fun boxBlur(px: IntArray, tmp: IntArray, w: Int, h: Int, r: Int) {

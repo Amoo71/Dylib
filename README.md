@@ -21,6 +21,10 @@ mit Widgets für **Uhr** und **Licht**, deinen **Apps** und zwei Mini-Widgets ob
 - **Selbstreparatur**: hängender Bluetooth-Scan wird neu gestartet, ein stummes Licht neu verbunden, bei wiederholten Bluetooth-Fehlern startet die App Bluetooth neu. Live-Diagnose unter Einstellungen → Geräte.
 - **App-Icons** im Stil Original, Glas-Kachel oder Klar (einfarbig auf Glas).
 - **Sprache**: Deutsch oder Englisch (Einstellungen → Allgemein; anfangs die Systemsprache).
+- **Sparsam im Leerlauf**: Board und Dock liegen als fertige GPU-Ebene über dem Hintergrund; *Energiesparen* (Standard an)
+  zeichnet den Hintergrund mit 20 fps und pausiert ihn nach 2 min ohne Berührung. Licht-Ring auf dem Board bewegt sich nur
+  bei Berührung, die Uhr aktualisiert sich einmal pro Minute. Ist die Lampe nicht erreichbar, wartet der Bluetooth-Chip
+  selbst auf sie (autoConnect) – keine Such- oder Verbindungsschleife; kurz gefiltert gesucht wird höchstens alle 10 min.
 - **Hintergründe**:
   - *Regen*: dünne Tropfen mit Wind-Böen (Stärke, Wind, Tempo einstellbar)
   - *Schwarz*: schwarz mit weichen grauen schwebenden Blasen
@@ -44,7 +48,7 @@ mit Widgets für **Uhr** und **Licht**, deinen **Apps** und zwei Mini-Widgets ob
 
 ## Installation
 
-1. APK laden: GitHub → *Releases* → **Room Launcher v2.8.0** (neueste) → `RoomLauncher.apk`.
+1. APK laden: GitHub → *Releases* → **Room Launcher v2.8.1** (neueste) → `RoomLauncher.apk`.
 2. Auf dem Tablet installieren („Unbekannte Quellen“ erlauben).
 3. App öffnen, Bluetooth-/Standortberechtigung erlauben und den **Standort einschalten** – ohne ihn findet Android 7 keine Bluetooth-LE-Geräte (für die Licht-Suche). Der Launcher zeigt oben einen Hinweis, falls etwas fehlt.
 4. Home-Taste drücken → **Room Launcher** als Standard wählen („Immer“).

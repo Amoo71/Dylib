@@ -84,10 +84,10 @@ class AirPodsController(
             },
         )
         refresh()
-        // Selbstheilung: alle 30 s abgleichen, falls ein Broadcast verloren ging
+        // Selbstheilung: alle 2 min abgleichen, falls ein Broadcast verloren ging (Broadcasts melden sonst alles sofort)
         scope.launch {
             while (isActive) {
-                delay(30_000)
+                delay(120_000)
                 bindProfiles()
                 refresh()
             }

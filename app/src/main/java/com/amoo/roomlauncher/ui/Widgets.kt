@@ -97,15 +97,19 @@ fun Context.clockWidget(size: WidgetSize, glass: Boolean = false): View {
         gravity = Gravity.CENTER_HORIZONTAL
         topMargin = dp(if (small) 6 else 10)
     })
+    fun TextView.put(s: String) {
+        if (text.toString() != s) text = s
+    }
     val tick = object : Runnable {
         override fun run() {
             val now = Date()
-            day.text = dayFmt.format(now).uppercase(Lang.locale)
-            hours.text = HOURS.format(now)
-            minutes.text = MINUTES.format(now)
-            date.text = dateFmt.format(now)
+            day.put(dayFmt.format(now).uppercase(Lang.locale))
+            hours.put(HOURS.format(now))
+            minutes.put(MINUTES.format(now))
+            date.put(dateFmt.format(now))
             card.removeCallbacks(this)
-            card.postDelayed(this, 1000L - System.currentTimeMillis() % 1000L)
+            // Keine Sekundenanzeige → nur zum Minutenwechsel aufwachen
+            card.postDelayed(this, 60_000L - System.currentTimeMillis() % 60_000L + 50)
         }
     }
     card.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
@@ -124,12 +128,19 @@ private fun Context.batteryRow(small: Boolean): LinearLayout {
     val pct = label("", if (small) 11.5f else 13f, C.TEXT2).apply { setShadowLayer(dpf(6), 0f, dpf(1), 0x8C000000.toInt()) }
     val row = row(icon.also { it.layoutParams = lp(dp(if (small) 20 else 23), dp(if (small) 10 else 12)) }, pct, spacingDp = 6)
     val receiver = object : android.content.BroadcastReceiver() {
+        var lastPct = -2
+        var lastCharging = false
+
         override fun onReceive(c: Context, i: android.content.Intent) {
             val level = i.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1)
             val scale = i.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, 100).coerceAtLeast(1)
             val status = i.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1)
             val p = if (level < 0) -1 else level * 100 / scale
             val charging = status == android.os.BatteryManager.BATTERY_STATUS_CHARGING || status == android.os.BatteryManager.BATTERY_STATUS_FULL
+            // Der Akku meldet sich sehr oft (Spannung, Temperatur) – nur bei echter Änderung neu zeichnen
+            if (p == lastPct && charging == lastCharging) return
+            lastPct = p
+            lastCharging = charging
             icon.set(p, charging)
             pct.text = if (p < 0) "" else "$p %"
             pct.setTextColor(if (p in 0..15 && !charging) C.RED else C.TEXT2)

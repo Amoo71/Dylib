@@ -89,6 +89,8 @@ private val EN: Map<String, String> = mapOf(
     "Bluetooth" to "Bluetooth",
     "WLAN" to "Wi-Fi",
     "Sprache" to "Language",
+    "Energiesparen" to "Power saving",
+    "Hintergrund 20 fps, pausiert nach 2 min ohne Berührung – deutlich weniger CPU." to "Background at 20 fps, pauses after 2 min without touch – much less CPU.",
 
     // ---- Hintergrund
     "Thema" to "Theme",

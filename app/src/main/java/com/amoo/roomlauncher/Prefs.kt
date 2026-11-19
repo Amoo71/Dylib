@@ -124,6 +124,11 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("keep_screen_on", true)
         set(v) = sp.edit().putBoolean("keep_screen_on", v).apply()
 
+    /** Energiesparen: Hintergrund 20 fps, Pause im Leerlauf, keine Dauer-Animationen auf dem Board. */
+    var eco: Boolean
+        get() = sp.getBoolean("eco_mode", true)
+        set(v) = sp.edit().putBoolean("eco_mode", v).apply()
+
     /** 60 fps (flüssig) oder 30 fps (sparsam) für animierte Hintergründe. */
     var smooth: Boolean
         get() = sp.getBoolean("smooth_60fps", true)

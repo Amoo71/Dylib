@@ -105,6 +105,9 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
             gravity = Gravity.CENTER_HORIZONTAL
             topMargin = dp(14)
         })
+        // Board, Dock und Abzeichen als eine fertige GPU-Ebene: Bewegt sich nur der Hintergrund,
+        // wird diese Ebene nur noch eingeblendet statt jedes Bild komplett neu gezeichnet (spart viel CPU).
+        content.setLayerType(View.LAYER_TYPE_HARDWARE, null)
         addView(content, LayoutParams(MATCH, MATCH))
 
         // ---- Bearbeiten-Leiste
@@ -177,6 +180,7 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
                 LumenRing.smooth = it
             }
         }
+        scope.launch { app.eco.collect { bgView.eco = it } }
         // Bluetooth an/aus → Hinweisleiste sofort aktualisieren (auch über die Schnelleinstellungen)
         scope.launch { app.bluetoothOn.collect { refreshBanner() } }
         scope.launch {
@@ -405,22 +409,28 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
         fun refresh() {
             val on = g.power.value
             val c = g.connection.value
-            state.text = when (c) {
+            val newState = when (c) {
                 com.amoo.roomlauncher.govee.GoveeController.Connection.NOT_CONFIGURED -> com.amoo.roomlauncher.Lang.auto("nicht eingerichtet")
                 com.amoo.roomlauncher.govee.GoveeController.Connection.CONNECTED ->
                     if (on) com.amoo.roomlauncher.tr("an", "on") + " · ${(g.brightness.value * 100).toInt().coerceAtLeast(1)}%" else com.amoo.roomlauncher.tr("aus", "off")
                 else -> com.amoo.roomlauncher.Lang.auto("sucht…")
             }
+            // Nur bei Änderung setzen – sonst wird die ganze Board-Ebene unnötig neu gezeichnet
+            if (state.text.toString() != newState) state.text = newState
             state.setTextColor(if (on && c == com.amoo.roomlauncher.govee.GoveeController.Connection.CONNECTED) C.TEXT else C.TEXT2)
             val col = if (g.segmented.value) LightColors.average(g.segments.value) ?: g.color.value else g.color.value
             glow.set(col, on)
-            powerBg.color = if (on) C.white(0.92f) else C.white(0.12f)
-            powerIcon.color = if (on) 0xFF101012.toInt() else C.TEXT
-            power.invalidate()
-            powerIcon.invalidate()
+            val bgCol = if (on) C.white(0.92f) else C.white(0.12f)
+            if (powerBg.color != bgCol) {
+                powerBg.color = bgCol
+                powerIcon.color = if (on) 0xFF101012.toInt() else C.TEXT
+                power.invalidate()
+                powerIcon.invalidate()
+            }
             val at = g.sleepAt.value
-            moonBox.visibility = if (at == 0L) View.GONE else View.VISIBLE
-            if (at != 0L) moonText.text = sleepLeft(at)
+            val vis = if (at == 0L) View.GONE else View.VISIBLE
+            if (moonBox.visibility != vis) moonBox.visibility = vis
+            if (at != 0L) sleepLeft(at).let { if (moonText.text.toString() != it) moonText.text = it }
         }
         badge.bind(g.power) { refresh() }
         badge.bind(g.brightness) { refresh() }
@@ -428,7 +438,7 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
         badge.bind(g.color) { refresh() }
         badge.bind(g.segments) { refresh() }
         badge.bind(g.sleepAt) { refresh() }
-        badge.everyWhileAttached(15_000) { refresh() }
+        badge.everyWhileAttached(30_000) { refresh() }
         return badge
     }
 
@@ -487,6 +497,12 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
     fun onHome() {
         closeOverlay()
         setEdit(false)
+    }
+
+    /** Jede Berührung weckt die (im Leerlauf pausierte) Hintergrund-Animation. */
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        if (ev.actionMasked == android.view.MotionEvent.ACTION_DOWN) bgView.wake()
+        return super.dispatchTouchEvent(ev)
     }
 
     fun dispose() = scope.cancel()

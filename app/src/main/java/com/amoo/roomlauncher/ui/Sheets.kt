@@ -741,6 +741,12 @@ private fun MainActivity.generalTab(app: RoomApp): View {
         ).apply { setPadding(0, dp(8), 0, dp(8)) },
     )
     root.addView(
+        switchRow("Energiesparen", app.eco.value, "Hintergrund 20 fps, pausiert nach 2 min ohne Berührung – deutlich weniger CPU.") {
+            app.prefs.eco = it
+            app.eco.value = it
+        },
+    )
+    root.addView(
         switchRow("Flüssige Animationen (60 fps)", app.smooth.value, "Aus = 30 fps, schont ein älteres Tablet.") {
             app.prefs.smooth = it
             app.smooth.value = it
