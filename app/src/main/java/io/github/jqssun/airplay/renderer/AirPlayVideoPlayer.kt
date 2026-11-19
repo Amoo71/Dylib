@@ -90,10 +90,9 @@ class AirPlayVideoPlayer(private val context: Context) {
     }
 
     // coalesces the seek spam from drag-seeking
-    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
-    fun setScrubbing(enabled: Boolean) = mainHandler.post {
-        player?.isScrubbingModeEnabled = enabled
-    }
+    // Room Launcher: Scrubbing-Modus gibt es erst in neueren Media3-Versionen – hier ohne (Spulen geht trotzdem)
+    @Suppress("UNUSED_PARAMETER")
+    fun setScrubbing(enabled: Boolean) = Unit
 
     fun setRate(rate: Float) = mainHandler.post {
         val p = player ?: return@post
