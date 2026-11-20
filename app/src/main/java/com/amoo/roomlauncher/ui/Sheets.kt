@@ -873,6 +873,7 @@ private val SLEEP_OPTIONS = listOf(0 to "Aus", 30 to "30 min", 60 to "1 Std", 12
 private fun clockFmt() = java.text.SimpleDateFormat("HH:mm", Lang.locale)
 
 fun Context.goveeSheet(govee: GoveeController, prefs: Prefs, onDismiss: () -> Unit): Sheet {
+    govee.ensureConnected()
     val sheet = Sheet(this, "Licht", true, onDismiss, maxWidthDp = 1120)
     // Dunkler Lumen-Hintergrund mit Akzent-Verläufen statt Milchglas
     val bg = LumenBackground(dpf(34), base = true)

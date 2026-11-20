@@ -546,7 +546,10 @@ class LauncherRoot(private val activity: MainActivity, private val app: RoomApp)
 
     /** Jede Berührung weckt die (im Leerlauf pausierte) Hintergrund-Animation. */
     override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
-        if (ev.actionMasked == android.view.MotionEvent.ACTION_DOWN) bgView.wake()
+        if (ev.actionMasked == android.view.MotionEvent.ACTION_DOWN) {
+            bgView.wake()
+            app.govee.ensureConnected() // Interaktion → nicht verbundenes Licht sofort neu verbinden
+        }
         return super.dispatchTouchEvent(ev)
     }
 

@@ -75,6 +75,7 @@ class MainActivity : Activity() {
         hideSystemBars()
         app.apps.refresh()
         if (BtPerms.granted(this)) app.startBluetooth()
+        app.govee.ensureConnected() // zurück im Launcher → Licht gleich wieder verbinden
         root.refreshBanner()
     }
 

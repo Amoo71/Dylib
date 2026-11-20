@@ -501,55 +501,50 @@ class GoveeController(
             _lastError.value = "Ungültige Adresse"
             return
         }
-        connectGatt(device, auto = false)
-        // Direktverbindung steht nach 6 s nicht → (selten) gezielt suchen, sonst dem Chip das Warten überlassen
-        connectTimeout?.cancel()
-        connectTimeout = scope.launch {
-            delay(6_000)
-            if (_connection.value == Connection.CONNECTING && !autoPending) {
-                closeGatt()
-                afterDirectFailed(device)
-            }
-        }
+        attempt(device)
     }
 
-    /** true = eine Hintergrund-Verbindung (autoConnect) wartet beim Bluetooth-Chip auf die Leiste. */
-    @Volatile private var autoPending = false
+    /** Fehlversuche seit der letzten erfolgreichen Verbindung (bestimmt die Pause bis zum nächsten Versuch). */
+    private var attempts = 0
     private var lastFallbackScan = 0L
 
-    /** Direktversuch gescheitert: höchstens alle 10 min kurz gezielt suchen, sonst still im Hintergrund warten. */
-    private fun afterDirectFailed(device: BluetoothDevice) {
-        if (System.currentTimeMillis() - lastFallbackScan > 10 * 60_000L) fallbackScan() else waitInBackground(device)
+    /**
+     * Ein Direktversuch an der gespeicherten Adresse. 15 s Zeit: Android 7 braucht gerade nach einem
+     * App-Neustart oft deutlich länger als ein paar Sekunden. Während des Versuchs sucht der Bluetooth-Chip
+     * selbst – die App kostet das praktisch keine CPU.
+     */
+    private fun attempt(device: BluetoothDevice) {
+        connectGatt(device)
+        connectTimeout?.cancel()
+        connectTimeout = scope.launch {
+            delay(15_000)
+            if (_connection.value == Connection.CONNECTING) {
+                closeGatt()
+                onAttemptFailed()
+            }
+        }
     }
 
     /**
-     * Sparsames Warten: autoConnect übergibt das Verbinden dem Bluetooth-Chip. Er verbindet, sobald die
-     * Leiste auftaucht – ohne Suche und ohne Schleife in der App (0 % CPU im Leerlauf).
-     * Alle 15 min wird die Anfrage zur Sicherheit erneuert.
+     * Versuch gescheitert → dranbleiben: erst nach 2 s, später alle 10 s, höchstens alle 30 s neu.
+     * Jeder dritte Fehlversuch (höchstens alle 3 min) sucht kurz gezielt nach genau dieser Leiste.
      */
-    private fun waitInBackground(device: BluetoothDevice) {
-        if (_connection.value == Connection.CONNECTED) return
-        com.amoo.roomlauncher.L.i("Govee: warte im Hintergrund auf ${device.address} (autoConnect)")
-        connectGatt(device, auto = true)
-        connectTimeout?.cancel()
-        connectTimeout = scope.launch {
-            delay(15 * 60_000L)
-            if (_connection.value == Connection.CONNECTING && autoPending) {
-                closeGatt()
-                waitInBackground(device)
-            }
+    private fun onAttemptFailed() {
+        _connection.value = Connection.DISCONNECTED
+        attempts++
+        if (attempts % 3 == 0 && System.currentTimeMillis() - lastFallbackScan > 3 * 60_000L) {
+            fallbackScan()
+            return
         }
+        scheduleReconnect()
     }
 
-    private fun connectGatt(device: BluetoothDevice, auto: Boolean) {
-        if (!auto) com.amoo.roomlauncher.L.i("Govee: verbinde mit ${device.address}")
+    private fun connectGatt(device: BluetoothDevice) {
+        com.amoo.roomlauncher.L.i("Govee: verbinde mit ${device.address} (Versuch ${attempts + 1})")
         _connection.value = Connection.CONNECTING
-        if (!auto) _lastError.value = null
-        autoPending = auto
         try {
-            gatt = device.connectGatt(context, auto, gattCallback, BluetoothDevice.TRANSPORT_LE)
+            gatt = device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
         } catch (e: SecurityException) {
-            autoPending = false
             _connection.value = Connection.DISCONNECTED
             _lastError.value = com.amoo.roomlauncher.BtPerms.missingText()
         }
@@ -568,15 +563,7 @@ class GoveeController(
         if (_connection.value != Connection.CONNECTING || gatt != null) return
         hub.remove(fallbackListener)
         fallbackJob?.cancel()
-        connectGatt(device, auto = false)
-        connectTimeout?.cancel()
-        connectTimeout = scope.launch {
-            delay(8_000)
-            if (_connection.value == Connection.CONNECTING && !autoPending) {
-                closeGatt()
-                waitInBackground(device)
-            }
-        }
+        attempt(device)
     }
 
     /**
@@ -586,7 +573,7 @@ class GoveeController(
     private fun fallbackScan() {
         val addr = prefs.goveeAddress ?: return
         lastFallbackScan = System.currentTimeMillis()
-        com.amoo.roomlauncher.L.i("Govee: Direktverbindung klappt nicht – suche kurz gezielt nach $addr")
+        com.amoo.roomlauncher.L.i("Govee: suche kurz gezielt nach $addr")
         _connection.value = Connection.CONNECTING
         hub.add(fallbackListener, fast = false, address = addr)
         fallbackJob?.cancel()
@@ -595,18 +582,13 @@ class GoveeController(
             hub.remove(fallbackListener)
             if (_connection.value == Connection.CONNECTING && gatt == null) {
                 _lastError.value = "Leiste nicht gefunden – ist sie an und die Govee-App geschlossen?"
-                val a = adapter
-                val device = runCatching { a?.getRemoteDevice(addr) }.getOrNull()
-                if (device != null) waitInBackground(device) else {
-                    _connection.value = Connection.DISCONNECTED
-                    scheduleReconnect()
-                }
+                _connection.value = Connection.DISCONNECTED
+                scheduleReconnect()
             }
         }
     }
 
     private fun closeGatt() {
-        autoPending = false
         gatt?.let { runCatching { it.disconnect(); it.close() } }
         gatt = null
         writeChar = null
@@ -625,16 +607,32 @@ class GoveeController(
         _connection.value = Connection.DISCONNECTED
     }
 
-    /** Neu verbinden: 3 s, bei wiederholten Fehlern deutlich länger (max. 5 min) – keine Dauerschleife. */
+    /** Nächster Versuch: 2 s, ab dem 4. Fehlversuch 10 s, ab dem 9. alle 30 s – nie aufgeben, nie hektisch. */
     private fun scheduleReconnect() {
         reconnectJob?.cancel()
         if (prefs.goveeAddress == null) return
-        val wait = (3_000L shl failures.coerceAtMost(7)).coerceAtMost(5 * 60_000L)
-        failures++
+        val wait = when {
+            attempts <= 3 -> 2_000L
+            attempts <= 8 -> 10_000L
+            else -> 30_000L
+        }
         reconnectJob = scope.launch {
             delay(wait)
             if (_connection.value == Connection.DISCONNECTED) connect()
         }
+    }
+
+    /**
+     * Bei jeder Interaktion (Licht bedienen, Panel öffnen, zurück zum Launcher): Ist die Leiste nicht verbunden
+     * und läuft gerade kein Versuch, sofort neu verbinden statt auf die nächste Pause zu warten.
+     */
+    fun ensureConnected() {
+        if (prefs.goveeAddress == null || !started) return
+        if (_connection.value == Connection.CONNECTED) return
+        if (_connection.value == Connection.CONNECTING) return // Versuch läuft schon
+        attempts = 0
+        reconnectJob?.cancel()
+        connect()
     }
 
     /**
@@ -661,6 +659,7 @@ class GoveeController(
     /** Sofort (neu) verbinden – Knopf "Neu verbinden" oder Selbstheilung. */
     fun reconnectNow() {
         failures = 0
+        attempts = 0
         lastFallbackScan = 0L // von Hand ausgelöst → wieder einmal suchen dürfen
         reconnectJob?.cancel()
         fallbackJob?.cancel()
@@ -685,35 +684,20 @@ class GoveeController(
                 return
             }
             val wasConnected = _connection.value == Connection.CONNECTED
-            val wasAuto = autoPending
-            com.amoo.roomlauncher.L.i("Govee: Verbindung beendet (status=$status, newState=$newState, warVerbunden=$wasConnected, auto=$wasAuto)")
+            com.amoo.roomlauncher.L.i("Govee: Verbindung beendet (status=$status, newState=$newState, warVerbunden=$wasConnected)")
             runCatching { g.close() }
             gatt = null
-            autoPending = false
             writeChar = null
             writeAck?.complete(Unit)
-            val device = g.device
             scope.launch {
                 onLinkLost()
-                when {
-                    // Gerade noch verbunden → einmal schnell direkt neu verbinden
-                    wasConnected -> scheduleReconnect()
-                    // Hintergrund-Warten vom Stack abgebrochen → mit wachsender Pause neu anstellen
-                    wasAuto -> {
-                        failures++
-                        val wait = (30_000L shl (failures - 1).coerceIn(0, 3)).coerceAtMost(5 * 60_000L)
-                        reconnectJob?.cancel()
-                        reconnectJob = scope.launch {
-                            delay(wait)
-                            if (_connection.value == Connection.DISCONNECTED) waitInBackground(device)
-                        }
-                    }
-                    // Direktversuch gescheitert → selten suchen, sonst im Hintergrund warten
-                    status != BluetoothGatt.GATT_SUCCESS -> {
-                        connectTimeout?.cancel()
-                        afterDirectFailed(device)
-                    }
-                    else -> scheduleReconnect()
+                if (wasConnected) {
+                    // Gerade noch verbunden → sofort wieder ran
+                    attempts = 0
+                    scheduleReconnect()
+                } else {
+                    // Versuch gescheitert (z. B. Status 133) → dranbleiben
+                    onAttemptFailed()
                 }
             }
         }
@@ -770,8 +754,8 @@ class GoveeController(
     private fun onReady() {
         com.amoo.roomlauncher.L.i("Govee: bereit (Notify an, Modell=${_model.value}, Segmente=${_segmented.value})")
         connectTimeout?.cancel()
-        autoPending = false
         failures = 0
+        attempts = 0
         failedWrites = 0
         synced = false
         segDirty = true
@@ -835,7 +819,7 @@ class GoveeController(
         }
         when (_connection.value) {
             Connection.CONNECTED -> wake.trySend(Unit)
-            Connection.DISCONNECTED -> connect()
+            Connection.DISCONNECTED -> ensureConnected() // Bedienen = sofort neu verbinden
             else -> Unit
         }
     }
