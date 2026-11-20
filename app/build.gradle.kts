@@ -15,8 +15,8 @@ android {
         applicationId = "com.amoo.roomlauncher"
         minSdk = 25
         targetSdk = 35
-        versionCode = 22
-        versionName = "3.0.1"
+        versionCode = 23
+        versionName = "3.0.2"
 
         externalNativeBuild {
             cmake {

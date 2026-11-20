@@ -162,6 +162,7 @@ class GoveeController(
     private var scanStopJob: Job? = null
     private var failures = 0
     private var failedWrites = 0
+    @Volatile private var cacheRefreshed = false
     private var sleepJob: Job? = null
     @Volatile private var fading = false
     /** Helligkeit vor dem Ausdimmen des Nacht-Timers – wird beim nächsten Einschalten wiederhergestellt. */
@@ -542,6 +543,7 @@ class GoveeController(
     private fun connectGatt(device: BluetoothDevice) {
         com.amoo.roomlauncher.L.i("Govee: verbinde mit ${device.address} (Versuch ${attempts + 1})")
         _connection.value = Connection.CONNECTING
+        cacheRefreshed = false
         try {
             gatt = device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
         } catch (e: SecurityException) {
@@ -680,7 +682,8 @@ class GoveeController(
                 return
             }
             if (newState == BluetoothProfile.STATE_CONNECTED && status == BluetoothGatt.GATT_SUCCESS) {
-                g.discoverServices()
+                com.amoo.roomlauncher.L.i("Govee: Funkverbindung steht – erkenne Dienste")
+                startDiscovery(g, refresh = false)
                 return
             }
             val wasConnected = _connection.value == Connection.CONNECTED
@@ -703,6 +706,8 @@ class GoveeController(
         }
 
         override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
+            com.amoo.roomlauncher.L.i("Govee: Dienste erkannt (status=$status)")
+            connectTimeout?.cancel()
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 g.disconnect()
                 return
@@ -711,6 +716,13 @@ class GoveeController(
             val w = all.firstOrNull { it.uuid == WRITE_UUID }
             val n = all.firstOrNull { it.uuid == NOTIFY_UUID }
             // Gegenprüfung: beide Characteristics müssen da sein – sonst ist es nicht die Leiste
+            if ((w == null || n == null) && !cacheRefreshed) {
+                // Häufig ein veralteter Dienst-Zwischenspeicher nach Neustarts → einmal leeren und neu erkennen
+                cacheRefreshed = true
+                com.amoo.roomlauncher.L.w("Govee: Characteristics fehlen – leere Zwischenspeicher und erkenne neu")
+                startDiscovery(g, refresh = true)
+                return
+            }
             if (w == null || n == null) {
                 com.amoo.roomlauncher.L.w("Govee: Characteristics fehlen (2b11=${w != null}, 2b10=${n != null})")
                 _lastError.value = "Gerät hat keinen Govee-Steuerkanal – falsches Gerät?"
@@ -750,12 +762,47 @@ class GoveeController(
         }
     }
 
+    /**
+     * Dienst-Erkennung robust: Android 7 hängt gern, wenn sie sofort nach dem Verbinden startet (dann ist die
+     * Leiste laut System "verbunden", die App wartet aber ewig). Deshalb kurz warten, nach 6 s ohne Antwort den
+     * Bluetooth-Zwischenspeicher leeren und einmal neu erkennen; klappt auch das nicht → neuer Verbindungsversuch.
+     */
+    private fun startDiscovery(g: BluetoothGatt, refresh: Boolean) {
+        scope.launch {
+            delay(if (refresh) 300 else 600)
+            if (gatt !== g || _connection.value != Connection.CONNECTING) return@launch
+            if (refresh) refreshCache(g)
+            val ok = runCatching { g.discoverServices() }.getOrDefault(false)
+            com.amoo.roomlauncher.L.i("Govee: discoverServices gestartet=$ok (refresh=$refresh)")
+            connectTimeout?.cancel()
+            connectTimeout = scope.launch {
+                delay(6_000)
+                if (gatt !== g || _connection.value != Connection.CONNECTING || writeChar != null) return@launch
+                if (!refresh) {
+                    com.amoo.roomlauncher.L.w("Govee: Dienst-Erkennung hängt – leere Zwischenspeicher und versuche neu")
+                    startDiscovery(g, refresh = true)
+                } else {
+                    com.amoo.roomlauncher.L.w("Govee: Dienst-Erkennung erneut ohne Antwort – neuer Verbindungsversuch")
+                    closeGatt()
+                    onAttemptFailed()
+                }
+            }
+        }
+    }
+
+    /** Verstecktes BluetoothGatt.refresh(): löscht den (evtl. veralteten) Dienst-Zwischenspeicher. */
+    private fun refreshCache(g: BluetoothGatt) {
+        runCatching { g.javaClass.getMethod("refresh").invoke(g) }
+            .onFailure { com.amoo.roomlauncher.L.w("Govee: refresh() nicht möglich", it) }
+    }
+
     /** Verbindung steht: Zustand abfragen, Keep-Alive läuft, kompletter Segment-Stand folgt. */
     private fun onReady() {
         com.amoo.roomlauncher.L.i("Govee: bereit (Notify an, Modell=${_model.value}, Segmente=${_segmented.value})")
         connectTimeout?.cancel()
         failures = 0
         attempts = 0
+        cacheRefreshed = false
         failedWrites = 0
         synced = false
         segDirty = true
