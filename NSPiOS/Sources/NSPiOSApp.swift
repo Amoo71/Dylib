@@ -1,4 +1,5 @@
 import SwiftUI
+import Foundation
 
 @main
 struct NSPiOSApp: App {
@@ -8,6 +9,7 @@ struct NSPiOSApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
+                .task { await EngineSelfTest.runFromLaunchArgumentIfRequested() }
                 .environmentObject(store)
                 .environmentObject(updater)
                 .onOpenURL { store.handleOpenedURL($0) }
@@ -93,5 +95,24 @@ struct RootView: View {
                 updater.checkIfDue()
             }
         }
+    }
+}
+
+/// `-nspios-selftest`: Engine-Selbsttest ausgeben und beenden (für CI im Simulator).
+enum EngineSelfTest {
+    static func runFromLaunchArgumentIfRequested() async {
+        guard ProcessInfo.processInfo.arguments.contains("-nspios-selftest") else { return }
+        let line: String
+        do {
+            let result = try await PythonEngine.shared.selfTest()
+            let json = (try? JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]))
+                .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+            line = "NSPIOS_SELFTEST_OK \(json)"
+        } catch {
+            line = "NSPIOS_SELFTEST_FAIL \(error.localizedDescription)"
+        }
+        FileHandle.standardOutput.write(Data((line + "\n").utf8))
+        fflush(stdout)
+        exit(0)
     }
 }

@@ -21,6 +21,8 @@ struct SettingsView: View {
 
     @State private var confirmScope: DeleteScope?
     @State private var confirmRemoveKeys = false
+    @State private var engineStatus: String?
+    @State private var engineRunning = false
 
     private var theme: AppTheme { AppTheme(rawValue: themeRaw) ?? .dark }
     private var hasKeys: Bool { store.keyCount > 0 }
@@ -33,6 +35,7 @@ struct SettingsView: View {
                 extractionSection
                 romfsSection
                 updateSection
+                engineSection
             }
             .ambientList()
             .navigationTitle(L("Settings", "Einstellungen"))
@@ -255,6 +258,43 @@ struct SettingsView: View {
             }
             .pickerStyle(.menu)
             .listRowBackground(Theme.rowBackground)
+        }
+    }
+
+    // MARK: - Engine
+
+    private var engineSection: some View {
+        Section("Engine") {
+            Button {
+                engineRunning = true
+                engineStatus = nil
+                Task {
+                    do {
+                        let result = try await PythonEngine.shared.selfTest()
+                        engineStatus = "Python \(result["python"] ?? "?") · capstone \(result["capstone"] ?? "?") · SPIRV-Cross ✓"
+                    } catch {
+                        engineStatus = error.localizedDescription
+                    }
+                    engineRunning = false
+                }
+            } label: {
+                HStack {
+                    SettingLabel(L("Self-test", "Selbsttest"), icon: "cpu", color: .pink)
+                    Spacer()
+                    if engineRunning { ProgressView().controlSize(.small) }
+                }
+            }
+            .foregroundStyle(.primary)
+            .disabled(engineRunning)
+            .listRowBackground(Theme.rowBackground)
+
+            if let engineStatus {
+                Text(engineStatus)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(6)
+                    .listRowBackground(Theme.rowBackground)
+            }
         }
     }
 

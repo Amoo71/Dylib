@@ -14,13 +14,94 @@ settings:
     # Repo, aus dessen Releases sich die App aktualisiert (CI setzt github.repository)
     NSPIOS_UPDATE_REPO: Amoo71/Dylib
 targets:
+  # Native Werkzeuge für die Engine: capstone (AArch64), SPIRV-Cross (CLI als Funktion), lz4.
+  # Quellen lädt scripts/fetch_deps.sh nach Vendor/.
+  NSPiOSNative:
+    type: framework
+    platform: iOS
+    sources:
+      - path: Vendor/capstone
+        includes: [cs.c, Mapping.c, MCInst.c, MCInstrDesc.c, MCRegisterInfo.c, SStream.c, utils.c, "arch/AArch64/*.c"]
+      - path: Vendor/SPIRV-Cross
+        includes: [main.cpp, spirv_cfg.cpp, spirv_cpp.cpp, spirv_cross.cpp, spirv_cross_parsed_ir.cpp, spirv_cross_util.cpp, spirv_glsl.cpp, spirv_hlsl.cpp, spirv_msl.cpp, spirv_parser.cpp, spirv_reflect.cpp]
+      - path: Vendor/lz4/lib
+        includes: [lz4.c]
+    settings:
+      base:
+        PRODUCT_NAME: NSPiOSNative
+        PRODUCT_BUNDLE_IDENTIFIER: de.amoo71.NSPiOS.native
+        GENERATE_INFOPLIST_FILE: YES
+        DEFINES_MODULE: NO
+        SKIP_INSTALL: YES
+        CLANG_CXX_LANGUAGE_STANDARD: gnu++17
+        GCC_OPTIMIZATION_LEVEL: "2"
+        GCC_PREPROCESSOR_DEFINITIONS: [CAPSTONE_HAS_ARM64, CAPSTONE_USE_SYS_DYN_MEM]
+        HEADER_SEARCH_PATHS: ["$(PROJECT_DIR)/Vendor/capstone/include", "$(PROJECT_DIR)/Vendor/capstone", "$(PROJECT_DIR)/Vendor/SPIRV-Cross", "$(PROJECT_DIR)/Vendor/lz4/lib"]
+        GCC_WARN_INHIBIT_ALL_WARNINGS: YES
+        CODE_SIGNING_ALLOWED: NO
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGN_IDENTITY: ""
+
   NSPiOS:
     type: application
     platform: iOS
     sources:
       - path: Sources
       - path: Resources
+      # Python-Code der Engine → App-Bundle/py
+      - path: py
+        type: folder
+        buildPhase: resources
+    dependencies:
+      - target: NSPiOSNative
+        embed: true
+      - framework: Vendor/Python.xcframework
+        embed: true
     scheme: {}
+    postBuildScripts:
+      - name: Install Python standard library
+        basedOnDependencyAnalysis: false
+        script: |
+          set -e
+          mkdir -p "$CODESIGNING_FOLDER_PATH/python/lib"
+          if [ "$EFFECTIVE_PLATFORM_NAME" = "-iphonesimulator" ]; then
+            SLICE=$(ls -d "$PROJECT_DIR"/Vendor/Python.xcframework/ios-*-simulator | head -1)
+          else
+            SLICE="$PROJECT_DIR/Vendor/Python.xcframework/ios-arm64"
+          fi
+          echo "Installing Python standard library from $SLICE"
+          rsync -au --delete "$SLICE/lib/" "$CODESIGNING_FOLDER_PATH/python/lib/"
+      - name: Prepare Python binary modules
+        basedOnDependencyAnalysis: false
+        script: |
+          set -e
+          install_dylib () {
+            INSTALL_BASE=$1
+            FULL_EXT=$2
+            EXT=$(basename "$FULL_EXT")
+            RELATIVE_EXT=${FULL_EXT#$CODESIGNING_FOLDER_PATH/}
+            PYTHON_EXT=${RELATIVE_EXT/$INSTALL_BASE/}
+            FULL_MODULE_NAME=$(echo $PYTHON_EXT | cut -d "." -f 1 | tr "/" ".")
+            FRAMEWORK_BUNDLE_ID=$(echo $PRODUCT_BUNDLE_IDENTIFIER.$FULL_MODULE_NAME | tr "_" "-")
+            FRAMEWORK_FOLDER="Frameworks/$FULL_MODULE_NAME.framework"
+            if [ ! -d "$CODESIGNING_FOLDER_PATH/$FRAMEWORK_FOLDER" ]; then
+              mkdir -p "$CODESIGNING_FOLDER_PATH/$FRAMEWORK_FOLDER"
+              cp "$PROJECT_DIR/Support/dylib-Info-template.plist" "$CODESIGNING_FOLDER_PATH/$FRAMEWORK_FOLDER/Info.plist"
+              plutil -replace CFBundleExecutable -string "$FULL_MODULE_NAME" "$CODESIGNING_FOLDER_PATH/$FRAMEWORK_FOLDER/Info.plist"
+              plutil -replace CFBundleIdentifier -string "$FRAMEWORK_BUNDLE_ID" "$CODESIGNING_FOLDER_PATH/$FRAMEWORK_FOLDER/Info.plist"
+            fi
+            mv "$FULL_EXT" "$CODESIGNING_FOLDER_PATH/$FRAMEWORK_FOLDER/$FULL_MODULE_NAME"
+            echo "$FRAMEWORK_FOLDER/$FULL_MODULE_NAME" > ${FULL_EXT%.so}.fwork
+            echo "${RELATIVE_EXT%.so}.fwork" > "$CODESIGNING_FOLDER_PATH/$FRAMEWORK_FOLDER/$FULL_MODULE_NAME.origin"
+          }
+          PYTHON_VER=$(ls -1 "$CODESIGNING_FOLDER_PATH/python/lib" | grep '^python3' | head -1)
+          echo "Install Python $PYTHON_VER extension modules as frameworks"
+          find "$CODESIGNING_FOLDER_PATH/python/lib/$PYTHON_VER/lib-dynload" -name "*.so" | while read FULL_EXT; do
+            install_dylib python/lib/$PYTHON_VER/lib-dynload/ "$FULL_EXT"
+          done
+          if [ "$CODE_SIGNING_ALLOWED" = "YES" ] && [ -n "$EXPANDED_CODE_SIGN_IDENTITY" ]; then
+            find "$CODESIGNING_FOLDER_PATH/Frameworks" -name "*.framework" -exec /usr/bin/codesign --force --sign "$EXPANDED_CODE_SIGN_IDENTITY" ${OTHER_CODE_SIGN_FLAGS:-} -o runtime --timestamp=none --preserve-metadata=identifier,entitlements,flags --generate-entitlement-der "{}" \;
+          fi
     settings:
       base:
         PRODUCT_NAME: NSPiOS
@@ -29,6 +110,10 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        SWIFT_OBJC_BRIDGING_HEADER: Sources/Engine/NSPiOS-Bridging-Header.h
+        HEADER_SEARCH_PATHS: ["$(BUILT_PRODUCTS_DIR)/Python.framework/Headers"]
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER: NO
         CODE_SIGNING_ALLOWED: NO
         CODE_SIGNING_REQUIRED: NO
         CODE_SIGN_IDENTITY: ""

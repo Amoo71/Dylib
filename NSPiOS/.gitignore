@@ -4,3 +4,8 @@ Info.plist
 build/
 Payload/
 *.ipa
+# Engine-Abhängigkeiten (werden von scripts/fetch_deps.sh geladen)
+Vendor/
+py/capstone/
+build-sim/
+selftest.log
