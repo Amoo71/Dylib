@@ -157,7 +157,18 @@ enum PackageReader {
     struct ExtractResult: Sendable {
         let fileCount: Int
         let decryptedCount: Int
+        /// Anzahl NCAs im Paket (für den Hinweis „Keys laden für RomFS“).
+        let ncaCount: Int
         let warnings: [String]
+    }
+
+    /// Eine NCA-Quelle: Datei-Index (in `fds`), Offset, Größe.
+    struct NCACandidate {
+        let name: String
+        let path: String
+        let file: Int
+        let offset: UInt64
+        let size: UInt64
     }
 
     /// Entpackt den Container nach `destination` – optional inkl. RomFS/ExeFS.
@@ -195,9 +206,25 @@ enum PackageReader {
         var warnings: [String] = []
         var decryptedNCAs = Set<String>()
 
+        // NCAs (bei XCI nur aus der secure-Partition)
+        let relevant = info.entries.filter { info.format == .nsp || $0.path.hasPrefix("secure/") }
+        let candidates = relevant
+            .filter { entry in
+                let lower = entry.name.lowercased()
+                return lower.hasSuffix(".nca") || lower.hasSuffix(".ncz")
+            }
+            .map { NCACandidate(name: $0.name, path: $0.path, file: 0, offset: $0.dataOffset, size: $0.size) }
+
         // 2) RomFS / ExeFS aus den NCAs
         if options.decrypt, let keys = options.keys {
-            let plan = planDecryption(fd: inFD, info: info, keys: keys, usedPaths: &usedPaths)
+            var tickets: [Data: Data] = [:]
+            for entry in relevant where entry.name.lowercased().hasSuffix(".tik") && entry.size <= 0x10000 {
+                if let data = readFully(inFD, offset: entry.dataOffset, count: Int(entry.size)),
+                   let ticket = try? NCAReader.parseTicket(data) {
+                    tickets[ticket.rightsID] = ticket.encryptedTitleKey
+                }
+            }
+            let plan = planDecryption(fds: [inFD], candidates: candidates, tickets: tickets, keys: keys, usedPaths: &usedPaths)
             jobs += plan.jobs
             warnings += plan.warnings
             decryptedNCAs = plan.decryptedNCAs
@@ -206,6 +233,60 @@ enum PackageReader {
             }
         }
 
+        try run(jobs, fds: [inFD], destination: destination, cancel: cancel, progress: progress)
+        return ExtractResult(fileCount: jobs.count, decryptedCount: decryptedNCAs.count, ncaCount: candidates.count, warnings: warnings)
+    }
+
+    /// RomFS / ExeFS / Control nachträglich aus bereits entpackten NCA-Dateien erzeugen.
+    static func extractRomFS(
+        ncaFiles: [URL],
+        ticketFiles: [URL],
+        to destination: URL,
+        keys: KeySet,
+        cancel: CancelFlag,
+        progress: @escaping (_ done: UInt64, _ total: UInt64, _ currentFile: String) -> Void
+    ) throws -> ExtractResult {
+        var fds: [Int32] = []
+        defer { fds.forEach { close($0) } }
+
+        var candidates: [NCACandidate] = []
+        for url in ncaFiles {
+            let fd = open(url.path, O_RDONLY)
+            guard fd >= 0 else { continue }
+            _ = fcntl(fd, F_RDAHEAD, 1)
+            fds.append(fd)
+            let size = UInt64((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+            candidates.append(NCACandidate(name: url.lastPathComponent, path: url.path, file: fds.count - 1, offset: 0, size: size))
+        }
+
+        var tickets: [Data: Data] = [:]
+        for url in ticketFiles {
+            if let data = try? Data(contentsOf: url), data.count <= 0x10000,
+               let ticket = try? NCAReader.parseTicket(data) {
+                tickets[ticket.rightsID] = ticket.encryptedTitleKey
+            }
+        }
+
+        var usedPaths = Set<String>()
+        let plan = planDecryption(fds: fds, candidates: candidates, tickets: tickets, keys: keys, usedPaths: &usedPaths)
+        guard !plan.jobs.isEmpty else {
+            throw PackageError.corruptHeader(
+                (["Keine RomFS gefunden."] + plan.warnings).joined(separator: "\n\n")
+            )
+        }
+        try run(plan.jobs, fds: fds, destination: destination, cancel: cancel, progress: progress)
+        return ExtractResult(fileCount: plan.jobs.count, decryptedCount: plan.decryptedNCAs.count, ncaCount: candidates.count, warnings: plan.warnings)
+    }
+
+    // MARK: - Ausführen
+
+    private static func run(
+        _ jobs: [CopyJob],
+        fds: [Int32],
+        destination: URL,
+        cancel: CancelFlag,
+        progress: @escaping (_ done: UInt64, _ total: UInt64, _ currentFile: String) -> Void
+    ) throws {
         let totalBytes = jobs.reduce(UInt64(0)) { $0 + $1.size }
         let free = FS.freeSpace()
         if free > 0, Int64(clamping: totalBytes) > free {
@@ -229,6 +310,7 @@ enum PackageReader {
 
         for job in jobs {
             if cancel.isCancelled { throw PackageError.cancelled }
+            let inFD = fds[job.file]
 
             let outPath = destination.appendingPathComponent(job.path, isDirectory: false).path
             let outFD = open(outPath, O_WRONLY | O_CREAT | O_TRUNC, 0o644)
@@ -290,13 +372,20 @@ enum PackageReader {
             }
         }
         progress(totalBytes, totalBytes, "")
-        return ExtractResult(fileCount: jobs.count, decryptedCount: decryptedNCAs.count, warnings: warnings)
     }
 
-    /// Plant RomFS/ExeFS/Control für alle NCAs (bei XCI nur aus der secure-Partition).
+    private static func readFully(_ fd: Int32, offset: UInt64, count: Int) -> Data? {
+        guard count > 0 else { return nil }
+        var data = Data(count: count)
+        let got = data.withUnsafeMutableBytes { pread(fd, $0.baseAddress, count, off_t(offset)) }
+        return got == count ? data : nil
+    }
+
+    /// Plant RomFS/ExeFS/Control für die übergebenen NCAs.
     private static func planDecryption(
-        fd: Int32,
-        info: PackageInfo,
+        fds: [Int32],
+        candidates: [NCACandidate],
+        tickets: [Data: Data],
         keys: KeySet,
         usedPaths: inout Set<String>
     ) -> (jobs: [CopyJob], warnings: [String], decryptedNCAs: Set<String>) {
@@ -308,30 +397,18 @@ enum PackageReader {
             return ([], ["RomFS: „header_key“ fehlt in der prod.keys."], [])
         }
 
-        let relevant = info.entries.filter { info.format == .nsp || $0.path.hasPrefix("secure/") }
-
-        // Tickets (für Titlekey-Verschlüsselung)
-        var tickets: [Data: Data] = [:]
-        for entry in relevant where entry.name.lowercased().hasSuffix(".tik") && entry.size <= 0x10000 {
-            var data = Data(count: Int(entry.size))
-            let got = data.withUnsafeMutableBytes { pread(fd, $0.baseAddress, Int(entry.size), off_t(entry.dataOffset)) }
-            guard got == Int(entry.size) else { continue }
-            if let ticket = try? NCAReader.parseTicket(data) {
-                tickets[ticket.rightsID] = ticket.encryptedTitleKey
-            }
-        }
-
         var programIndex = 0
-        for entry in relevant {
-            let lower = entry.name.lowercased()
+        for candidate in candidates {
+            let lower = candidate.name.lowercased()
             if lower.hasSuffix(".ncz") {
-                warnings.append("\(entry.name): \(NCAError.compressed.localizedDescription)")
+                warnings.append("\(candidate.name): \(NCAError.compressed.localizedDescription)")
                 continue
             }
             guard lower.hasSuffix(".nca"), !lower.hasSuffix(".cnmt.nca") else { continue }
+            let fd = fds[candidate.file]
 
             do {
-                let header = try NCAReader.open(fd: fd, ncaOffset: entry.dataOffset, ncaSize: entry.size, keys: keys, tickets: tickets)
+                let header = try NCAReader.open(fd: fd, ncaOffset: candidate.offset, ncaSize: candidate.size, keys: keys, tickets: tickets)
                 let titleHex = String(format: "%016llx", header.titleID)
 
                 let romfsRoot: String
@@ -361,16 +438,16 @@ enum PackageReader {
                     }
                 }
 
-                warnings += header.warnings.map { "\(entry.name): \($0)" }
+                warnings += header.warnings.map { "\(candidate.name): \($0)" }
                 guard !ncaJobs.isEmpty else { continue }
 
                 for job in ncaJobs {
                     let path = uniquePath(job.path, used: &usedPaths)
-                    jobs.append(CopyJob(path: path, size: job.size, source: job.source))
+                    jobs.append(CopyJob(path: path, size: job.size, source: job.source, file: candidate.file))
                 }
-                decrypted.insert(entry.path)
+                decrypted.insert(candidate.path)
             } catch {
-                warnings.append("\(entry.name): \(error.localizedDescription)")
+                warnings.append("\(candidate.name): \(error.localizedDescription)")
             }
         }
         return (jobs, warnings, decrypted)

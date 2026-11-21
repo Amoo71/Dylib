@@ -85,6 +85,8 @@ final class FileStore: ObservableObject {
         let securityScoped: Bool
         let deleteSource: Bool
         let options: PackageReader.ExtractOptions
+        /// `true` = RomFS nachträglich aus NCA-Datei/Ordner erzeugen.
+        var romfsOnly = false
     }
 
     private var pending: [PendingExtraction] = []
@@ -261,6 +263,23 @@ final class FileStore: ObservableObject {
         startNextIfIdle()
     }
 
+    /// RomFS/ExeFS nachträglich aus einer NCA-Datei oder einem entpackten Ordner erzeugen.
+    func extractRomFS(from url: URL) {
+        guard keyCount > 0 else {
+            alert = AlertMessage(
+                title: "prod.keys fehlt",
+                message: "Für RomFS müssen die NCAs entschlüsselt werden. Lade zuerst deine eigene prod.keys unter Einstellungen › RomFS & ExeFS."
+            )
+            return
+        }
+        pending.append(PendingExtraction(
+            source: url, securityScoped: false, deleteSource: false,
+            options: PackageReader.ExtractOptions(), romfsOnly: true
+        ))
+        queuedCount = pending.count
+        startNextIfIdle()
+    }
+
     func cancelExtraction() {
         pending.removeAll()
         queuedCount = 0
@@ -277,11 +296,16 @@ final class FileStore: ObservableObject {
             job = ExtractionJob(title: next.source.lastPathComponent, cancel: flag)
         }
 
+        beginBackgroundWork()
+
+        if next.romfsOnly {
+            startRomFSJob(next, flag: flag)
+            return
+        }
+
         let baseName = next.source.deletingPathExtension().lastPathComponent
         let finalURL = FS.uniqueURL(in: extractedDir, fileName: baseName, isDirectory: true)
         let partURL = extractedDir.appendingPathComponent(finalURL.lastPathComponent + ".part", isDirectory: true)
-
-        beginBackgroundWork()
 
         Task.detached(priority: .userInitiated) {
             let scoped = next.securityScoped && next.source.startAccessingSecurityScopedResource()
@@ -319,6 +343,43 @@ final class FileStore: ObservableObject {
         }
     }
 
+    private func startRomFSJob(_ next: PendingExtraction, flag: CancelFlag) {
+        let source = next.source
+        let isDirectory = (try? source.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+        let targetDir = isDirectory ? source : source.deletingLastPathComponent()
+        let partURL = extractedDir.appendingPathComponent(".romfs-\(UUID().uuidString).part", isDirectory: true)
+
+        Task.detached(priority: .userInitiated) {
+            let report: (UInt64, UInt64, String) -> Void = { done, total, file in
+                Task { @MainActor in
+                    self.updateProgress(flag: flag, done: done, total: total, file: file)
+                }
+            }
+
+            let outcome: Result<PackageReader.ExtractResult, Error>
+            do {
+                guard let keys = KeyStore.load() else { throw NCAError.missingKey("header_key") }
+                let (ncas, tickets) = FS.ncaFiles(in: source)
+                let result = try PackageReader.extractRomFS(
+                    ncaFiles: ncas, ticketFiles: tickets, to: partURL,
+                    keys: keys, cancel: flag, progress: report
+                )
+                // Ergebnis (romfs/, exefs/, control/ …) in den Zielordner verschieben
+                let fm = FileManager.default
+                for child in try fm.contentsOfDirectory(at: partURL, includingPropertiesForKeys: nil) {
+                    let destination = FS.uniqueURL(in: targetDir, fileName: child.lastPathComponent, isDirectory: true)
+                    try fm.moveItem(at: child, to: destination)
+                }
+                try? fm.removeItem(at: partURL)
+                outcome = .success(result)
+            } catch {
+                try? FileManager.default.removeItem(at: partURL)
+                outcome = .failure(error)
+            }
+            await self.finishJob(name: source.lastPathComponent, folder: targetDir.lastPathComponent, outcome: outcome)
+        }
+    }
+
     private func updateProgress(flag: CancelFlag, done: UInt64, total: UInt64, file: String) {
         guard var current = job, current.cancel === flag else { return }
         current.done = done
@@ -335,7 +396,12 @@ final class FileStore: ObservableObject {
             toast = result.decryptedCount > 0
                 ? "\(folder) · RomFS + \(result.fileCount) Dateien"
                 : "\(folder) · \(result.fileCount) Dateien entpackt"
-            if !result.warnings.isEmpty {
+            if result.decryptedCount == 0, result.ncaCount > 0, keyCount == 0 {
+                alert = AlertMessage(
+                    title: "Nur NCAs entpackt",
+                    message: "Für den RomFS-Ordner lade unter Einstellungen › RomFS & ExeFS deine eigene prod.keys. Danach im Ordner „RomFS entpacken“ wählen – ohne erneut zu entpacken."
+                )
+            } else if !result.warnings.isEmpty {
                 alert = AlertMessage(title: "Hinweise zu \(name)", message: result.warnings.joined(separator: "\n\n"))
             }
         case .failure(let error):

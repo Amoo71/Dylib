@@ -60,6 +60,16 @@ struct CopyJob: Sendable {
     let source: Source
     /// Pfad des Container-Eintrags (nur bei Rohdaten).
     var origin: String? = nil
+    /// Index der Quelldatei (mehrere lose NCA-Dateien).
+    var file: Int = 0
+
+    init(path: String, size: UInt64, source: Source, origin: String? = nil, file: Int = 0) {
+        self.path = path
+        self.size = size
+        self.source = source
+        self.origin = origin
+        self.file = file
+    }
 }
 
 enum NCAError: LocalizedError {

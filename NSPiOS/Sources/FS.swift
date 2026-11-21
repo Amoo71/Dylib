@@ -112,6 +112,45 @@ enum FS {
         if let coordinatorError { throw coordinatorError }
     }
 
+    /// NCA- und Ticket-Dateien in einem Ordner (rekursiv, ohne bereits erzeugte romfs/exefs/control)
+    /// bzw. eine einzelne NCA-Datei samt Tickets daneben.
+    static func ncaFiles(in url: URL) -> (ncas: [URL], tickets: [URL]) {
+        var ncas: [URL] = []
+        var tickets: [URL] = []
+        let isDirectory = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+
+        func consider(_ file: URL) {
+            switch file.pathExtension.lowercased() {
+            case "nca", "ncz": ncas.append(file)
+            case "tik": tickets.append(file)
+            default: break
+            }
+        }
+
+        if isDirectory {
+            if let enumerator = fm.enumerator(at: url, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) {
+                for case let file as URL in enumerator {
+                    if (try? file.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+                        let name = file.lastPathComponent.lowercased()
+                        if name.hasPrefix("romfs") || name.hasPrefix("exefs") || name == "control" {
+                            enumerator.skipDescendants()
+                        }
+                        continue
+                    }
+                    consider(file)
+                }
+            }
+        } else {
+            consider(url)
+            for sibling in (try? fm.contentsOfDirectory(at: url.deletingLastPathComponent(), includingPropertiesForKeys: nil)) ?? []
+            where sibling.pathExtension.lowercased() == "tik" {
+                tickets.append(sibling)
+            }
+        }
+        ncas.sort { $0.lastPathComponent < $1.lastPathComponent }
+        return (ncas, tickets)
+    }
+
     /// Führt `body` mit koordiniertem Lesezugriff aus (lädt iCloud-/Provider-Dateien bei Bedarf).
     static func coordinatedRead<T>(_ url: URL, _ body: (URL) throws -> T) throws -> T {
         var coordinatorError: NSError?

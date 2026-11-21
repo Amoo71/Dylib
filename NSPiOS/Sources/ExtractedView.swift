@@ -70,8 +70,32 @@ struct FolderView: View {
 
     private var totalSize: Int64 { items.reduce(0) { $0 + $1.size } }
 
+    /// Ordner hat NCAs (auch in Partition-Unterordnern), aber noch keinen romfs-Ordner.
+    private var canMakeRomFS: Bool {
+        let names = items.map { $0.name.lowercased() }
+        let hasRomFS = names.contains { $0.hasPrefix("romfs") }
+        let hasNCA = names.contains { $0.hasSuffix(".nca") } || names.contains("secure")
+        return hasNCA && !hasRomFS
+    }
+
     var body: some View {
         List {
+            if loaded && canMakeRomFS {
+                Section {
+                    Button {
+                        store.extractRomFS(from: url)
+                    } label: {
+                        Label(store.keyCount > 0 ? "RomFS entpacken" : "RomFS entpacken (prod.keys nötig)", systemImage: "cube.transparent")
+                            .font(.body.weight(.semibold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 6)
+                    }
+                    .buttonStyle(.glassProminent)
+                    .disabled(store.job != nil)
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+                }
+            }
             if loaded && !items.isEmpty {
                 Section {
                     ForEach(items) { item in
@@ -102,6 +126,10 @@ struct FolderView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Menu {
+                    Button { store.extractRomFS(from: url) } label: {
+                        Label("RomFS entpacken", systemImage: "cube.transparent")
+                    }
+                    Divider()
                     Button { store.export([url], asCopy: false) } label: {
                         Label("In Dateien verschieben", systemImage: "folder.badge.plus")
                     }

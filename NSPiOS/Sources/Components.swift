@@ -79,6 +79,11 @@ private struct ItemActions: ViewModifier {
                         Label("Inhalt anzeigen", systemImage: "list.bullet.rectangle")
                     }
                 }
+                if item.isDirectory || item.url.pathExtension.lowercased() == "nca" {
+                    Button { store.extractRomFS(from: item.url) } label: {
+                        Label("RomFS entpacken", systemImage: "cube.transparent")
+                    }
+                }
                 Button { store.export([item.url], asCopy: false) } label: {
                     Label("In Dateien verschieben", systemImage: "folder.badge.plus")
                 }
