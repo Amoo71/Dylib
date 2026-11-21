@@ -38,15 +38,15 @@ enum PackageError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidMagic:
-            return "Keine gültige NSP- oder XCI-Datei."
+            return L("Not a valid NSP or XCI file.", "Keine gültige NSP- oder XCI-Datei.")
         case .truncated:
-            return "Die Datei ist unvollständig oder beschädigt."
+            return L("The file is incomplete or damaged.", "Die Datei ist unvollständig oder beschädigt.")
         case .corruptHeader(let detail):
-            return "Beschädigter Header: \(detail)"
+            return L("Damaged header: \(detail)", "Beschädigter Header: \(detail)")
         case .notEnoughSpace(let needed, let free):
-            return "Nicht genug Speicher: benötigt \(formatBytes(needed)), frei \(formatBytes(free))."
+            return L("Not enough space: needs \(formatBytes(needed)), free \(formatBytes(free)).", "Nicht genug Speicher: benötigt \(formatBytes(needed)), frei \(formatBytes(free)).")
         case .cancelled:
-            return "Abgebrochen."
+            return L("Cancelled.", "Abgebrochen.")
         }
     }
 }
@@ -271,7 +271,7 @@ enum PackageReader {
         let plan = planDecryption(fds: fds, candidates: candidates, tickets: tickets, keys: keys, usedPaths: &usedPaths)
         guard !plan.jobs.isEmpty else {
             throw PackageError.corruptHeader(
-                (["Keine RomFS gefunden."] + plan.warnings).joined(separator: "\n\n")
+                ([L("No RomFS found.", "Keine RomFS gefunden.")] + plan.warnings).joined(separator: "\n\n")
             )
         }
         try run(plan.jobs, fds: fds, destination: destination, cancel: cancel, progress: progress)
@@ -394,7 +394,7 @@ enum PackageReader {
         var decrypted = Set<String>()
 
         guard keys.headerKey != nil else {
-            return ([], ["RomFS: „header_key“ fehlt in der prod.keys."], [])
+            return ([], [NCAError.missingKey("header_key").localizedDescription], [])
         }
 
         var programIndex = 0

@@ -17,7 +17,7 @@ struct FileRow: View {
                 Text(item.name)
                     .font(.body.weight(.medium))
                     .lineLimit(2)
-                Text("\(formatBytes(item.size)) · \(item.modified.formatted(.relative(presentation: .named)))")
+                Text(formatBytes(item.size))
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
@@ -27,7 +27,7 @@ struct FileRow: View {
 
     private var tint: Color {
         if item.isDirectory { return Theme.accent }
-        return item.isPackage ? Theme.violet : .white.opacity(0.7)
+        return item.isPackage ? Theme.violet : .secondary
     }
 
     static func symbol(forExtension ext: String) -> String {
@@ -46,7 +46,6 @@ struct FileRow: View {
 struct EmptyState<Actions: View>: View {
     let icon: String
     let title: String
-    let message: String
     @ViewBuilder let actions: () -> Actions
 
     var body: some View {
@@ -54,8 +53,6 @@ struct EmptyState<Actions: View>: View {
             Label(title, systemImage: icon)
                 .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(Theme.accent)
-        } description: {
-            Text(message)
         } actions: {
             actions()
         }
@@ -73,41 +70,41 @@ private struct ItemActions: ViewModifier {
             .contextMenu {
                 if item.isPackage {
                     Button { store.enqueueExtraction(of: item.url) } label: {
-                        Label("Entpacken", systemImage: "arrow.down.to.line")
+                        Label(L("Extract", "Entpacken"), systemImage: "arrow.down.to.line")
                     }
                     Button { store.inspected = item } label: {
-                        Label("Inhalt anzeigen", systemImage: "list.bullet.rectangle")
+                        Label(L("Contents", "Inhalt"), systemImage: "list.bullet.rectangle")
                     }
                 }
                 if item.isDirectory || item.url.pathExtension.lowercased() == "nca" {
                     Button { store.extractRomFS(from: item.url) } label: {
-                        Label("RomFS entpacken", systemImage: "cube.transparent")
+                        Label(L("Extract RomFS", "RomFS entpacken"), systemImage: "cube.transparent")
                     }
                 }
                 Button { store.export([item.url], asCopy: false) } label: {
-                    Label("In Dateien verschieben", systemImage: "folder.badge.plus")
+                    Label(L("Move to Files", "In Dateien verschieben"), systemImage: "folder.badge.plus")
                 }
                 Button { store.export([item.url], asCopy: true) } label: {
-                    Label("In Dateien kopieren", systemImage: "doc.on.doc")
+                    Label(L("Copy to Files", "In Dateien kopieren"), systemImage: "doc.on.doc")
                 }
                 if !item.isDirectory {
                     ShareLink(item: item.url) {
-                        Label("Teilen", systemImage: "square.and.arrow.up")
+                        Label(L("Share", "Teilen"), systemImage: "square.and.arrow.up")
                     }
                 }
                 Divider()
                 Button(role: .destructive) { store.delete([item.url]) } label: {
-                    Label("Löschen", systemImage: "trash")
+                    Label(L("Delete", "Löschen"), systemImage: "trash")
                 }
             }
             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                 Button(role: .destructive) { store.delete([item.url]) } label: {
-                    Label("Löschen", systemImage: "trash")
+                    Label(L("Delete", "Löschen"), systemImage: "trash")
                 }
             }
             .swipeActions(edge: .leading) {
                 Button { store.export([item.url], asCopy: false) } label: {
-                    Label("Verschieben", systemImage: "folder.badge.plus")
+                    Label(L("Move", "Verschieben"), systemImage: "folder.badge.plus")
                 }
                 .tint(Theme.accent)
             }
@@ -148,7 +145,7 @@ struct JobCard: View {
                                 .font(.subheadline.weight(.semibold))
                                 .lineLimit(1)
                                 .truncationMode(.middle)
-                            Text(job.currentFile.isEmpty ? "Vorbereiten …" : job.currentFile)
+                            Text(job.currentFile.isEmpty ? L("Preparing …", "Vorbereiten …") : job.currentFile)
                                 .font(.caption.monospaced())
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
@@ -164,7 +161,7 @@ struct JobCard: View {
                         }
                         .buttonStyle(.glass)
                         .buttonBorderShape(.circle)
-                        .accessibilityLabel("Abbrechen")
+                        .accessibilityLabel(L("Cancel", "Abbrechen"))
                     }
 
                     ProgressView(value: job.fraction)
@@ -178,11 +175,11 @@ struct JobCard: View {
                         Text("\(formatBytes(Int64(job.speed)))/s")
                         if let eta = job.remainingSeconds {
                             Text("·")
-                            Text("noch \(formatDuration(eta))")
+                            Text(formatDuration(eta))
                         }
                         Spacer(minLength: 0)
                         if store.queuedCount > 0 {
-                            Text("+\(store.queuedCount) wartend")
+                            Text("+\(store.queuedCount)")
                         }
                     }
                     .font(.caption.monospacedDigit())

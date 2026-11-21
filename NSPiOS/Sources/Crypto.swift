@@ -6,7 +6,7 @@ enum CryptoError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .failed(let status): return "Kryptografie-Fehler (\(status))."
+        case .failed(let status): return L("Crypto error (\(status)).", "Kryptografie-Fehler (\(status)).")
         }
     }
 }

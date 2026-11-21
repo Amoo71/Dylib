@@ -20,11 +20,11 @@ enum InstallMethod: String, CaseIterable, Identifiable, Sendable {
 
     var title: String {
         switch self {
-        case .selfUpdate: return SelfUpdater.isLiveContainer ? "Direkt (LiveContainer)" : "Direkt in der App"
+        case .selfUpdate: return SelfUpdater.isLiveContainer ? "LiveContainer" : L("In-app", "In der App")
         case .trollStore: return "TrollStore"
         case .sideStore: return "SideStore"
         case .altStore: return "AltStore"
-        case .share: return "IPA laden & öffnen in …"
+        case .share: return L("Download IPA", "IPA laden")
         }
     }
 
@@ -169,7 +169,7 @@ final class UpdateManager: ObservableObject {
         UIApplication.shared.open(url) { success in
             if !success {
                 Task { @MainActor in
-                    self.phase = .failed("\(method.title) konnte nicht geöffnet werden.")
+                    self.phase = .failed(L("Couldn’t open \(method.title).", "\(method.title) konnte nicht geöffnet werden."))
                     self.showSheet = true
                 }
             }
@@ -189,7 +189,7 @@ final class UpdateManager: ObservableObject {
             }
             return try await downloader.start(release.ipaURL)
         } catch {
-            phase = .failed("Download fehlgeschlagen: \(error.localizedDescription)")
+            phase = .failed(L("Download failed: ", "Download fehlgeschlagen: ") + error.localizedDescription)
             return nil
         }
     }
@@ -207,7 +207,7 @@ final class UpdateManager: ObservableObject {
             phase = .installed
             showSheet = true
         case .failure(let error):
-            phase = .failed("Update fehlgeschlagen: \(error.localizedDescription)")
+            phase = .failed(L("Update failed: ", "Update fehlgeschlagen: ") + error.localizedDescription)
         }
     }
 
@@ -240,7 +240,7 @@ final class UpdateManager: ObservableObject {
 
         let (data, response) = try await URLSession.shared.data(for: request)
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
-            throw URLError(.badServerResponse, userInfo: [NSLocalizedDescriptionKey: "GitHub antwortet mit Status \(http.statusCode)."])
+            throw URLError(.badServerResponse, userInfo: [NSLocalizedDescriptionKey: L("GitHub returned status \(http.statusCode).", "GitHub antwortet mit Status \(http.statusCode).")])
         }
 
         let decoder = JSONDecoder()

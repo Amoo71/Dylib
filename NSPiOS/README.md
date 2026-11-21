@@ -1,6 +1,10 @@
 # NSPiOS
 
-Schlanke iOS-App zum **Entpacken und Verwalten eigener NSP/NSZ- und XCI/XCZ-Dateien** – im Liquid-Glass-Design, immer im Dark Mode.
+Schlanke iOS-App zum **Entpacken und Verwalten eigener NSP/NSZ- und XCI/XCZ-Dateien** – im Liquid-Glass-Design.
+
+- **Themes:** Dunkel, Hell, eigene Farbe, Regen (animiert, mit einstellbarem Wind)
+- **Sprache:** Englisch (Standard) oder Deutsch – in den Einstellungen
+- **Live-Sync:** Löschen/Verschieben (auch über die Dateien-App) ist sofort in allen Tabs sichtbar
 Die IPA wird automatisch per GitHub Actions gebaut, ganz ohne Mac.
 
 **Voraussetzung:** iOS 26 oder neuer (für iOS 27 gebaut, nutzt die Liquid-Glass-APIs).
@@ -51,11 +55,11 @@ NSPiOS/
     ├── NSPiOSApp.swift      # App + Tab-Struktur, globale Sheets/Alerts
     ├── LibraryView.swift    # Tab „NSP“
     ├── ExtractedView.swift  # Tab „Entpackt“, Ordner-Browser, NSP-Inhalt
-    ├── StorageView.swift    # Tab „Einstellungen“: Speicher, Bereinigen, Löschen
+    ├── SettingsView.swift   # Einstellungen: Speicher, Darstellung, Sprache, RomFS, Updates
     ├── UpdateManager.swift  # GitHub-Releases prüfen, Download, Übergabe an TrollStore/SideStore/AltStore
-    ├── UpdateViews.swift    # Update-Karte & Update-Sheet
+    ├── UpdateViews.swift    # Update-Sheet
     ├── Components.swift     # Zeilen, Aktionen, Fortschrittskarte, Statusanzeige
-    ├── Theme.swift          # Farben, Mesh-Hintergrund, Glas-Helfer
+    ├── Theme.swift          # Themes (Dunkel/Hell/Farbe/Regen), Sprache, Hintergründe
     ├── FileStore.swift      # Logik: Import, Warteschlange, Löschen, Export
     ├── FS.swift             # Dateisystem-Hilfen
     └── Package.swift        # NSP (PFS0) + XCI (HFS0) Parser & schneller Entpacker

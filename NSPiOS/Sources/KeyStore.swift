@@ -42,7 +42,7 @@ enum KeyStoreError: LocalizedError {
     case noHeaderKey
 
     var errorDescription: String? {
-        "In der Datei fehlt „header_key“. Bitte eine vollständige prod.keys (z. B. von Lockpick_RCM) deiner eigenen Konsole verwenden."
+        L("„header_key“ is missing. Use a complete prod.keys from your own console.", "„header_key“ fehlt. Nutze eine vollständige prod.keys deiner eigenen Konsole.")
     }
 }
 

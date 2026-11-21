@@ -215,3 +215,26 @@ enum FS {
         return freed
     }
 }
+
+/// Beobachtet einen Ordner (Anlegen, Löschen, Umbenennen von Einträgen) – z. B. Änderungen aus der Dateien-App.
+final class DirectoryWatcher {
+    private var source: DispatchSourceFileSystemObject?
+
+    init?(url: URL, onChange: @escaping () -> Void) {
+        let fd = open(url.path, O_EVTONLY)
+        guard fd >= 0 else { return nil }
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fd,
+            eventMask: [.write, .delete, .rename, .link, .revoke],
+            queue: .main
+        )
+        source.setEventHandler(handler: onChange)
+        source.setCancelHandler { close(fd) }
+        source.resume()
+        self.source = source
+    }
+
+    deinit {
+        source?.cancel()
+    }
+}

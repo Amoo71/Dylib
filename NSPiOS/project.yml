@@ -39,7 +39,6 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
-        UIUserInterfaceStyle: Dark
         NSPiOSUpdateRepo: $(NSPIOS_UPDATE_REPO)
         # Sideload-Apps, an die Updates übergeben werden können
         LSApplicationQueriesSchemes:

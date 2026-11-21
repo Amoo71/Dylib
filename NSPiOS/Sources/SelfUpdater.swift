@@ -8,9 +8,9 @@ enum UnzipError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .invalidArchive: return "Ungültige IPA (ZIP)."
-        case .unsupportedMethod(let m): return "ZIP-Kompression \(m) wird nicht unterstützt."
-        case .corrupt(let name): return "Beschädigter Eintrag: \(name)"
+        case .invalidArchive: return L("Invalid IPA (ZIP).", "Ungültige IPA (ZIP).")
+        case .unsupportedMethod(let m): return L("ZIP compression \(m) not supported.", "ZIP-Kompression \(m) nicht unterstützt.")
+        case .corrupt(let name): return L("Damaged entry: \(name)", "Beschädigter Eintrag: \(name)")
         }
     }
 }
@@ -104,8 +104,8 @@ enum SelfUpdateError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .notWritable: return "Das App-Bundle ist schreibgeschützt – Selbst-Update nur in LiveContainer möglich."
-        case .noAppInIPA: return "In der IPA wurde keine App gefunden."
+        case .notWritable: return L("App bundle is read-only – self-update needs LiveContainer.", "App-Bundle ist schreibgeschützt – Selbst-Update nur in LiveContainer.")
+        case .noAppInIPA: return L("No app found in the IPA.", "Keine App in der IPA gefunden.")
         }
     }
 }

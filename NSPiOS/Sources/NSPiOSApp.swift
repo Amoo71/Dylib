@@ -25,25 +25,32 @@ struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var tab: AppTab = .library
 
+    // Theme/Sprache: Änderungen bauen die Oberfläche einmal neu auf
+    @AppStorage(Prefs.theme) private var themeRaw = AppTheme.dark.rawValue
+    @AppStorage(Prefs.language) private var language = AppLanguage.en.rawValue
+    @AppStorage(Prefs.customColor) private var customHex = Theme.defaultCustomHex
+
     var body: some View {
         TabView(selection: $tab) {
-            Tab("Pakete", systemImage: "shippingbox.fill", value: AppTab.library) {
+            Tab(L("Packages", "Pakete"), systemImage: "shippingbox.fill", value: AppTab.library) {
                 LibraryView()
             }
             .badge(store.packages.count)
 
-            Tab("Entpackt", systemImage: "folder.fill", value: AppTab.extracted) {
+            Tab(L("Extracted", "Entpackt"), systemImage: "folder.fill", value: AppTab.extracted) {
                 ExtractedView()
             }
 
-            Tab("Einstellungen", systemImage: "gearshape.fill", value: AppTab.storage) {
-                StorageView()
+            Tab(L("Settings", "Einstellungen"), systemImage: "gearshape.fill", value: AppTab.storage) {
+                SettingsView()
             }
             .badge(updater.phase == .available ? 1 : 0)
         }
+        .id("\(themeRaw)-\(language)-\(customHex)")
         .tabBarMinimizeBehavior(.onScrollDown)
         .tint(Theme.accent)
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(Theme.colorScheme)
+        .animation(.smooth, value: themeRaw)
         .fileImporter(
             isPresented: $store.showImporter,
             allowedContentTypes: FileTypes.importable,
@@ -81,7 +88,10 @@ struct RootView: View {
         }
         .sensoryFeedback(.success, trigger: store.completedCount)
         .onChange(of: scenePhase, initial: true) { _, phase in
-            if phase == .active { updater.checkIfDue() }
+            if phase == .active {
+                store.refresh()          // Änderungen aus der Dateien-App übernehmen
+                updater.checkIfDue()
+            }
         }
     }
 }

@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Tab „Pakete“: importierte NSP/XCI-Dateien.
+/// Tab „Packages“: importierte NSP/XCI-Dateien.
 struct LibraryView: View {
     @EnvironmentObject private var store: FileStore
     @State private var query = ""
@@ -26,7 +26,7 @@ struct LibraryView: View {
                         .buttonStyle(.glassProminent)
                         .buttonBorderShape(.circle)
                         .disabled(store.job != nil)
-                        .accessibilityLabel("Entpacken")
+                        .accessibilityLabel(L("Extract", "Entpacken"))
                     }
                     .listRowBackground(Theme.rowBackground)
                     .itemActions(item)
@@ -35,15 +35,11 @@ struct LibraryView: View {
             .ambientList()
             .overlay {
                 if store.packages.isEmpty {
-                    EmptyState(
-                        icon: "shippingbox",
-                        title: "Keine Pakete",
-                        message: "Importiere .nsp, .nsz, .xci oder .xcz aus der Dateien-App – oder entpacke sie direkt ohne Kopie."
-                    ) {
+                    EmptyState(icon: "shippingbox", title: L("No packages", "Keine Pakete")) {
                         Button {
                             store.requestImport(.copy)
                         } label: {
-                            Label("Importieren", systemImage: "plus")
+                            Label(L("Import", "Importieren"), systemImage: "plus")
                                 .padding(.horizontal, 8)
                         }
                         .buttonStyle(.glassProminent)
@@ -53,7 +49,7 @@ struct LibraryView: View {
                     ContentUnavailableView.search(text: query)
                 }
             }
-            .searchable(text: $query, prompt: "NSP & XCI suchen")
+            .searchable(text: $query, prompt: L("Search", "Suchen"))
             .navigationTitle("NSPiOS")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
@@ -72,13 +68,13 @@ struct ImportMenu: View {
     var body: some View {
         Menu {
             Button { store.requestImport(.copy) } label: {
-                Label("Importieren", systemImage: "square.and.arrow.down")
+                Label(L("Import", "Importieren"), systemImage: "square.and.arrow.down")
             }
             Button { store.requestImport(.copyAndExtract) } label: {
-                Label("Importieren & entpacken", systemImage: "archivebox")
+                Label(L("Import & extract", "Importieren & entpacken"), systemImage: "archivebox")
             }
             Button { store.requestImport(.extractDirect) } label: {
-                Label("Direkt entpacken (ohne Kopie)", systemImage: "bolt.fill")
+                Label(L("Extract directly", "Direkt entpacken"), systemImage: "bolt.fill")
             }
         } label: {
             Image(systemName: "plus")

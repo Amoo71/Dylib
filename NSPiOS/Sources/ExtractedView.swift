@@ -25,25 +25,21 @@ struct ExtractedView: View {
             .ambientList()
             .overlay {
                 if store.extracted.isEmpty {
-                    EmptyState(
-                        icon: "folder",
-                        title: "Noch nichts entpackt",
-                        message: "Entpackte NSPs landen hier als Ordner. Von hier kannst du sie in die Dateien-App verschieben."
-                    ) { EmptyView() }
+                    EmptyState(icon: "folder", title: L("Nothing extracted", "Noch nichts entpackt")) { EmptyView() }
                 } else if filtered.isEmpty {
                     ContentUnavailableView.search(text: query)
                 }
             }
-            .searchable(text: $query, prompt: "Ordner suchen")
-            .navigationTitle("Entpackt")
+            .searchable(text: $query, prompt: L("Search", "Suchen"))
+            .navigationTitle(L("Extracted", "Entpackt"))
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Menu {
                         Button { store.export(store.extracted.map(\.url), asCopy: false) } label: {
-                            Label("Alle in Dateien verschieben", systemImage: "folder.badge.plus")
+                            Label(L("Move all to Files", "Alle in Dateien verschieben"), systemImage: "folder.badge.plus")
                         }
                         Button { store.export(store.extracted.map(\.url), asCopy: true) } label: {
-                            Label("Alle in Dateien kopieren", systemImage: "doc.on.doc")
+                            Label(L("Copy all to Files", "Alle in Dateien kopieren"), systemImage: "doc.on.doc")
                         }
                     } label: {
                         Image(systemName: "square.and.arrow.up.on.square")
@@ -67,6 +63,7 @@ struct FolderView: View {
     @State private var items: [FileItem] = []
     @State private var loaded = false
     @State private var confirmDelete = false
+    @State private var watcher: DirectoryWatcher?
 
     private var totalSize: Int64 { items.reduce(0) { $0 + $1.size } }
 
@@ -85,7 +82,7 @@ struct FolderView: View {
                     Button {
                         store.extractRomFS(from: url)
                     } label: {
-                        Label(store.keyCount > 0 ? "RomFS entpacken" : "RomFS entpacken (prod.keys nötig)", systemImage: "cube.transparent")
+                        Label(L("Extract RomFS", "RomFS entpacken"), systemImage: store.keyCount > 0 ? "cube.transparent" : "key.slash")
                             .font(.body.weight(.semibold))
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 6)
@@ -110,7 +107,7 @@ struct FolderView: View {
                         .itemActions(item)
                     }
                 } footer: {
-                    Text("\(items.count) Objekte · \(formatBytes(totalSize))")
+                    Text("\(items.count) · \(formatBytes(totalSize))")
                         .monospacedDigit()
                 }
             }
@@ -118,7 +115,7 @@ struct FolderView: View {
         .ambientList()
         .overlay {
             if loaded && items.isEmpty {
-                ContentUnavailableView("Ordner ist leer", systemImage: "folder")
+                ContentUnavailableView(L("Empty folder", "Ordner ist leer"), systemImage: "folder")
             }
         }
         .navigationTitle(url.lastPathComponent)
@@ -127,31 +124,36 @@ struct FolderView: View {
             ToolbarItem(placement: .primaryAction) {
                 Menu {
                     Button { store.extractRomFS(from: url) } label: {
-                        Label("RomFS entpacken", systemImage: "cube.transparent")
+                        Label(L("Extract RomFS", "RomFS entpacken"), systemImage: "cube.transparent")
                     }
                     Divider()
                     Button { store.export([url], asCopy: false) } label: {
-                        Label("In Dateien verschieben", systemImage: "folder.badge.plus")
+                        Label(L("Move to Files", "In Dateien verschieben"), systemImage: "folder.badge.plus")
                     }
                     Button { store.export([url], asCopy: true) } label: {
-                        Label("In Dateien kopieren", systemImage: "doc.on.doc")
+                        Label(L("Copy to Files", "In Dateien kopieren"), systemImage: "doc.on.doc")
                     }
                     Divider()
                     Button(role: .destructive) { confirmDelete = true } label: {
-                        Label("Ordner löschen", systemImage: "trash")
+                        Label(L("Delete folder", "Ordner löschen"), systemImage: "trash")
                     }
                 } label: {
                     Image(systemName: "ellipsis")
                 }
             }
         }
-        .confirmationDialog("„\(url.lastPathComponent)“ löschen?", isPresented: $confirmDelete, titleVisibility: .visible) {
-            Button("Löschen", role: .destructive) {
+        .confirmationDialog(L("Delete „\(url.lastPathComponent)“?", "„\(url.lastPathComponent)“ löschen?"), isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button(L("Delete", "Löschen"), role: .destructive) {
                 store.delete([url])
                 dismiss()
             }
         }
         .refreshable { await load() }
+        .onAppear {
+            // Änderungen in diesem Ordner (auch aus der Dateien-App) sofort übernehmen
+            watcher = DirectoryWatcher(url: url) { store.scheduleRefresh() }
+        }
+        .onDisappear { watcher = nil }
         .task(id: store.revision) {
             await load()
             // Ordner wurde verschoben oder gelöscht → zurück
@@ -214,7 +216,7 @@ struct PackageContentsView: View {
                             .padding(.horizontal, 10)
                             .padding(.vertical, 4)
                             .glassEffect(.regular.tint(Theme.accent.opacity(0.35)), in: .capsule)
-                        Text("\(info.entries.count) Dateien · \(formatBytes(Int64(clamping: info.entries.reduce(UInt64(0)) { $0 + $1.size })))")
+                        Text("\(info.entries.count) · \(formatBytes(Int64(clamping: info.entries.reduce(UInt64(0)) { $0 + $1.size })))")
                             .font(.subheadline.monospacedDigit())
                             .foregroundStyle(.secondary)
                     }
@@ -241,7 +243,7 @@ struct PackageContentsView: View {
                     } header: {
                         if let name = group.name {
                             HStack {
-                                Text(name == "secure" ? "secure · Spieldaten" : name)
+                                Text(name)
                                 Spacer()
                                 Text(formatBytes(group.size)).monospacedDigit()
                             }
@@ -257,7 +259,7 @@ struct PackageContentsView: View {
                     Button { dismiss() } label: {
                         Image(systemName: "xmark")
                     }
-                    .accessibilityLabel("Schließen")
+                    .accessibilityLabel(L("Close", "Schließen"))
                 }
             }
             .task {

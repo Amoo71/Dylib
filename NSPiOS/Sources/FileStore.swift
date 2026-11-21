@@ -90,6 +90,8 @@ final class FileStore: ObservableObject {
     }
 
     private var pending: [PendingExtraction] = []
+    private var watchers: [DirectoryWatcher] = []
+    private var refreshTask: Task<Void, Never>?
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
 
     init() {
@@ -104,8 +106,28 @@ final class FileStore: ObservableObject {
     // MARK: - Laden
 
     private func ensureDirectories() {
-        for dir in [packagesDir, extractedDir] {
+        var created = false
+        for dir in [packagesDir, extractedDir] where !FileManager.default.fileExists(atPath: dir.path) {
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            created = true
+        }
+        if created || watchers.isEmpty { startWatching() }
+    }
+
+    /// Ordner beobachten → Löschen/Verschieben (auch in der Dateien-App) wird sofort überall sichtbar.
+    private func startWatching() {
+        watchers = [documents, packagesDir, extractedDir].compactMap { url in
+            DirectoryWatcher(url: url) { [weak self] in self?.scheduleRefresh() }
+        }
+    }
+
+    /// Fasst schnelle Änderungsfolgen zu einem Refresh zusammen.
+    func scheduleRefresh() {
+        refreshTask?.cancel()
+        refreshTask = Task {
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled else { return }
+            refresh()
         }
     }
 
@@ -130,6 +152,10 @@ final class FileStore: ObservableObject {
         self.usedBytes = used
         self.freeBytes = free
         self.revision += 1
+        // Offene Ansichten auf gelöschte Dateien schließen
+        if let inspected, !FileManager.default.fileExists(atPath: inspected.url.path) {
+            self.inspected = nil
+        }
     }
 
     // MARK: - Import
@@ -153,7 +179,7 @@ final class FileStore: ObservableObject {
                 if let url = urls.first { importKeys(url) }
             }
         case .failure(let error):
-            alert = AlertMessage(title: "Import fehlgeschlagen", message: error.localizedDescription)
+            alert = AlertMessage(title: L("Import failed", "Import fehlgeschlagen"), message: error.localizedDescription)
         }
     }
 
@@ -161,7 +187,7 @@ final class FileStore: ObservableObject {
     func importFiles(_ urls: [URL], extractAfterwards: Bool) {
         guard !urls.isEmpty else { return }
         let dir = packagesDir
-        busy = urls.count == 1 ? "Importiere …" : "Importiere \(urls.count) Dateien …"
+        busy = L("Importing …", "Importiere …")
 
         Task.detached(priority: .userInitiated) {
             var imported: [URL] = []
@@ -191,9 +217,9 @@ final class FileStore: ObservableObject {
     private func didImport(_ imported: [URL], errors: [String], extract: Bool) {
         busy = nil
         if !errors.isEmpty {
-            alert = AlertMessage(title: "Import fehlgeschlagen", message: errors.joined(separator: "\n\n"))
+            alert = AlertMessage(title: L("Import failed", "Import fehlgeschlagen"), message: errors.joined(separator: "\n\n"))
         } else if !imported.isEmpty {
-            toast = imported.count == 1 ? "1 Datei importiert" : "\(imported.count) Dateien importiert"
+            toast = L("\(imported.count) imported", "\(imported.count) importiert")
         }
         if extract {
             for url in imported { enqueueExtraction(of: url) }
@@ -209,9 +235,9 @@ final class FileStore: ObservableObject {
             let destination = FS.uniqueURL(in: packagesDir, fileName: url.lastPathComponent, isDirectory: false)
             do {
                 try FileManager.default.moveItem(at: url, to: destination)
-                toast = "\(url.lastPathComponent) importiert"
+                toast = L("Imported", "Importiert")
             } catch {
-                alert = AlertMessage(title: "Import fehlgeschlagen", message: error.localizedDescription)
+                alert = AlertMessage(title: L("Import failed", "Import fehlgeschlagen"), message: error.localizedDescription)
             }
             refresh()
         } else {
@@ -222,7 +248,7 @@ final class FileStore: ObservableObject {
     // MARK: - Keys
 
     private func importKeys(_ url: URL) {
-        busy = "Lade Keys …"
+        busy = L("Loading keys …", "Lade Keys …")
         Task.detached(priority: .userInitiated) {
             let result = Result { try KeyStore.install(from: url) }
             await self.didImportKeys(result)
@@ -234,16 +260,16 @@ final class FileStore: ObservableObject {
         switch result {
         case .success(let set):
             keyCount = set.count
-            toast = "\(set.count) Keys geladen – RomFS bereit"
+            toast = L("\(set.count) keys loaded", "\(set.count) Keys geladen")
         case .failure(let error):
-            alert = AlertMessage(title: "Keys ungültig", message: error.localizedDescription)
+            alert = AlertMessage(title: L("Invalid keys", "Keys ungültig"), message: error.localizedDescription)
         }
     }
 
     func removeKeys() {
         KeyStore.remove()
         keyCount = 0
-        toast = "Keys entfernt"
+        toast = L("Keys removed", "Keys entfernt")
     }
 
     // MARK: - Entpacken
@@ -267,8 +293,8 @@ final class FileStore: ObservableObject {
     func extractRomFS(from url: URL) {
         guard keyCount > 0 else {
             alert = AlertMessage(
-                title: "prod.keys fehlt",
-                message: "Für RomFS müssen die NCAs entschlüsselt werden. Lade zuerst deine eigene prod.keys unter Einstellungen › RomFS & ExeFS."
+                title: L("prod.keys missing", "prod.keys fehlt"),
+                message: L("Load your prod.keys in Settings › RomFS first.", "Lade zuerst deine prod.keys unter Einstellungen › RomFS.")
             )
             return
         }
@@ -394,21 +420,21 @@ final class FileStore: ObservableObject {
         case .success(let result):
             completedCount += 1
             toast = result.decryptedCount > 0
-                ? "\(folder) · RomFS + \(result.fileCount) Dateien"
-                : "\(folder) · \(result.fileCount) Dateien entpackt"
+                ? L("RomFS ready · \(folder)", "RomFS fertig · \(folder)")
+                : L("Extracted · \(folder)", "Entpackt · \(folder)")
             if result.decryptedCount == 0, result.ncaCount > 0, keyCount == 0 {
                 alert = AlertMessage(
-                    title: "Nur NCAs entpackt",
-                    message: "Für den RomFS-Ordner lade unter Einstellungen › RomFS & ExeFS deine eigene prod.keys. Danach im Ordner „RomFS entpacken“ wählen – ohne erneut zu entpacken."
+                    title: L("Only NCAs extracted", "Nur NCAs entpackt"),
+                    message: L("Load your prod.keys in Settings › RomFS, then tap „Extract RomFS“ in the folder.", "Lade deine prod.keys unter Einstellungen › RomFS und tippe dann im Ordner auf „RomFS entpacken“.")
                 )
             } else if !result.warnings.isEmpty {
-                alert = AlertMessage(title: "Hinweise zu \(name)", message: result.warnings.joined(separator: "\n\n"))
+                alert = AlertMessage(title: name, message: result.warnings.joined(separator: "\n\n"))
             }
         case .failure(let error):
             if case PackageError.cancelled = error {
-                toast = "Entpacken abgebrochen"
+                toast = L("Cancelled", "Abgebrochen")
             } else {
-                alert = AlertMessage(title: "Entpacken fehlgeschlagen", message: "\(name)\n\n\(error.localizedDescription)")
+                alert = AlertMessage(title: L("Extraction failed", "Entpacken fehlgeschlagen"), message: "\(name)\n\n\(error.localizedDescription)")
             }
         }
         refresh()
@@ -439,7 +465,7 @@ final class FileStore: ObservableObject {
 
     private var isExtracting: Bool {
         if job != nil {
-            alert = AlertMessage(title: "Bitte warten", message: "Es wird gerade entpackt. Warte, bis der Vorgang fertig ist, oder brich ihn ab.")
+            alert = AlertMessage(title: L("Please wait", "Bitte warten"), message: L("Extraction in progress.", "Es wird gerade entpackt."))
             return true
         }
         return false
@@ -460,28 +486,28 @@ final class FileStore: ObservableObject {
         case .success(let message):
             if let message { toast = message }
         case .failure(let error):
-            alert = AlertMessage(title: "Fehler", message: error.localizedDescription)
+            alert = AlertMessage(title: L("Error", "Fehler"), message: error.localizedDescription)
         }
         refresh()
     }
 
     func delete(_ urls: [URL]) {
         guard !isExtracting else { return }
-        perform("Lösche …") {
+        perform(L("Deleting …", "Lösche …")) {
             var freed: Int64 = 0
             for url in urls {
                 let bytes = FS.size(of: url)
                 try FileManager.default.removeItem(at: url)
                 freed += bytes
             }
-            return "Gelöscht · \(formatBytes(freed)) frei"
+            return L("Deleted · \(formatBytes(freed)) freed", "Gelöscht · \(formatBytes(freed)) frei")
         }
     }
 
     func deleteAll(_ scope: DeleteScope) {
         guard !isExtracting else { return }
         let packagesDir = packagesDir, extractedDir = extractedDir, documents = documents
-        perform("Lösche …") {
+        perform(L("Deleting …", "Lösche …")) {
             let freed: Int64
             switch scope {
             case .packages:
@@ -492,16 +518,16 @@ final class FileStore: ObservableObject {
                 freed = FS.removeContents(of: documents)
                     + FS.cleanTemporaryData(documents: documents, extractedDir: extractedDir)
             }
-            return "Gelöscht · \(formatBytes(freed)) frei"
+            return L("Deleted · \(formatBytes(freed)) freed", "Gelöscht · \(formatBytes(freed)) frei")
         }
     }
 
     func cleanUp() {
         guard !isExtracting else { return }
         let documents = documents, extractedDir = extractedDir
-        perform("Bereinige …") {
+        perform(L("Cleaning …", "Bereinige …")) {
             let freed = FS.cleanTemporaryData(documents: documents, extractedDir: extractedDir)
-            return "Bereinigt · \(formatBytes(freed)) frei"
+            return L("Cleaned · \(formatBytes(freed)) freed", "Bereinigt · \(formatBytes(freed)) frei")
         }
     }
 
@@ -515,7 +541,7 @@ final class FileStore: ObservableObject {
     func exportFinished(_ request: ExportRequest, success: Bool) {
         exportRequest = nil
         if success {
-            toast = request.asCopy ? "In Dateien kopiert" : "In Dateien verschoben"
+            toast = request.asCopy ? L("Copied to Files", "In Dateien kopiert") : L("Moved to Files", "In Dateien verschoben")
         }
         refresh()
     }

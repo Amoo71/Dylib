@@ -82,15 +82,15 @@ enum NCAError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .missingKey(let name):
-            return "Schlüssel „\(name)“ fehlt in deiner prod.keys."
+            return L("Key „\(name)“ is missing in your prod.keys.", "Schlüssel „\(name)“ fehlt in deiner prod.keys.")
         case .badHeader:
-            return "NCA-Header lässt sich nicht entschlüsseln (falscher header_key?)."
+            return L("Can’t decrypt NCA header (wrong header_key?).", "NCA-Header lässt sich nicht entschlüsseln (falscher header_key?).")
         case .missingTicket:
-            return "Ticket (.tik) für diese NCA fehlt im Paket."
+            return L("Ticket (.tik) for this NCA is missing.", "Ticket (.tik) für diese NCA fehlt.")
         case .personalizedTicket:
-            return "Personalisiertes Ticket – wird nicht unterstützt."
+            return L("Personalized ticket – not supported.", "Personalisiertes Ticket – nicht unterstützt.")
         case .compressed:
-            return "NCZ (komprimiert) – RomFS nur aus .nca möglich."
+            return L("NCZ (compressed) – RomFS needs .nca.", "NCZ (komprimiert) – RomFS nur aus .nca.")
         }
     }
 }
@@ -186,10 +186,10 @@ enum NCAReader {
             case 1: encrypted = false
             case 3: encrypted = true
             case 4:
-                warnings.append("Section \(i): Update-Patch (BKTR) – benötigt das Basisspiel, übersprungen.")
+                warnings.append(L("Section \(i): update patch (BKTR) needs the base game – skipped.", "Section \(i): Update-Patch (BKTR) braucht das Basisspiel – übersprungen."))
                 continue
             default:
-                warnings.append("Section \(i): Verschlüsselungstyp \(encryption) nicht unterstützt, übersprungen.")
+                warnings.append(L("Section \(i): encryption type \(encryption) not supported – skipped.", "Section \(i): Verschlüsselungstyp \(encryption) nicht unterstützt – übersprungen."))
                 continue
             }
 
