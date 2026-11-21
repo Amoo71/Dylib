@@ -3,9 +3,26 @@ import UIKit
 
 struct ExtractionJob {
     let title: String
-    var currentFile: String = ""
-    var fraction: Double = 0
     let cancel: CancelFlag
+    let startedAt = Date()
+    var currentFile: String = ""
+    var done: UInt64 = 0
+    var total: UInt64 = 0
+
+    var fraction: Double { total == 0 ? 0 : Double(done) / Double(total) }
+
+    /// Bytes pro Sekunde seit Start.
+    var speed: Double {
+        let elapsed = Date().timeIntervalSince(startedAt)
+        return elapsed > 0.25 ? Double(done) / elapsed : 0
+    }
+
+    /// Geschätzte Restzeit in Sekunden.
+    var remainingSeconds: Double? {
+        let s = speed
+        guard s > 0, total > done else { return nil }
+        return Double(total - done) / s
+    }
 }
 
 struct ExportRequest: Identifiable {
@@ -20,8 +37,12 @@ struct AlertMessage: Identifiable {
     let message: String
 }
 
-enum DeleteScope {
+enum DeleteScope: Sendable {
     case packages, extracted, everything
+}
+
+enum ImportMode {
+    case copy, copyAndExtract, extractDirect
 }
 
 @MainActor
@@ -35,12 +56,19 @@ final class FileStore: ObservableObject {
     @Published private(set) var queuedCount = 0
     /// Wird bei jedem Refresh erhöht, damit Ordneransichten neu laden.
     @Published private(set) var revision = 0
+    /// Zähler für Haptik-Feedback nach erfolgreichem Entpacken.
+    @Published private(set) var completedCount = 0
 
     @Published var job: ExtractionJob?
     @Published var busy: String?
     @Published var toast: String?
     @Published var alert: AlertMessage?
     @Published var exportRequest: ExportRequest?
+    @Published var inspected: FileItem?
+
+    // Import-Dialog
+    @Published var showImporter = false
+    private(set) var importMode: ImportMode = .copy
 
     let documents: URL
     let packagesDir: URL
@@ -84,8 +112,10 @@ final class FileStore: ObservableObject {
     }
 
     private func apply(packages: [FileItem], extracted: [FileItem], used: Int64, free: Int64) {
-        self.packages = packages
-        self.extracted = extracted
+        withAnimation(.smooth) {
+            self.packages = packages
+            self.extracted = extracted
+        }
         self.usedBytes = used
         self.freeBytes = free
         self.revision += 1
@@ -93,7 +123,28 @@ final class FileStore: ObservableObject {
 
     // MARK: - Import
 
-    /// Kopiert NSP-Dateien in den App-Ordner "NSP".
+    func requestImport(_ mode: ImportMode) {
+        importMode = mode
+        showImporter = true
+    }
+
+    func handleImporterResult(_ result: Result<[URL], Error>) {
+        switch result {
+        case .success(let urls):
+            switch importMode {
+            case .copy:
+                importFiles(urls, extractAfterwards: false)
+            case .copyAndExtract:
+                importFiles(urls, extractAfterwards: true)
+            case .extractDirect:
+                for url in urls { enqueueExtraction(of: url, securityScoped: true) }
+            }
+        case .failure(let error):
+            alert = AlertMessage(title: "Import fehlgeschlagen", message: error.localizedDescription)
+        }
+    }
+
+    /// Kopiert NSP-Dateien in den App-Ordner "NSP" (auf APFS als sofortiger Clone).
     func importFiles(_ urls: [URL], extractAfterwards: Bool) {
         guard !urls.isEmpty else { return }
         let dir = packagesDir
@@ -179,7 +230,9 @@ final class FileStore: ObservableObject {
         queuedCount = pending.count
 
         let flag = CancelFlag()
-        job = ExtractionJob(title: next.source.lastPathComponent, cancel: flag)
+        withAnimation(.smooth) {
+            job = ExtractionJob(title: next.source.lastPathComponent, cancel: flag)
+        }
 
         let baseName = next.source.deletingPathExtension().lastPathComponent
         let finalURL = FS.uniqueURL(in: extractedDir, fileName: baseName, isDirectory: true)
@@ -191,13 +244,23 @@ final class FileStore: ObservableObject {
             let scoped = next.securityScoped && next.source.startAccessingSecurityScopedResource()
             defer { if scoped { next.source.stopAccessingSecurityScopedResource() } }
 
+            let report: (UInt64, UInt64, String) -> Void = { done, total, file in
+                Task { @MainActor in
+                    self.updateProgress(flag: flag, done: done, total: total, file: file)
+                }
+            }
+
             let outcome: Result<Int, Error>
             do {
                 try? FileManager.default.removeItem(at: partURL)
-                let entries = try PFS0.extract(next.source, to: partURL, cancel: flag) { fraction, file in
-                    Task { @MainActor in
-                        self.updateProgress(flag: flag, fraction: fraction, file: file)
+                let entries: [PFS0Entry]
+                if next.securityScoped {
+                    // Externe Dateien (iCloud, USB, SMB) koordiniert lesen → werden ggf. erst geladen.
+                    entries = try FS.coordinatedRead(next.source) { url in
+                        try PFS0.extract(url, to: partURL, cancel: flag, progress: report)
                     }
+                } else {
+                    entries = try PFS0.extract(next.source, to: partURL, cancel: flag, progress: report)
                 }
                 try FileManager.default.moveItem(at: partURL, to: finalURL)
                 if next.deleteSource { try? FileManager.default.removeItem(at: next.source) }
@@ -210,17 +273,20 @@ final class FileStore: ObservableObject {
         }
     }
 
-    private func updateProgress(flag: CancelFlag, fraction: Double, file: String) {
-        guard let current = job, current.cancel === flag else { return }
-        job?.fraction = fraction
-        if !file.isEmpty { job?.currentFile = file }
+    private func updateProgress(flag: CancelFlag, done: UInt64, total: UInt64, file: String) {
+        guard var current = job, current.cancel === flag else { return }
+        current.done = done
+        current.total = total
+        if !file.isEmpty { current.currentFile = file }
+        job = current
     }
 
     private func finishJob(name: String, folder: String, outcome: Result<Int, Error>) {
-        job = nil
+        withAnimation(.smooth) { job = nil }
         switch outcome {
         case .success(let count):
-            toast = "\(name) entpackt → \(folder) (\(count) Dateien)"
+            completedCount += 1
+            toast = "\(folder) · \(count) Dateien entpackt"
         case .failure(let error):
             if case PFS0Error.cancelled = error {
                 toast = "Entpacken abgebrochen"
@@ -291,7 +357,7 @@ final class FileStore: ObservableObject {
                 try FileManager.default.removeItem(at: url)
                 freed += bytes
             }
-            return "Gelöscht – \(formatBytes(freed)) frei"
+            return "Gelöscht · \(formatBytes(freed)) frei"
         }
     }
 
@@ -309,7 +375,7 @@ final class FileStore: ObservableObject {
                 freed = FS.removeContents(of: documents)
                     + FS.cleanTemporaryData(documents: documents, extractedDir: extractedDir)
             }
-            return "Gelöscht – \(formatBytes(freed)) frei"
+            return "Gelöscht · \(formatBytes(freed)) frei"
         }
     }
 
@@ -318,7 +384,7 @@ final class FileStore: ObservableObject {
         let documents = documents, extractedDir = extractedDir
         perform("Bereinige …") {
             let freed = FS.cleanTemporaryData(documents: documents, extractedDir: extractedDir)
-            return "Bereinigt – \(formatBytes(freed)) frei"
+            return "Bereinigt · \(formatBytes(freed)) frei"
         }
     }
 

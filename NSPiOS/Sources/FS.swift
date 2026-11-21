@@ -110,6 +110,18 @@ enum FS {
         if let coordinatorError { throw coordinatorError }
     }
 
+    /// Führt `body` mit koordiniertem Lesezugriff aus (lädt iCloud-/Provider-Dateien bei Bedarf).
+    static func coordinatedRead<T>(_ url: URL, _ body: (URL) throws -> T) throws -> T {
+        var coordinatorError: NSError?
+        var result: Result<T, Error>?
+        NSFileCoordinator().coordinate(readingItemAt: url, options: [], error: &coordinatorError) { readURL in
+            result = Result { try body(readURL) }
+        }
+        if let result { return try result.get() }
+        if let coordinatorError { throw coordinatorError }
+        throw CocoaError(.fileReadUnknown)
+    }
+
     /// Löscht den Inhalt eines Ordners (nicht den Ordner selbst) und gibt die freigegebenen Bytes zurück.
     @discardableResult
     static func removeContents(of dir: URL) -> Int64 {

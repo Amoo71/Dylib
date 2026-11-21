@@ -1,0 +1,88 @@
+name: Build NSPiOS IPA
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "NSPiOS/**"
+      - ".github/workflows/nspios.yml"
+    tags:
+      - "nspios-v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nspios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    defaults:
+      run:
+        working-directory: NSPiOS
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Neuestes Xcode wählen
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Xcode-Version
+        run: xcodebuild -version && xcodebuild -showsdks | grep -i iphoneos
+
+      - name: Werkzeuge installieren
+        run: brew install xcodegen ldid || brew install xcodegen
+
+      - name: Xcode-Projekt erzeugen
+        run: xcodegen generate
+
+      - name: App bauen (Release, ohne Signatur)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project NSPiOS.xcodeproj \
+            -scheme NSPiOS \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build 2>&1 | tee build.log | grep -E "error:|warning: .*deprecated|BUILD (SUCCEEDED|FAILED)" || true
+          test -d build/Build/Products/Release-iphoneos/NSPiOS.app
+
+      - name: Build-Log hochladen (bei Fehler)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: NSPiOS/build.log
+
+      - name: IPA packen
+        run: |
+          rm -rf Payload NSPiOS.ipa
+          mkdir Payload
+          cp -R build/Build/Products/Release-iphoneos/NSPiOS.app Payload/
+          # Pseudo-Signatur, damit z. B. TrollStore die App annimmt
+          if command -v ldid >/dev/null; then ldid -S Payload/NSPiOS.app/NSPiOS; fi
+          zip -qry NSPiOS.ipa Payload
+          ls -lh NSPiOS.ipa
+
+      - name: IPA als Artifact hochladen
+        uses: actions/upload-artifact@v4
+        with:
+          name: NSPiOS-ipa
+          path: NSPiOS/NSPiOS.ipa
+          if-no-files-found: error
+
+      - name: Release erstellen (nur bei Tag nspios-v*)
+        if: startsWith(github.ref, 'refs/tags/nspios-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: NSPiOS/NSPiOS.ipa

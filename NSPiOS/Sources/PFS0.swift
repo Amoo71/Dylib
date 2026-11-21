@@ -1,7 +1,8 @@
 import Foundation
+import Darwin
 
 /// Ein Eintrag im PFS0-Container (NSP / NSZ).
-struct PFS0Entry: Identifiable, Hashable {
+struct PFS0Entry: Identifiable, Hashable, Sendable {
     let name: String
     /// Absoluter Offset der Daten in der Datei.
     let dataOffset: UInt64
@@ -58,7 +59,10 @@ final class CancelFlag: @unchecked Sendable {
 ///   ...   String-Tabelle (nullterminierte Namen)
 ///   ...   Dateidaten
 enum PFS0 {
-    static let chunkSize = 4 * 1024 * 1024
+    /// 16 MiB – große Blöcke = wenige Syscalls, volle Flash-Bandbreite.
+    static let bufferSize = 16 * 1024 * 1024
+
+    // MARK: - Header lesen
 
     static func entries(of url: URL) throws -> [PFS0Entry] {
         let handle = try FileHandle(forReadingFrom: url)
@@ -84,6 +88,7 @@ enum PFS0 {
         let dataStart = UInt64(16 + count * 24 + stringTableSize)
 
         var result: [PFS0Entry] = []
+        result.reserveCapacity(count)
         var usedNames = Set<String>()
 
         for index in 0..<count {
@@ -96,9 +101,7 @@ enum PFS0 {
                 throw PFS0Error.corruptHeader("Namens-Offset außerhalb der Tabelle")
             }
             let nameBytes = strings[(strings.startIndex + nameOffset)...].prefix { $0 != 0 }
-            let rawName = String(decoding: nameBytes, as: UTF8.self)
-
-            var name = sanitize(rawName, index: index)
+            var name = sanitize(String(decoding: nameBytes, as: UTF8.self), index: index)
             if usedNames.contains(name) {
                 var n = 2
                 while usedNames.contains("\(n)_\(name)") { n += 1 }
@@ -115,67 +118,98 @@ enum PFS0 {
         return result
     }
 
+    // MARK: - Entpacken
+
     /// Entpackt alle Dateien des Containers nach `destination`.
+    ///
+    /// Nutzt POSIX `pread`/`write` mit einem einzigen wiederverwendeten 16-MiB-Puffer:
+    /// keine Allokationen pro Block, kein Foundation-Overhead, konstanter RAM-Verbrauch.
     @discardableResult
     static func extract(
         _ source: URL,
         to destination: URL,
         cancel: CancelFlag,
-        progress: @escaping (_ fraction: Double, _ currentFile: String) -> Void
+        progress: @escaping (_ done: UInt64, _ total: UInt64, _ currentFile: String) -> Void
     ) throws -> [PFS0Entry] {
         let list = try entries(of: source)
-        let fm = FileManager.default
-
         let totalBytes = list.reduce(UInt64(0)) { $0 + $1.size }
+
         let free = FS.freeSpace()
         if free > 0, Int64(clamping: totalBytes) > free {
             throw PFS0Error.notEnoughSpace(needed: Int64(clamping: totalBytes), free: free)
         }
 
-        try fm.createDirectory(at: destination, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
 
-        let input = try FileHandle(forReadingFrom: source)
-        defer { try? input.close() }
+        let inFD = open(source.path, O_RDONLY)
+        guard inFD >= 0 else { throw posixError() }
+        defer { close(inFD) }
+        _ = fcntl(inFD, F_RDAHEAD, 1)
 
-        let total = Double(max(totalBytes, 1))
+        let buffer = UnsafeMutableRawPointer.allocate(byteCount: bufferSize, alignment: 16_384)
+        defer { buffer.deallocate() }
+
         var done: UInt64 = 0
-        var lastReported = -1.0
+        var lastTick: UInt64 = 0
+        progress(0, totalBytes, list.first?.name ?? "")
 
         for entry in list {
             if cancel.isCancelled { throw PFS0Error.cancelled }
-            progress(Double(done) / total, entry.name)
 
-            let outURL = destination.appendingPathComponent(entry.name, isDirectory: false)
-            guard fm.createFile(atPath: outURL.path, contents: nil) else {
-                throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: outURL.path])
-            }
-            let output = try FileHandle(forWritingTo: outURL)
-            defer { try? output.close() }
+            let outPath = destination.appendingPathComponent(entry.name, isDirectory: false).path
+            let outFD = open(outPath, O_WRONLY | O_CREAT | O_TRUNC, 0o644)
+            guard outFD >= 0 else { throw posixError() }
+            defer { close(outFD) }
 
-            try input.seek(toOffset: entry.dataOffset)
+            var readOffset = off_t(entry.dataOffset)
             var remaining = entry.size
+
             while remaining > 0 {
                 if cancel.isCancelled { throw PFS0Error.cancelled }
-                let n = Int(min(UInt64(chunkSize), remaining))
-                try autoreleasepool {
-                    let chunk = try readExactly(input, count: n)
-                    try output.write(contentsOf: chunk)
-                }
-                remaining -= UInt64(n)
-                done += UInt64(n)
 
-                let fraction = Double(done) / total
-                if fraction - lastReported >= 0.005 {
-                    lastReported = fraction
-                    progress(fraction, entry.name)
+                let want = Int(min(UInt64(bufferSize), remaining))
+                let got = pread(inFD, buffer, want, readOffset)
+                if got < 0 {
+                    if errno == EINTR { continue }
+                    throw posixError()
+                }
+                if got == 0 { throw PFS0Error.truncated }
+
+                try writeAll(outFD, buffer, got)
+
+                readOffset += off_t(got)
+                remaining -= UInt64(got)
+                done += UInt64(got)
+
+                // max. ~12 UI-Updates pro Sekunde
+                let now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+                if now &- lastTick >= 80_000_000 {
+                    lastTick = now
+                    progress(done, totalBytes, entry.name)
                 }
             }
         }
-        progress(1, "")
+        progress(totalBytes, totalBytes, "")
         return list
     }
 
     // MARK: - Hilfsfunktionen
+
+    private static func writeAll(_ fd: Int32, _ buffer: UnsafeMutableRawPointer, _ count: Int) throws {
+        var written = 0
+        while written < count {
+            let n = write(fd, buffer + written, count - written)
+            if n < 0 {
+                if errno == EINTR { continue }
+                throw posixError()
+            }
+            written += n
+        }
+    }
+
+    private static func posixError() -> Error {
+        NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+    }
 
     private static func readExactly(_ handle: FileHandle, count: Int) throws -> Data {
         if count == 0 { return Data() }
