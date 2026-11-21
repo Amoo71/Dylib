@@ -25,7 +25,14 @@ struct UpdateCard: View {
                 status
             }
 
-            if updater.phase == .available, let latest = updater.latest {
+            if updater.phase == .installed {
+                Button { updater.restart() } label: {
+                    Label("Neu starten, um Update zu laden", systemImage: "arrow.clockwise")
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                }
+                .buttonStyle(.glassProminent)
+            } else if updater.phase == .available, let latest = updater.latest {
                 Button { updater.showSheet = true } label: {
                     Label("Update \(latest.version) installieren", systemImage: "sparkles")
                         .frame(maxWidth: .infinity)
@@ -50,7 +57,7 @@ struct UpdateCard: View {
             Toggle(isOn: $autoInstall) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Automatisch installieren")
-                    Text("Übergibt neue Versionen sofort an TrollStore / SideStore / AltStore.")
+                    Text("Installiert neue Versionen sofort – in LiveContainer direkt ohne Neu-Signieren.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -73,8 +80,11 @@ struct UpdateCard: View {
     @ViewBuilder
     private var status: some View {
         switch updater.phase {
-        case .checking:
+        case .checking, .installing:
             ProgressView().controlSize(.small)
+        case .installed:
+            Image(systemName: "arrow.clockwise.circle.fill")
+                .foregroundStyle(Theme.accent)
         case .upToDate:
             Label("Aktuell", systemImage: "checkmark.circle.fill")
                 .labelStyle(.iconOnly)
@@ -140,6 +150,35 @@ struct UpdateSheet: View {
                     .foregroundStyle(.secondary)
             }
 
+            if updater.phase == .installed {
+                VStack(spacing: 12) {
+                    Label("Update installiert", systemImage: "checkmark.seal.fill")
+                        .font(.headline)
+                        .foregroundStyle(Theme.accent)
+                    Text(SelfUpdater.isLiveContainer
+                         ? "Die App wird beendet. Öffne sie danach wieder in LiveContainer – die neue Version startet."
+                         : "Die App wird beendet. Beim nächsten Öffnen startet die neue Version.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                    Button { updater.restart() } label: {
+                        Label("Jetzt neu starten", systemImage: "arrow.clockwise")
+                            .font(.body.weight(.semibold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                    }
+                    .buttonStyle(.glassProminent)
+                }
+                .padding(18)
+                .glassCard(radius: 24)
+            }
+
+            if updater.phase == .installing {
+                Label("Installiere …", systemImage: "arrow.down.circle")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
             if case .failed(let message) = updater.phase {
                 Label(message, systemImage: "exclamationmark.triangle.fill")
                     .font(.footnote)
@@ -158,6 +197,7 @@ struct UpdateSheet: View {
                 .glassCard(radius: 24)
             }
 
+            if updater.phase != .installed {
             GlassEffectContainer(spacing: 12) {
                 VStack(spacing: 12) {
                     ForEach(updater.availableMethods) { method in
@@ -168,6 +208,7 @@ struct UpdateSheet: View {
                         }
                     }
                 }
+            }
             }
 
             if let progress = updater.downloadProgress {
@@ -197,12 +238,12 @@ struct UpdateSheet: View {
 
     private func installButton(_ method: InstallMethod) -> some View {
         Button { updater.install(with: method) } label: {
-            Label(method == .share ? method.title : "Mit \(method.title) installieren", systemImage: method.icon)
+            Label(method == .share || method == .selfUpdate ? (method == .selfUpdate ? "Jetzt aktualisieren" : method.title) : "Mit \(method.title) installieren", systemImage: method.icon)
                 .font(.body.weight(.semibold))
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 8)
         }
-        .disabled(method == .share && updater.downloadProgress != nil)
+        .disabled(updater.downloadProgress != nil || updater.phase == .installing)
     }
 
     private func subtitle(_ release: AppRelease) -> String {

@@ -18,6 +18,7 @@ struct StorageView: View {
                 VStack(spacing: 20) {
                     overview
                     actions
+                    DecryptionCard()
                     UpdateCard()
                     settings
                     Text("Alle Dateien liegen auch in der Dateien-App unter „Auf meinem iPhone › NSPiOS“.")
@@ -207,5 +208,91 @@ private struct CompactLabel: View {
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity)
         .contentShape(.rect)
+    }
+}
+
+/// Karte „RomFS & ExeFS“: eigene prod.keys laden, Entschlüsselung steuern.
+struct DecryptionCard: View {
+    @EnvironmentObject private var store: FileStore
+    @AppStorage(FileStore.decryptKey) private var decrypt = true
+    @AppStorage(FileStore.keepNCAKey) private var keepNCA = false
+    @State private var confirmRemove = false
+
+    private var hasKeys: Bool { store.keyCount > 0 }
+
+    private var importButton: some View {
+        Button {
+            store.requestImport(.keys)
+        } label: {
+            Label(hasKeys ? "prod.keys ersetzen" : "prod.keys laden", systemImage: "square.and.arrow.down")
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 14) {
+                Image(systemName: hasKeys ? "key.fill" : "key")
+                    .font(.title2)
+                    .foregroundStyle(hasKeys ? Theme.accent : .secondary)
+                    .frame(width: 40, height: 40)
+                    .background((hasKeys ? Theme.accent : Color.white).opacity(0.14), in: .rect(cornerRadius: 12))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("RomFS & ExeFS").font(.headline)
+                    Text(hasKeys ? "prod.keys geladen · \(store.keyCount) Schlüssel" : "Keine Keys – nur Container-Entpacken")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+            }
+
+            if hasKeys {
+                importButton.buttonStyle(.glass)
+            } else {
+                importButton.buttonStyle(.glassProminent)
+            }
+
+            Divider().opacity(0.4)
+
+            Toggle(isOn: $decrypt) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("RomFS & ExeFS entpacken")
+                    Text("Entschlüsselt die NCAs in die Ordner „romfs“, „exefs“, „control“ (DLC: „romfs_<TitleID>“).")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .disabled(!hasKeys)
+
+            Toggle(isOn: $keepNCA) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("NCAs zusätzlich behalten")
+                    Text("Aus: entschlüsselte NCAs werden nicht mit kopiert – spart viel Speicher.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .disabled(!hasKeys || !decrypt)
+
+            if hasKeys {
+                Button(role: .destructive) { confirmRemove = true } label: {
+                    Label("Keys entfernen", systemImage: "trash")
+                        .font(.subheadline)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Theme.danger)
+            }
+
+            Text("Nutze nur Keys deiner eigenen Konsole. Sie bleiben privat in der App und werden nie hochgeladen.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .tint(Theme.accent)
+        .padding(18)
+        .glassCard(radius: 24)
+        .confirmationDialog("Keys entfernen?", isPresented: $confirmRemove, titleVisibility: .visible) {
+            Button("Entfernen", role: .destructive) { store.removeKeys() }
+        }
     }
 }

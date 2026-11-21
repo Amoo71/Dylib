@@ -144,34 +144,69 @@ enum PackageReader {
 
     // MARK: - Entpacken
 
-    /// Entpackt den Container nach `destination`.
+    struct ExtractOptions: Sendable {
+        /// Nur bei XCI – z. B. "secure": nur Spieldaten direkt ohne Unterordner. `nil` = alle Partitionen.
+        var partition: String? = nil
+        /// RomFS / ExeFS aus den NCAs entschlüsseln (benötigt `keys`).
+        var decrypt = false
+        /// Entschlüsselte NCAs zusätzlich als Datei behalten.
+        var keepNCA = false
+        var keys: KeySet? = nil
+    }
+
+    struct ExtractResult: Sendable {
+        let fileCount: Int
+        let decryptedCount: Int
+        let warnings: [String]
+    }
+
+    /// Entpackt den Container nach `destination` – optional inkl. RomFS/ExeFS.
     ///
-    /// - Parameter partition: Nur bei XCI – z. B. "secure", um nur die Spieldaten
-    ///   (direkt ohne Unterordner) zu entpacken. `nil` = alle Partitionen in Unterordnern.
-    ///
-    /// Nutzt POSIX `pread`/`write` mit einem einzigen wiederverwendeten 16-MiB-Puffer:
+    /// Nutzt POSIX `pread`/`write` mit festen 16-MiB-Puffern und hardwarebeschleunigtem AES-CTR:
     /// keine Allokationen pro Block, kein Foundation-Overhead, konstanter RAM-Verbrauch.
     @discardableResult
     static func extract(
         _ source: URL,
         to destination: URL,
-        partition: String? = nil,
+        options: ExtractOptions = ExtractOptions(),
         cancel: CancelFlag,
         progress: @escaping (_ done: UInt64, _ total: UInt64, _ currentFile: String) -> Void
-    ) throws -> [PackageEntry] {
+    ) throws -> ExtractResult {
         let info = try inspect(source)
 
-        // (Zielpfad relativ zu destination, Eintrag)
-        var jobs: [(String, PackageEntry)] = info.entries.map { ($0.path, $0) }
-        if info.format == .xci, let partition {
+        let inFD = open(source.path, O_RDONLY)
+        guard inFD >= 0 else { throw posixError() }
+        defer { close(inFD) }
+        _ = fcntl(inFD, F_RDAHEAD, 1)
+
+        // 1) Container-Dateien
+        var entries = info.entries.map { (path: $0.path, entry: $0) }
+        if info.format == .xci, let partition = options.partition {
             let prefix = partition + "/"
             let selected = info.entries.filter { $0.path.hasPrefix(prefix) }
             if !selected.isEmpty {
-                jobs = selected.map { (String($0.path.dropFirst(prefix.count)), $0) }
+                entries = selected.map { (path: String($0.path.dropFirst(prefix.count)), entry: $0) }
+            }
+        }
+        var jobs = entries.map {
+            CopyJob(path: $0.path, size: $0.entry.size, source: .raw($0.entry.dataOffset), origin: $0.entry.path)
+        }
+        var usedPaths = Set(jobs.map(\.path))
+        var warnings: [String] = []
+        var decryptedNCAs = Set<String>()
+
+        // 2) RomFS / ExeFS aus den NCAs
+        if options.decrypt, let keys = options.keys {
+            let plan = planDecryption(fd: inFD, info: info, keys: keys, usedPaths: &usedPaths)
+            jobs += plan.jobs
+            warnings += plan.warnings
+            decryptedNCAs = plan.decryptedNCAs
+            if !options.keepNCA {
+                jobs.removeAll { job in job.origin.map { decryptedNCAs.contains($0) } ?? false }
             }
         }
 
-        let totalBytes = jobs.reduce(UInt64(0)) { $0 + $1.1.size }
+        let totalBytes = jobs.reduce(UInt64(0)) { $0 + $1.size }
         let free = FS.freeSpace()
         if free > 0, Int64(clamping: totalBytes) > free {
             throw PackageError.notEnoughSpace(needed: Int64(clamping: totalBytes), free: free)
@@ -179,60 +214,166 @@ enum PackageReader {
 
         let fm = FileManager.default
         try fm.createDirectory(at: destination, withIntermediateDirectories: true)
-        for folder in Set(jobs.map { ($0.0 as NSString).deletingLastPathComponent }) where !folder.isEmpty {
+        for folder in Set(jobs.map { ($0.path as NSString).deletingLastPathComponent }) where !folder.isEmpty {
             try fm.createDirectory(at: destination.appendingPathComponent(folder, isDirectory: true), withIntermediateDirectories: true)
         }
 
-        let inFD = open(source.path, O_RDONLY)
-        guard inFD >= 0 else { throw posixError() }
-        defer { close(inFD) }
-        _ = fcntl(inFD, F_RDAHEAD, 1)
-
         let buffer = UnsafeMutableRawPointer.allocate(byteCount: bufferSize, alignment: 16_384)
         defer { buffer.deallocate() }
+        let plain = UnsafeMutableRawPointer.allocate(byteCount: bufferSize, alignment: 16_384)
+        defer { plain.deallocate() }
 
         var done: UInt64 = 0
         var lastTick: UInt64 = 0
-        progress(0, totalBytes, jobs.first?.1.name ?? "")
+        progress(0, totalBytes, jobs.first?.path ?? "")
 
-        for (relativePath, entry) in jobs {
+        for job in jobs {
             if cancel.isCancelled { throw PackageError.cancelled }
 
-            let outPath = destination.appendingPathComponent(relativePath, isDirectory: false).path
+            let outPath = destination.appendingPathComponent(job.path, isDirectory: false).path
             let outFD = open(outPath, O_WRONLY | O_CREAT | O_TRUNC, 0o644)
             guard outFD >= 0 else { throw posixError() }
             defer { close(outFD) }
 
-            var readOffset = off_t(entry.dataOffset)
-            var remaining = entry.size
+            // Lese-Startposition, ggf. CTR-Stream und zu überspringende Bytes (16-Byte-Ausrichtung)
+            var readOffset: UInt64
+            var skip = 0
+            var ctr: AESCTR?
+            switch job.source {
+            case .raw(let offset):
+                readOffset = offset
+            case .section(let section, let offset):
+                guard offset &+ job.size <= section.size else { throw PackageError.truncated }
+                let absolute = section.offset + offset
+                let aligned = section.encrypted ? absolute & ~UInt64(15) : absolute
+                skip = Int(absolute - aligned)
+                readOffset = section.ncaOffset + aligned
+                if section.encrypted {
+                    ctr = try AESCTR(key: section.key, iv: section.iv(atNCAOffset: aligned))
+                }
+            }
 
+            var remaining = job.size
             while remaining > 0 {
                 if cancel.isCancelled { throw PackageError.cancelled }
 
-                let want = Int(min(UInt64(bufferSize), remaining))
-                let got = pread(inFD, buffer, want, readOffset)
+                let want = Int(min(UInt64(bufferSize), UInt64(skip) + remaining))
+                let got = pread(inFD, buffer, want, off_t(readOffset))
                 if got < 0 {
                     if errno == EINTR { continue }
                     throw posixError()
                 }
-                if got == 0 { throw PackageError.truncated }
+                if got <= skip { throw PackageError.truncated }
 
-                try writeAll(outFD, buffer, got)
+                let data: UnsafeMutableRawPointer
+                if let ctr {
+                    try ctr.process(buffer, plain, count: got)
+                    data = plain
+                } else {
+                    data = buffer
+                }
 
-                readOffset += off_t(got)
-                remaining -= UInt64(got)
-                done += UInt64(got)
+                let usable = min(got - skip, Int(min(remaining, UInt64(Int.max))))
+                try writeAll(outFD, data + skip, usable)
+
+                readOffset += UInt64(got)
+                remaining -= UInt64(usable)
+                done += UInt64(usable)
+                skip = 0
 
                 // max. ~12 UI-Updates pro Sekunde
                 let now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
                 if now &- lastTick >= 80_000_000 {
                     lastTick = now
-                    progress(done, totalBytes, entry.path)
+                    progress(done, totalBytes, job.path)
                 }
             }
         }
         progress(totalBytes, totalBytes, "")
-        return jobs.map { $0.1 }
+        return ExtractResult(fileCount: jobs.count, decryptedCount: decryptedNCAs.count, warnings: warnings)
+    }
+
+    /// Plant RomFS/ExeFS/Control für alle NCAs (bei XCI nur aus der secure-Partition).
+    private static func planDecryption(
+        fd: Int32,
+        info: PackageInfo,
+        keys: KeySet,
+        usedPaths: inout Set<String>
+    ) -> (jobs: [CopyJob], warnings: [String], decryptedNCAs: Set<String>) {
+        var jobs: [CopyJob] = []
+        var warnings: [String] = []
+        var decrypted = Set<String>()
+
+        guard keys.headerKey != nil else {
+            return ([], ["RomFS: „header_key“ fehlt in der prod.keys."], [])
+        }
+
+        let relevant = info.entries.filter { info.format == .nsp || $0.path.hasPrefix("secure/") }
+
+        // Tickets (für Titlekey-Verschlüsselung)
+        var tickets: [Data: Data] = [:]
+        for entry in relevant where entry.name.lowercased().hasSuffix(".tik") && entry.size <= 0x10000 {
+            var data = Data(count: Int(entry.size))
+            let got = data.withUnsafeMutableBytes { pread(fd, $0.baseAddress, Int(entry.size), off_t(entry.dataOffset)) }
+            guard got == Int(entry.size) else { continue }
+            if let ticket = try? NCAReader.parseTicket(data) {
+                tickets[ticket.rightsID] = ticket.encryptedTitleKey
+            }
+        }
+
+        var programIndex = 0
+        for entry in relevant {
+            let lower = entry.name.lowercased()
+            if lower.hasSuffix(".ncz") {
+                warnings.append("\(entry.name): \(NCAError.compressed.localizedDescription)")
+                continue
+            }
+            guard lower.hasSuffix(".nca"), !lower.hasSuffix(".cnmt.nca") else { continue }
+
+            do {
+                let header = try NCAReader.open(fd: fd, ncaOffset: entry.dataOffset, ncaSize: entry.size, keys: keys, tickets: tickets)
+                let titleHex = String(format: "%016llx", header.titleID)
+
+                let romfsRoot: String
+                var exefsRoot: String?
+                if header.isProgram {
+                    let suffix = programIndex == 0 ? "" : "_\(titleHex)"
+                    romfsRoot = "romfs" + suffix
+                    exefsRoot = "exefs" + suffix
+                    programIndex += 1
+                } else if header.isControl {
+                    romfsRoot = "control"
+                } else if header.isData {
+                    romfsRoot = "romfs_\(titleHex)"
+                } else {
+                    continue
+                }
+
+                var ncaJobs: [CopyJob] = []
+                for (index, fs, section) in header.sections {
+                    switch fs[2] {
+                    case 0: // RomFS
+                        ncaJobs += try NCAReader.planRomFS(fd: fd, section: section, fsHeader: fs, root: romfsRoot)
+                    case 1 where index == 0 && exefsRoot != nil: // ExeFS
+                        ncaJobs += try NCAReader.planExeFS(fd: fd, section: section, fsHeader: fs, root: exefsRoot!)
+                    default:
+                        break
+                    }
+                }
+
+                warnings += header.warnings.map { "\(entry.name): \($0)" }
+                guard !ncaJobs.isEmpty else { continue }
+
+                for job in ncaJobs {
+                    let path = uniquePath(job.path, used: &usedPaths)
+                    jobs.append(CopyJob(path: path, size: job.size, source: job.source))
+                }
+                decrypted.insert(entry.path)
+            } catch {
+                warnings.append("\(entry.name): \(error.localizedDescription)")
+            }
+        }
+        return (jobs, warnings, decrypted)
     }
 
     // MARK: - Tabellen (PFS0 / HFS0)
@@ -341,23 +482,5 @@ enum PackageReader {
             cleaned = "datei_\(index)"
         }
         return cleaned
-    }
-}
-
-private extension Data {
-    func le32(_ offset: Int) -> UInt32 {
-        var value: UInt32 = 0
-        for i in 0..<4 {
-            value |= UInt32(self[startIndex + offset + i]) << (8 * i)
-        }
-        return value
-    }
-
-    func le64(_ offset: Int) -> UInt64 {
-        var value: UInt64 = 0
-        for i in 0..<8 {
-            value |= UInt64(self[startIndex + offset + i]) << (8 * i)
-        }
-        return value
     }
 }

@@ -42,13 +42,18 @@ enum DeleteScope: Sendable {
 }
 
 enum ImportMode {
-    case copy, copyAndExtract, extractDirect
+    case copy, copyAndExtract, extractDirect, keys
 }
 
 @MainActor
 final class FileStore: ObservableObject {
     nonisolated static let deleteAfterExtractKey = "deleteAfterExtract"
     nonisolated static let xciSecureOnlyKey = "xciSecureOnly"
+    nonisolated static let decryptKey = "decryptRomFS"
+    nonisolated static let keepNCAKey = "keepNCA"
+
+    /// Anzahl geladener Schlüssel aus prod.keys (0 = keine).
+    @Published private(set) var keyCount = 0
 
     @Published private(set) var packages: [FileItem] = []
     @Published private(set) var extracted: [FileItem] = []
@@ -79,7 +84,7 @@ final class FileStore: ObservableObject {
         let source: URL
         let securityScoped: Bool
         let deleteSource: Bool
-        let partition: String?
+        let options: PackageReader.ExtractOptions
     }
 
     private var pending: [PendingExtraction] = []
@@ -89,6 +94,8 @@ final class FileStore: ObservableObject {
         documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         packagesDir = documents.appendingPathComponent("NSP", isDirectory: true)
         extractedDir = documents.appendingPathComponent("Entpackt", isDirectory: true)
+        keyCount = KeyStore.load()?.count ?? 0
+        UserDefaults.standard.register(defaults: [Self.decryptKey: true])
         refresh()
     }
 
@@ -140,6 +147,8 @@ final class FileStore: ObservableObject {
                 importFiles(urls, extractAfterwards: true)
             case .extractDirect:
                 for url in urls { enqueueExtraction(of: url, securityScoped: true) }
+            case .keys:
+                if let url = urls.first { importKeys(url) }
             }
         case .failure(let error):
             alert = AlertMessage(title: "Import fehlgeschlagen", message: error.localizedDescription)
@@ -208,6 +217,33 @@ final class FileStore: ObservableObject {
         }
     }
 
+    // MARK: - Keys
+
+    private func importKeys(_ url: URL) {
+        busy = "Lade Keys …"
+        Task.detached(priority: .userInitiated) {
+            let result = Result { try KeyStore.install(from: url) }
+            await self.didImportKeys(result)
+        }
+    }
+
+    private func didImportKeys(_ result: Result<KeySet, Error>) {
+        busy = nil
+        switch result {
+        case .success(let set):
+            keyCount = set.count
+            toast = "\(set.count) Keys geladen – RomFS bereit"
+        case .failure(let error):
+            alert = AlertMessage(title: "Keys ungültig", message: error.localizedDescription)
+        }
+    }
+
+    func removeKeys() {
+        KeyStore.remove()
+        keyCount = 0
+        toast = "Keys entfernt"
+    }
+
     // MARK: - Entpacken
 
     func enqueueExtraction(of url: URL, securityScoped: Bool = false) {
@@ -215,8 +251,12 @@ final class FileStore: ObservableObject {
             == packagesDir.resolvingSymlinksInPath().path
         let deleteSource = !securityScoped && isOwnCopy
             && UserDefaults.standard.bool(forKey: Self.deleteAfterExtractKey)
-        let partition = UserDefaults.standard.bool(forKey: Self.xciSecureOnlyKey) ? "secure" : nil
-        pending.append(PendingExtraction(source: url, securityScoped: securityScoped, deleteSource: deleteSource, partition: partition))
+        let defaults = UserDefaults.standard
+        var options = PackageReader.ExtractOptions()
+        options.partition = defaults.bool(forKey: Self.xciSecureOnlyKey) ? "secure" : nil
+        options.decrypt = defaults.bool(forKey: Self.decryptKey) && keyCount > 0
+        options.keepNCA = defaults.bool(forKey: Self.keepNCAKey)
+        pending.append(PendingExtraction(source: url, securityScoped: securityScoped, deleteSource: deleteSource, options: options))
         queuedCount = pending.count
         startNextIfIdle()
     }
@@ -253,21 +293,24 @@ final class FileStore: ObservableObject {
                 }
             }
 
-            let outcome: Result<Int, Error>
+            var options = next.options
+            if options.decrypt { options.keys = KeyStore.load() }
+
+            let outcome: Result<PackageReader.ExtractResult, Error>
             do {
                 try? FileManager.default.removeItem(at: partURL)
-                let entries: [PackageEntry]
+                let result: PackageReader.ExtractResult
                 if next.securityScoped {
                     // Externe Dateien (iCloud, USB, SMB) koordiniert lesen → werden ggf. erst geladen.
-                    entries = try FS.coordinatedRead(next.source) { url in
-                        try PackageReader.extract(url, to: partURL, partition: next.partition, cancel: flag, progress: report)
+                    result = try FS.coordinatedRead(next.source) { url in
+                        try PackageReader.extract(url, to: partURL, options: options, cancel: flag, progress: report)
                     }
                 } else {
-                    entries = try PackageReader.extract(next.source, to: partURL, partition: next.partition, cancel: flag, progress: report)
+                    result = try PackageReader.extract(next.source, to: partURL, options: options, cancel: flag, progress: report)
                 }
                 try FileManager.default.moveItem(at: partURL, to: finalURL)
                 if next.deleteSource { try? FileManager.default.removeItem(at: next.source) }
-                outcome = .success(entries.count)
+                outcome = .success(result)
             } catch {
                 try? FileManager.default.removeItem(at: partURL)
                 outcome = .failure(error)
@@ -284,12 +327,17 @@ final class FileStore: ObservableObject {
         job = current
     }
 
-    private func finishJob(name: String, folder: String, outcome: Result<Int, Error>) {
+    private func finishJob(name: String, folder: String, outcome: Result<PackageReader.ExtractResult, Error>) {
         withAnimation(.smooth) { job = nil }
         switch outcome {
-        case .success(let count):
+        case .success(let result):
             completedCount += 1
-            toast = "\(folder) · \(count) Dateien entpackt"
+            toast = result.decryptedCount > 0
+                ? "\(folder) · RomFS + \(result.fileCount) Dateien"
+                : "\(folder) · \(result.fileCount) Dateien entpackt"
+            if !result.warnings.isEmpty {
+                alert = AlertMessage(title: "Hinweise zu \(name)", message: result.warnings.joined(separator: "\n\n"))
+            }
         case .failure(let error):
             if case PackageError.cancelled = error {
                 toast = "Entpacken abgebrochen"

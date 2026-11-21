@@ -14,12 +14,13 @@ struct AppRelease: Equatable, Sendable {
 /// Wie das Update installiert wird. iOS erlaubt keine Selbst-Installation –
 /// TrollStore / SideStore / AltStore übernehmen das Ersetzen der App.
 enum InstallMethod: String, CaseIterable, Identifiable, Sendable {
-    case trollStore, sideStore, altStore, share
+    case selfUpdate, trollStore, sideStore, altStore, share
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
+        case .selfUpdate: return SelfUpdater.isLiveContainer ? "Direkt (LiveContainer)" : "Direkt in der App"
         case .trollStore: return "TrollStore"
         case .sideStore: return "SideStore"
         case .altStore: return "AltStore"
@@ -29,6 +30,7 @@ enum InstallMethod: String, CaseIterable, Identifiable, Sendable {
 
     var icon: String {
         switch self {
+        case .selfUpdate: return "arrow.down.circle.fill"
         case .trollStore: return "bolt.fill"
         case .sideStore: return "arrow.triangle.2.circlepath"
         case .altStore: return "a.circle.fill"
@@ -41,7 +43,7 @@ enum InstallMethod: String, CaseIterable, Identifiable, Sendable {
         case .trollStore: return "apple-magnifier"
         case .sideStore: return "sidestore"
         case .altStore: return "altstore"
-        case .share: return nil
+        case .selfUpdate, .share: return nil
         }
     }
 
@@ -53,6 +55,7 @@ enum InstallMethod: String, CaseIterable, Identifiable, Sendable {
     }
 
     @MainActor var isAvailable: Bool {
+        if self == .selfUpdate { return SelfUpdater.isSupported }
         guard let scheme, let probe = URL(string: "\(scheme)://") else { return true }
         return UIApplication.shared.canOpenURL(probe)
     }
@@ -68,7 +71,7 @@ final class UpdateManager: ObservableObject {
     private static let checkInterval: TimeInterval = 3 * 60 * 60
 
     enum Phase: Equatable {
-        case idle, checking, upToDate, available, failed(String)
+        case idle, checking, upToDate, available, installing, installed, failed(String)
     }
 
     @Published private(set) var phase: Phase = .idle
@@ -116,7 +119,7 @@ final class UpdateManager: ObservableObject {
     }
 
     func check(userInitiated: Bool) async {
-        guard phase != .checking else { return }
+        guard phase != .checking, phase != .installing, phase != .installed else { return }
         phase = .checking
         do {
             let release = try await fetchLatestRelease()
@@ -134,6 +137,7 @@ final class UpdateManager: ObservableObject {
                 showSheet = true
             } else if defaults.bool(forKey: Self.autoInstallKey), preferredMethod != .share {
                 install(with: preferredMethod)
+                showSheet = preferredMethod == .selfUpdate
             } else if defaults.integer(forKey: Self.skippedBuildKey) != release.build {
                 showSheet = true
             }
@@ -151,9 +155,15 @@ final class UpdateManager: ObservableObject {
 
     func install(with method: InstallMethod) {
         guard let release = latest else { return }
-        if method == .share {
-            Task { await download(release) }
+        switch method {
+        case .share:
+            Task { downloadedIPA = await download(release) }
             return
+        case .selfUpdate:
+            Task { await selfUpdate(release) }
+            return
+        default:
+            break
         }
         guard let url = method.installURL(for: release.ipaURL) else { return }
         UIApplication.shared.open(url) { success in
@@ -166,21 +176,43 @@ final class UpdateManager: ObservableObject {
         }
     }
 
-    private func download(_ release: AppRelease) async {
-        guard downloadProgress == nil else { return }
+    private func download(_ release: AppRelease) async -> URL? {
+        guard downloadProgress == nil else { return nil }
         downloadedIPA = nil
         downloadProgress = 0
+        defer { downloadProgress = nil }
         let destination = FileManager.default.temporaryDirectory
             .appendingPathComponent("NSPiOS-\(release.version).ipa")
         do {
             let downloader = IPADownloader(destination: destination) { fraction in
                 Task { @MainActor in self.downloadProgress = fraction }
             }
-            downloadedIPA = try await downloader.start(release.ipaURL)
+            return try await downloader.start(release.ipaURL)
         } catch {
             phase = .failed("Download fehlgeschlagen: \(error.localizedDescription)")
+            return nil
         }
-        downloadProgress = nil
+    }
+
+    /// Lädt die IPA und ersetzt die eigenen App-Dateien (LiveContainer).
+    private func selfUpdate(_ release: AppRelease) async {
+        guard phase != .installing, let ipa = await download(release) else { return }
+        phase = .installing
+        let result = await Task.detached(priority: .userInitiated) {
+            Result { try SelfUpdater.apply(ipa: ipa) }
+        }.value
+        try? FileManager.default.removeItem(at: ipa)
+        switch result {
+        case .success:
+            phase = .installed
+            showSheet = true
+        case .failure(let error):
+            phase = .failed("Update fehlgeschlagen: \(error.localizedDescription)")
+        }
+    }
+
+    func restart() {
+        SelfUpdater.restart()
     }
 
     // MARK: - GitHub

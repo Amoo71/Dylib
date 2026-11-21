@@ -16,11 +16,13 @@ Die IPA wird automatisch per GitHub Actions gebaut, ganz ohne Mac.
   - **Direkt entpacken** ohne vorherige Kopie (spart doppelten Speicher)
 - **Stabil**: Speicherprüfung vorab, Entpacken in einen `.part`-Ordner und erst bei Erfolg umbenennen, Schutz gegen `../`-Dateinamen, keine halben Ordner nach Abbruch
 - **XCI-Unterstützung**: alle Partitionen (`update`, `normal`, `secure`, `logo`) in Unterordnern – oder per Schalter nur die Spieldaten (`secure`) direkt in den Ordner. Auch Dumps mit vorangestellter Key-Area werden erkannt.
+- **RomFS & ExeFS** (optional): mit deiner eigenen `prod.keys` werden die NCAs entschlüsselt und als Ordner `romfs/`, `exefs/`, `control/` (DLC: `romfs_<TitleID>`) entpackt – inkl. Titlekey-Tickets, NCA2/NCA3, hardwarebeschleunigtes AES-CTR. Keys bleiben privat im App-Container und sind **nicht** im Repo. Update-NCAs (BKTR) und NCZ werden übersprungen (mit Hinweis).
 - **Inhalt anzeigen** einer NSP/XCI ohne Entpacken (XCI nach Partition gruppiert)
 - **Ordner durchsuchen**, Suche in jeder Liste
 - **In Dateien verschieben/kopieren**: einzelne Dateien, ganze Ordner oder alle auf einmal
 - **Löschen** per Wischen oder Kontextmenü; **Bereinigen** (Temp, Cache, Reste, leere Ordner); **Alles löschen** (nur NSPs / nur Ordner / alles)
 - **In-App-Updates direkt aus Git**: Jeder Push baut automatisch eine neue Version (Build-Nummer = Actions-Run) und veröffentlicht sie als Release `nspios-b<build>`. Die App prüft beim Öffnen (max. alle 3 h) oder per Knopf und installiert:
+  - **LiveContainer** → echtes Selbst-Update: IPA laden, entpacken, eigene App-Dateien ersetzen, neu starten – kein Neu-Signieren nötig
   - **TrollStore** → ersetzt die App direkt (`apple-magnifier://install?url=…`)
   - **SideStore / AltStore** → Übergabe zum Neu-Signieren und Ersetzen
   - sonst IPA laden und über „Öffnen in …“ weitergeben
