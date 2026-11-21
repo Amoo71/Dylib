@@ -21,8 +21,19 @@ def _minimal_compute_spirv():
     return struct.pack(f'<{len(words)}I', *words)
 
 
+def _step(name):
+    print(f'[selftest] {name}', flush=True)
+
+
 def run(_args=None):
+    _step('python ' + sys.version.split()[0])
     result = {'python': sys.version.split()[0], 'platform': sys.platform}
+
+    _step('ctypes')
+    import ctypes, os
+    ctypes.CDLL(os.environ['NSPIOS_NATIVE_LIB'])
+
+    _step('capstone')
 
     import capstone
     md = capstone.Cs(capstone.CS_ARCH_ARM64, capstone.CS_MODE_ARM)
@@ -31,14 +42,17 @@ def run(_args=None):
     assert insns == ['nop', 'mov x0, xzr', 'ret'], insns
     result['capstone'] = '.'.join(map(str, capstone.cs_version()[:2]))
 
+    _step('lz4')
     import lz4.block
     data = b'NSPiOS ' * 4096
     packed = lz4.block.compress(data, store_size=False)
     assert lz4.block.decompress(packed, uncompressed_size=len(data)) == data
     result['lz4'] = f'{len(data)} -> {len(packed)} B'
 
+    _step('spirv-cross')
     from nspios_engine import native
     msl = native.spirv_to_msl(_minimal_compute_spirv())
     assert 'kernel void main0' in msl, msl[:200]
     result['spirv_cross'] = 'ok'
+    _step('done')
     return result

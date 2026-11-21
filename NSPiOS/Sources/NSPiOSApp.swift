@@ -103,6 +103,7 @@ enum EngineSelfTest {
     static func runFromLaunchArgumentIfRequested() async {
         guard ProcessInfo.processInfo.arguments.contains("-nspios-selftest") else { return }
         let line: String
+        FileHandle.standardOutput.write(Data("[selftest] start (native: \(PythonEngine.nativeLibraryPath ?? "missing"))\n".utf8))
         do {
             let result = try await PythonEngine.shared.selfTest()
             let json = (try? JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]))

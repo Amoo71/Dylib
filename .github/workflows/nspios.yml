@@ -113,6 +113,14 @@ jobs:
           xcrun simctl launch --console-pty "$DEVICE" de.amoo71.NSPiOS -nspios-selftest 2>&1 | tee selftest.log || true
           grep -q "NSPIOS_SELFTEST_OK" selftest.log
 
+      - name: Crash-Reports und System-Log sammeln (bei Fehler)
+        if: failure()
+        run: |
+          mkdir -p diag
+          cp ~/Library/Logs/DiagnosticReports/*NSPiOS* diag/ 2>/dev/null || true
+          xcrun simctl spawn booted log show --last 10m --style compact --predicate 'process == "NSPiOS"' > diag/system.log 2>&1 || true
+          ls -la diag
+
       - name: Simulator-Logs hochladen (bei Fehler)
         if: failure()
         uses: actions/upload-artifact@v4
@@ -121,6 +129,7 @@ jobs:
           path: |
             NSPiOS/build-sim.log
             NSPiOS/selftest.log
+            NSPiOS/diag/
           if-no-files-found: ignore
 
       - name: Release für In-App-Updates veröffentlichen
