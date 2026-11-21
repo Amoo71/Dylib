@@ -63,14 +63,22 @@ targets:
         basedOnDependencyAnalysis: false
         script: |
           set -e
-          mkdir -p "$CODESIGNING_FOLDER_PATH/python/lib"
+          XCF="$PROJECT_DIR/Vendor/Python.xcframework"
           if [ "$EFFECTIVE_PLATFORM_NAME" = "-iphonesimulator" ]; then
-            SLICE=$(ls -d "$PROJECT_DIR"/Vendor/Python.xcframework/ios-*-simulator | head -1)
+            if [ -d "$XCF/ios-arm64-simulator" ]; then SLICE=ios-arm64-simulator; else SLICE=ios-arm64_x86_64-simulator; fi
           else
-            SLICE="$PROJECT_DIR/Vendor/Python.xcframework/ios-arm64"
+            SLICE=ios-arm64
           fi
-          echo "Installing Python standard library from $SLICE"
-          rsync -au --delete "$SLICE/lib/" "$CODESIGNING_FOLDER_PATH/python/lib/"
+          ARCH=$(echo $ARCHS | awk '{print $1}')
+          mkdir -p "$CODESIGNING_FOLDER_PATH/python/lib"
+          # Gemeinsame Standardbibliothek + architekturspezifische Module (lib-<arch>)
+          if [ -d "$XCF/lib" ]; then
+            rsync -au --delete "$XCF/lib/" "$CODESIGNING_FOLDER_PATH/python/lib/" --exclude 'libpython*.dylib'
+            rsync -au "$XCF/$SLICE/lib-$ARCH/" "$CODESIGNING_FOLDER_PATH/python/lib/" --exclude 'libpython*.dylib'
+          else
+            rsync -au --delete "$XCF/$SLICE/lib/" "$CODESIGNING_FOLDER_PATH/python/lib/" --exclude 'libpython*.dylib'
+          fi
+          echo "Installed Python from $SLICE ($ARCH):"; ls "$CODESIGNING_FOLDER_PATH/python/lib"
       - name: Prepare Python binary modules
         basedOnDependencyAnalysis: false
         script: |
@@ -94,7 +102,7 @@ targets:
             echo "$FRAMEWORK_FOLDER/$FULL_MODULE_NAME" > ${FULL_EXT%.so}.fwork
             echo "${RELATIVE_EXT%.so}.fwork" > "$CODESIGNING_FOLDER_PATH/$FRAMEWORK_FOLDER/$FULL_MODULE_NAME.origin"
           }
-          PYTHON_VER=$(ls -1 "$CODESIGNING_FOLDER_PATH/python/lib" | grep '^python3' | head -1)
+          PYTHON_VER=$(ls -1 "$CODESIGNING_FOLDER_PATH/python/lib" | grep -E '^python3\.[0-9]+$' | head -1)
           echo "Install Python $PYTHON_VER extension modules as frameworks"
           find "$CODESIGNING_FOLDER_PATH/python/lib/$PYTHON_VER/lib-dynload" -name "*.so" | while read FULL_EXT; do
             install_dylib python/lib/$PYTHON_VER/lib-dynload/ "$FULL_EXT"
