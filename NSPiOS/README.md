@@ -20,6 +20,11 @@ Die IPA wird automatisch per GitHub Actions gebaut, ganz ohne Mac.
 - **Ordner durchsuchen**, Suche in jeder Liste
 - **In Dateien verschieben/kopieren**: einzelne Dateien, ganze Ordner oder alle auf einmal
 - **Löschen** per Wischen oder Kontextmenü; **Bereinigen** (Temp, Cache, Reste, leere Ordner); **Alles löschen** (nur NSPs / nur Ordner / alles)
+- **In-App-Updates direkt aus Git**: Jeder Push baut automatisch eine neue Version (Build-Nummer = Actions-Run) und veröffentlicht sie als Release `nspios-b<build>`. Die App prüft beim Öffnen (max. alle 3 h) oder per Knopf und installiert:
+  - **TrollStore** → ersetzt die App direkt (`apple-magnifier://install?url=…`)
+  - **SideStore / AltStore** → Übergabe zum Neu-Signieren und Ersetzen
+  - sonst IPA laden und über „Öffnen in …“ weitergeben
+  - optional **vollautomatisch installieren**, „Was ist neu“ = Commit-Nachricht, die letzten 5 Releases bleiben erhalten
 - Alle Daten sind auch in der Dateien-App unter **Auf meinem iPhone › NSPiOS** sichtbar (`NSP/` und `Entpackt/`)
 
 > Die App entpackt nur die Container (PFS0/HFS0). Die enthaltenen `.nca`-Dateien bleiben verschlüsselt.
@@ -27,8 +32,8 @@ Die IPA wird automatisch per GitHub Actions gebaut, ganz ohne Mac.
 ## IPA bauen
 
 1. Änderungen in `NSPiOS/` pushen **oder** unter *Actions → Build NSPiOS IPA → Run workflow* starten.
-2. Im Workflow-Run das Artifact **NSPiOS-ipa** herunterladen.
-3. Für einen Release mit IPA: `git tag nspios-v2.0.0 && git push origin nspios-v2.0.0`
+2. Die IPA landet automatisch als Release `nspios-b<build>` (und als Artifact **NSPiOS-ipa**).
+3. Bereits installierte Apps finden das Update selbst (Einstellungen › Updates).
 
 ## Installieren
 
@@ -44,7 +49,9 @@ NSPiOS/
     ├── NSPiOSApp.swift      # App + Tab-Struktur, globale Sheets/Alerts
     ├── LibraryView.swift    # Tab „NSP“
     ├── ExtractedView.swift  # Tab „Entpackt“, Ordner-Browser, NSP-Inhalt
-    ├── StorageView.swift    # Tab „Speicher“: Übersicht, Bereinigen, Löschen
+    ├── StorageView.swift    # Tab „Einstellungen“: Speicher, Bereinigen, Löschen
+    ├── UpdateManager.swift  # GitHub-Releases prüfen, Download, Übergabe an TrollStore/SideStore/AltStore
+    ├── UpdateViews.swift    # Update-Karte & Update-Sheet
     ├── Components.swift     # Zeilen, Aktionen, Fortschrittskarte, Statusanzeige
     ├── Theme.swift          # Farben, Mesh-Hintergrund, Glas-Helfer
     ├── FileStore.swift      # Logik: Import, Warteschlange, Löschen, Export

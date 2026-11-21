@@ -6,8 +6,6 @@ on:
     paths:
       - "NSPiOS/**"
       - ".github/workflows/nspios.yml"
-    tags:
-      - "nspios-v*"
   workflow_dispatch:
 
 permissions:
@@ -20,6 +18,10 @@ concurrency:
 jobs:
   build:
     runs-on: macos-26
+    env:
+      # Build-Nummer automatisch aus Git/Actions → App erkennt neuere Versionen
+      BUILD_NUMBER: ${{ github.run_number }}
+      APP_VERSION: 2.1.${{ github.run_number }}
     defaults:
       run:
         working-directory: NSPiOS
@@ -54,6 +56,9 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
+            MARKETING_VERSION="$APP_VERSION" \
+            CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+            NSPIOS_UPDATE_REPO="${{ github.repository }}" \
             build 2>&1 | tee build.log | grep -E "error:|warning: .*deprecated|BUILD (SUCCEEDED|FAILED)" || true
           test -d build/Build/Products/Release-iphoneos/NSPiOS.app
 
@@ -81,8 +86,21 @@ jobs:
           path: NSPiOS/NSPiOS.ipa
           if-no-files-found: error
 
-      - name: Release erstellen (nur bei Tag nspios-v*)
-        if: startsWith(github.ref, 'refs/tags/nspios-v')
+      - name: Release für In-App-Updates veröffentlichen
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: nspios-b${{ env.BUILD_NUMBER }}
+          name: NSPiOS ${{ env.APP_VERSION }}
+          target_commitish: ${{ github.sha }}
+          make_latest: false
+          body: ${{ github.event.head_commit.message || 'Manueller Build' }}
           files: NSPiOS/NSPiOS.ipa
+
+      - name: Alte NSPiOS-Releases aufräumen (letzte 5 behalten)
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release list --repo "${{ github.repository }}" --limit 100 --json tagName --jq '.[].tagName' \
+            | grep '^nspios-b[0-9]*$' | sort -t b -k2 -n -r | tail -n +6 \
+            | xargs -r -I{} gh release delete {} --repo "${{ github.repository }}" --yes --cleanup-tag || true

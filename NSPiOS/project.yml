@@ -11,6 +11,8 @@ settings:
     SWIFT_OPTIMIZATION_LEVEL: "-O"
     SWIFT_COMPILATION_MODE: wholemodule
     ENABLE_TESTABILITY: NO
+    # Repo, aus dessen Releases sich die App aktualisiert (CI setzt github.repository)
+    NSPIOS_UPDATE_REPO: Amoo71/Dylib
 targets:
   NSPiOS:
     type: application
@@ -38,6 +40,12 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
         UIUserInterfaceStyle: Dark
+        NSPiOSUpdateRepo: $(NSPIOS_UPDATE_REPO)
+        # Sideload-Apps, an die Updates übergeben werden können
+        LSApplicationQueriesSchemes:
+          - apple-magnifier
+          - sidestore
+          - altstore
         # Documents-Ordner der App in der Dateien-App sichtbar machen
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true

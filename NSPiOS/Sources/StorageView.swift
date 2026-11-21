@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Tab „Speicher“: Übersicht, Bereinigen, Löschen, Einstellungen.
+/// Tab „Einstellungen“: Speicher, Bereinigen, Löschen, Updates, Optionen.
 struct StorageView: View {
     @EnvironmentObject private var store: FileStore
     @AppStorage(FileStore.deleteAfterExtractKey) private var deleteAfterExtract = false
@@ -18,6 +18,7 @@ struct StorageView: View {
                 VStack(spacing: 20) {
                     overview
                     actions
+                    UpdateCard()
                     settings
                     Text("Alle Dateien liegen auch in der Dateien-App unter „Auf meinem iPhone › NSPiOS“.")
                         .font(.footnote)
@@ -29,7 +30,7 @@ struct StorageView: View {
                 .padding(.vertical, 12)
             }
             .background { AmbientBackground() }
-            .navigationTitle("Speicher")
+            .navigationTitle("Einstellungen")
             .refreshable { store.refresh() }
             .confirmationDialog(
                 confirmTitle,

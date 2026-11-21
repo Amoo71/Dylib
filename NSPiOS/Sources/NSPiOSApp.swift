@@ -3,11 +3,13 @@ import SwiftUI
 @main
 struct NSPiOSApp: App {
     @StateObject private var store = FileStore()
+    @StateObject private var updater = UpdateManager()
 
     var body: some Scene {
         WindowGroup {
             RootView()
                 .environmentObject(store)
+                .environmentObject(updater)
                 .onOpenURL { store.handleOpenedURL($0) }
         }
     }
@@ -19,6 +21,8 @@ private enum AppTab: Hashable {
 
 struct RootView: View {
     @EnvironmentObject private var store: FileStore
+    @EnvironmentObject private var updater: UpdateManager
+    @Environment(\.scenePhase) private var scenePhase
     @State private var tab: AppTab = .library
 
     var body: some View {
@@ -32,9 +36,10 @@ struct RootView: View {
                 ExtractedView()
             }
 
-            Tab("Speicher", systemImage: "internaldrive.fill", value: AppTab.storage) {
+            Tab("Einstellungen", systemImage: "gearshape.fill", value: AppTab.storage) {
                 StorageView()
             }
+            .badge(updater.phase == .available ? 1 : 0)
         }
         .tabBarMinimizeBehavior(.onScrollDown)
         .tint(Theme.accent)
@@ -51,6 +56,9 @@ struct RootView: View {
                 store.exportFinished(request, success: success)
             }
             .ignoresSafeArea()
+        }
+        .sheet(isPresented: $updater.showSheet) {
+            UpdateSheet()
         }
         .sheet(item: $store.inspected) { item in
             PackageContentsView(url: item.url)
@@ -72,5 +80,8 @@ struct RootView: View {
             StatusPill()
         }
         .sensoryFeedback(.success, trigger: store.completedCount)
+        .onChange(of: scenePhase, initial: true) { _, phase in
+            if phase == .active { updater.checkIfDue() }
+        }
     }
 }
