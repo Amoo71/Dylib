@@ -86,7 +86,7 @@ final class PythonEngine: @unchecked Sendable {
         try JSONSerialization.data(withJSONObject: args).write(to: argsURL)
 
         func literal(_ s: String) -> String {
-            let data = (try? JSONSerialization.data(withJSONObject: [s])) ?? Data("[\"\"]".utf8)
+            let data = (try? JSONSerialization.data(withJSONObject: [s], options: [.withoutEscapingSlashes])) ?? Data("[\"\"]".utf8)
             return String(decoding: data, as: UTF8.self)
         }
 
@@ -102,11 +102,14 @@ final class PythonEngine: @unchecked Sendable {
         with open(\(literal(outURL.path))[0], "w") as _f:
             _j.dump(_r, _f, default=str)
         """
-        _ = nspios_py_run(code)
+        let errorLength = 4096
+        var errorBuffer = [CChar](repeating: 0, count: errorLength)
+        let rc = nspios_py_run(code, &errorBuffer, errorLength)
 
         guard let data = try? Data(contentsOf: outURL),
               let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw EngineError.python(L("Python returned no result", "Python lieferte kein Ergebnis"))
+            let detail = rc != 0 ? String(cString: errorBuffer) : ""
+            throw EngineError.python(L("Python returned no result", "Python lieferte kein Ergebnis") + (detail.isEmpty ? "" : "\n\n" + detail))
         }
         if object["ok"] as? Bool == true {
             return object["result"] ?? NSNull()
