@@ -1,0 +1,66 @@
+name: Build NspIos IPA
+
+on:
+  push:
+    paths:
+      - "NspIos/**"
+      - ".github/workflows/nspios-ipa.yml"
+    tags:
+      - "nspios-v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: NspIos
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Werkzeuge installieren
+        run: brew install xcodegen ldid || brew install xcodegen
+
+      - name: Xcode-Projekt erzeugen
+        run: xcodegen generate
+
+      - name: App bauen (ohne Signatur)
+        run: |
+          xcodebuild \
+            -project NspIos.xcodeproj \
+            -scheme NspIos \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: IPA packen
+        run: |
+          rm -rf Payload NspIos.ipa
+          mkdir Payload
+          cp -R build/Build/Products/Release-iphoneos/NspIos.app Payload/
+          # Pseudo-Signatur, damit z. B. TrollStore die App annimmt
+          if command -v ldid >/dev/null; then ldid -S Payload/NspIos.app/NspIos; fi
+          zip -qry NspIos.ipa Payload
+          ls -lh NspIos.ipa
+
+      - name: IPA als Artifact hochladen
+        uses: actions/upload-artifact@v4
+        with:
+          name: NspIos-ipa
+          path: NspIos/NspIos.ipa
+          if-no-files-found: error
+
+      - name: Release erstellen (nur bei Tag nspios-v*)
+        if: startsWith(github.ref, 'refs/tags/nspios-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: NspIos/NspIos.ipa

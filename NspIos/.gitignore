@@ -1,0 +1,6 @@
+# generiert durch XcodeGen / xcodebuild
+*.xcodeproj
+Info.plist
+build/
+Payload/
+*.ipa

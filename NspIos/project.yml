@@ -1,0 +1,61 @@
+name: NspIos
+options:
+  bundleIdPrefix: de.amoo71
+  deploymentTarget:
+    iOS: "16.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  NspIos:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+    scheme: {}
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: de.amoo71.NspIos
+        TARGETED_DEVICE_FAMILY: "1,2"
+        GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGNING_ALLOWED: NO
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGN_IDENTITY: ""
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: NspIos
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+        # Documents-Ordner der App in der Dateien-App sichtbar machen
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Nintendo Switch Package
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - de.amoo71.nspios.nsp
+              - de.amoo71.nspios.nsz
+        UTImportedTypeDeclarations:
+          - UTTypeIdentifier: de.amoo71.nspios.nsp
+            UTTypeDescription: Nintendo Switch Package
+            UTTypeConformsTo: [public.data]
+            UTTypeTagSpecification:
+              public.filename-extension: [nsp]
+          - UTTypeIdentifier: de.amoo71.nspios.nsz
+            UTTypeDescription: Komprimiertes Nintendo Switch Package
+            UTTypeConformsTo: [public.data]
+            UTTypeTagSpecification:
+              public.filename-extension: [nsz]
