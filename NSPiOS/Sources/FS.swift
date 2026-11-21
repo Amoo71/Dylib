@@ -10,14 +10,16 @@ struct FileItem: Identifiable, Hashable {
     var id: URL { url }
     var name: String { url.lastPathComponent }
     var isPackage: Bool {
-        !isDirectory && ["nsp", "nsz"].contains(url.pathExtension.lowercased())
+        !isDirectory && PackageReader.supportedExtensions.contains(url.pathExtension.lowercased())
     }
 }
 
 enum FileTypes {
     static let nsp = UTType(importedAs: "de.amoo71.nspios.nsp", conformingTo: .data)
     static let nsz = UTType(importedAs: "de.amoo71.nspios.nsz", conformingTo: .data)
-    static let importable: [UTType] = [nsp, nsz, .data]
+    static let xci = UTType(importedAs: "de.amoo71.nspios.xci", conformingTo: .data)
+    static let xcz = UTType(importedAs: "de.amoo71.nspios.xcz", conformingTo: .data)
+    static let importable: [UTType] = [nsp, nsz, xci, xcz, .data]
 }
 
 func formatBytes(_ bytes: Int64) -> String {

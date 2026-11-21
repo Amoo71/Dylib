@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Tab „NSP“: importierte Pakete.
+/// Tab „Pakete“: importierte NSP/XCI-Dateien.
 struct LibraryView: View {
     @EnvironmentObject private var store: FileStore
     @State private var query = ""
@@ -37,8 +37,8 @@ struct LibraryView: View {
                 if store.packages.isEmpty {
                     EmptyState(
                         icon: "shippingbox",
-                        title: "Keine NSP-Dateien",
-                        message: "Importiere .nsp oder .nsz aus der Dateien-App – oder entpacke sie direkt ohne Kopie."
+                        title: "Keine Pakete",
+                        message: "Importiere .nsp, .nsz, .xci oder .xcz aus der Dateien-App – oder entpacke sie direkt ohne Kopie."
                     ) {
                         Button {
                             store.requestImport(.copy)
@@ -53,7 +53,7 @@ struct LibraryView: View {
                     ContentUnavailableView.search(text: query)
                 }
             }
-            .searchable(text: $query, prompt: "NSP suchen")
+            .searchable(text: $query, prompt: "NSP & XCI suchen")
             .navigationTitle("NSPiOS")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {

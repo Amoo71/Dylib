@@ -48,6 +48,7 @@ enum ImportMode {
 @MainActor
 final class FileStore: ObservableObject {
     nonisolated static let deleteAfterExtractKey = "deleteAfterExtract"
+    nonisolated static let xciSecureOnlyKey = "xciSecureOnly"
 
     @Published private(set) var packages: [FileItem] = []
     @Published private(set) var extracted: [FileItem] = []
@@ -78,6 +79,7 @@ final class FileStore: ObservableObject {
         let source: URL
         let securityScoped: Bool
         let deleteSource: Bool
+        let partition: String?
     }
 
     private var pending: [PendingExtraction] = []
@@ -144,7 +146,7 @@ final class FileStore: ObservableObject {
         }
     }
 
-    /// Kopiert NSP-Dateien in den App-Ordner "NSP" (auf APFS als sofortiger Clone).
+    /// Kopiert NSP/XCI-Dateien in den App-Ordner "NSP" (auf APFS als sofortiger Clone).
     func importFiles(_ urls: [URL], extractAfterwards: Bool) {
         guard !urls.isEmpty else { return }
         let dir = packagesDir
@@ -161,7 +163,7 @@ final class FileStore: ObservableObject {
                 do {
                     try FS.coordinatedCopy(from: url, to: destination)
                     do {
-                        _ = try PFS0.entries(of: destination)
+                        _ = try PackageReader.entries(of: destination)
                     } catch {
                         try? FileManager.default.removeItem(at: destination)
                         throw error
@@ -213,7 +215,8 @@ final class FileStore: ObservableObject {
             == packagesDir.resolvingSymlinksInPath().path
         let deleteSource = !securityScoped && isOwnCopy
             && UserDefaults.standard.bool(forKey: Self.deleteAfterExtractKey)
-        pending.append(PendingExtraction(source: url, securityScoped: securityScoped, deleteSource: deleteSource))
+        let partition = UserDefaults.standard.bool(forKey: Self.xciSecureOnlyKey) ? "secure" : nil
+        pending.append(PendingExtraction(source: url, securityScoped: securityScoped, deleteSource: deleteSource, partition: partition))
         queuedCount = pending.count
         startNextIfIdle()
     }
@@ -253,14 +256,14 @@ final class FileStore: ObservableObject {
             let outcome: Result<Int, Error>
             do {
                 try? FileManager.default.removeItem(at: partURL)
-                let entries: [PFS0Entry]
+                let entries: [PackageEntry]
                 if next.securityScoped {
                     // Externe Dateien (iCloud, USB, SMB) koordiniert lesen → werden ggf. erst geladen.
                     entries = try FS.coordinatedRead(next.source) { url in
-                        try PFS0.extract(url, to: partURL, cancel: flag, progress: report)
+                        try PackageReader.extract(url, to: partURL, partition: next.partition, cancel: flag, progress: report)
                     }
                 } else {
-                    entries = try PFS0.extract(next.source, to: partURL, cancel: flag, progress: report)
+                    entries = try PackageReader.extract(next.source, to: partURL, partition: next.partition, cancel: flag, progress: report)
                 }
                 try FileManager.default.moveItem(at: partURL, to: finalURL)
                 if next.deleteSource { try? FileManager.default.removeItem(at: next.source) }
@@ -288,7 +291,7 @@ final class FileStore: ObservableObject {
             completedCount += 1
             toast = "\(folder) · \(count) Dateien entpackt"
         case .failure(let error):
-            if case PFS0Error.cancelled = error {
+            if case PackageError.cancelled = error {
                 toast = "Entpacken abgebrochen"
             } else {
                 alert = AlertMessage(title: "Entpacken fehlgeschlagen", message: "\(name)\n\n\(error.localizedDescription)")
@@ -305,7 +308,7 @@ final class FileStore: ObservableObject {
     private func beginBackgroundWork() {
         UIApplication.shared.isIdleTimerDisabled = true
         guard backgroundTask == .invalid else { return }
-        backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "NSP entpacken") {
+        backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Paket entpacken") {
             Task { @MainActor in self.endBackgroundWork() }
         }
     }

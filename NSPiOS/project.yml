@@ -51,11 +51,13 @@ targets:
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
         CFBundleDocumentTypes:
-          - CFBundleTypeName: Nintendo Switch Package
+          - CFBundleTypeName: Nintendo Switch Package / Gamecard
             LSHandlerRank: Alternate
             LSItemContentTypes:
               - de.amoo71.nspios.nsp
               - de.amoo71.nspios.nsz
+              - de.amoo71.nspios.xci
+              - de.amoo71.nspios.xcz
         UTImportedTypeDeclarations:
           - UTTypeIdentifier: de.amoo71.nspios.nsp
             UTTypeDescription: Nintendo Switch Package
@@ -67,3 +69,13 @@ targets:
             UTTypeConformsTo: [public.data]
             UTTypeTagSpecification:
               public.filename-extension: [nsz]
+          - UTTypeIdentifier: de.amoo71.nspios.xci
+            UTTypeDescription: Nintendo Switch Gamecard Image
+            UTTypeConformsTo: [public.data]
+            UTTypeTagSpecification:
+              public.filename-extension: [xci]
+          - UTTypeIdentifier: de.amoo71.nspios.xcz
+            UTTypeDescription: Komprimiertes Nintendo Switch Gamecard Image
+            UTTypeConformsTo: [public.data]
+            UTTypeTagSpecification:
+              public.filename-extension: [xcz]

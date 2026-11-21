@@ -23,7 +23,7 @@ struct RootView: View {
 
     var body: some View {
         TabView(selection: $tab) {
-            Tab("NSP", systemImage: "shippingbox.fill", value: AppTab.library) {
+            Tab("Pakete", systemImage: "shippingbox.fill", value: AppTab.library) {
                 LibraryView()
             }
             .badge(store.packages.count)

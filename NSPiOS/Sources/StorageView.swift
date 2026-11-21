@@ -4,6 +4,7 @@ import SwiftUI
 struct StorageView: View {
     @EnvironmentObject private var store: FileStore
     @AppStorage(FileStore.deleteAfterExtractKey) private var deleteAfterExtract = false
+    @AppStorage(FileStore.xciSecureOnlyKey) private var xciSecureOnly = false
     @State private var confirmScope: DeleteScope?
 
     private var usedFraction: Double {
@@ -98,7 +99,7 @@ struct StorageView: View {
 
                 HStack(spacing: 12) {
                     Button { confirmScope = .packages } label: {
-                        CompactLabel(title: "NSPs löschen", icon: "shippingbox")
+                        CompactLabel(title: "Pakete löschen", icon: "shippingbox")
                     }
                     .buttonStyle(.glass)
                     .disabled(store.packages.isEmpty)
@@ -111,7 +112,7 @@ struct StorageView: View {
                 }
 
                 Button { confirmScope = .everything } label: {
-                    ActionLabel(title: "Alles komplett löschen", subtitle: "NSPs, Ordner, Cache – sauberer Neustart", icon: "trash.fill")
+                    ActionLabel(title: "Alles komplett löschen", subtitle: "Pakete, Ordner, Cache – sauberer Neustart", icon: "trash.fill")
                 }
                 .buttonStyle(.glassProminent)
                 .tint(Theme.danger)
@@ -120,12 +121,23 @@ struct StorageView: View {
     }
 
     private var settings: some View {
-        Toggle(isOn: $deleteAfterExtract) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("NSP nach dem Entpacken löschen")
-                Text("Spart Speicher – die Original-NSP wird nach Erfolg entfernt.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+        VStack(spacing: 16) {
+            Toggle(isOn: $deleteAfterExtract) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Paket nach dem Entpacken löschen")
+                    Text("Spart Speicher – die Original-NSP/XCI wird nach Erfolg entfernt.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Divider().opacity(0.4)
+            Toggle(isOn: $xciSecureOnly) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("XCI: nur Spieldaten")
+                    Text("Entpackt nur die „secure“-Partition direkt in den Ordner. Aus: alle Partitionen (update, normal, secure, logo) in Unterordnern.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .tint(Theme.accent)
@@ -135,7 +147,7 @@ struct StorageView: View {
 
     private var confirmTitle: String {
         switch confirmScope {
-        case .packages: return "Alle NSP-Dateien löschen?"
+        case .packages: return "Alle Pakete löschen?"
         case .extracted: return "Alle entpackten Ordner löschen?"
         case .everything: return "Wirklich alles löschen?"
         case nil: return ""

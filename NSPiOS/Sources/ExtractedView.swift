@@ -142,15 +142,34 @@ struct FolderView: View {
     }
 }
 
-/// Zeigt den Inhalt einer NSP-Datei, ohne sie zu entpacken.
+/// Zeigt den Inhalt einer NSP/XCI-Datei, ohne sie zu entpacken (XCI nach Partition gruppiert).
 struct PackageContentsView: View {
     let url: URL
 
     @Environment(\.dismiss) private var dismiss
-    @State private var entries: [PFS0Entry] = []
+    @State private var info: PackageInfo?
     @State private var errorText: String?
 
-    private var total: Int64 { Int64(clamping: entries.reduce(UInt64(0)) { $0 + $1.size }) }
+    private struct Partition: Identifiable {
+        let name: String?
+        let entries: [PackageEntry]
+        var id: String { name ?? "" }
+        var size: Int64 { Int64(clamping: entries.reduce(UInt64(0)) { $0 + $1.size }) }
+    }
+
+    private var groups: [Partition] {
+        guard let info else { return [] }
+        var order: [String?] = []
+        var map: [String: [PackageEntry]] = [:]
+        for entry in info.entries {
+            let key = entry.folder ?? ""
+            if map[key] == nil { order.append(entry.folder) }
+            map[key, default: []].append(entry)
+        }
+        // "secure" (Spieldaten) zuerst
+        order.sort { a, b in a == "secure" && b != "secure" }
+        return order.map { Partition(name: $0, entries: map[$0 ?? ""] ?? []) }
+    }
 
     var body: some View {
         NavigationStack {
@@ -160,9 +179,22 @@ struct PackageContentsView: View {
                         .foregroundStyle(Theme.danger)
                         .listRowBackground(Theme.rowBackground)
                 }
-                if !entries.isEmpty {
+                if let info {
+                    HStack(spacing: 10) {
+                        Text(info.format.rawValue)
+                            .font(.caption.weight(.bold))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .glassEffect(.regular.tint(Theme.accent.opacity(0.35)), in: .capsule)
+                        Text("\(info.entries.count) Dateien · \(formatBytes(Int64(clamping: info.entries.reduce(UInt64(0)) { $0 + $1.size })))")
+                            .font(.subheadline.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                    .listRowBackground(Color.clear)
+                }
+                ForEach(groups) { group in
                     Section {
-                        ForEach(entries) { entry in
+                        ForEach(group.entries) { entry in
                             HStack(spacing: 12) {
                                 Image(systemName: FileRow.symbol(forExtension: (entry.name as NSString).pathExtension))
                                     .foregroundStyle(Theme.accent)
@@ -178,9 +210,14 @@ struct PackageContentsView: View {
                             }
                             .listRowBackground(Theme.rowBackground)
                         }
-                    } footer: {
-                        Text("\(entries.count) Dateien · \(formatBytes(total))")
-                            .monospacedDigit()
+                    } header: {
+                        if let name = group.name {
+                            HStack {
+                                Text(name == "secure" ? "secure · Spieldaten" : name)
+                                Spacer()
+                                Text(formatBytes(group.size)).monospacedDigit()
+                            }
+                        }
                     }
                 }
             }
@@ -197,9 +234,9 @@ struct PackageContentsView: View {
             }
             .task {
                 let source = url
-                let result = await Task.detached { Result { try PFS0.entries(of: source) } }.value
+                let result = await Task.detached { Result { try PackageReader.inspect(source) } }.value
                 switch result {
-                case .success(let list): entries = list
+                case .success(let value): info = value
                 case .failure(let error): errorText = error.localizedDescription
                 }
             }

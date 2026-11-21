@@ -33,6 +33,7 @@ struct FileRow: View {
     static func symbol(forExtension ext: String) -> String {
         switch ext.lowercased() {
         case "nsp", "nsz": return "shippingbox.fill"
+        case "xci", "xcz": return "sdcard.fill"
         case "nca", "ncz": return "cube.fill"
         case "tik", "cert": return "key.fill"
         case "xml", "json": return "doc.text.fill"
