@@ -225,10 +225,13 @@ final class GameLibrary: ObservableObject {
 
     /// LCAppInfo.plist (Datencontainer) wie LiveContainer selbst – ohne Vorbereitungs-/Signatur-Marker, damit
     /// LiveContainer die neue Binary beim nächsten Start aus seiner Liste vorbereitet und signiert.
-    private func writeLiveContainerInfo(in app: URL, previous: [String: Any]?, entry: GameEntry, bundleID: String?) throws {
+    private func writeLiveContainerInfo(in app: URL, previous: [String: Any]?, entry: GameEntry, bundleID: String?,
+                                        keepPreparation: Bool = false) throws {
         let fm = FileManager.default
         var lcInfo = previous ?? [:]
-        for key in Array(lcInfo.keys) where Self.isPreparationKey(key) { lcInfo.removeValue(forKey: key) }
+        if !keepPreparation {
+            for key in Array(lcInfo.keys) where Self.isPreparationKey(key) { lcInfo.removeValue(forKey: key) }
+        }
         let dataUUID = (lcInfo["LCDataUUID"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? entry.dataUUID
         lcInfo["LCDataUUID"] = dataUUID
         var containers = lcInfo["LCContainers"] as? [[String: Any]] ?? []
@@ -255,13 +258,29 @@ final class GameLibrary: ObservableObject {
         }
     }
 
-    /// Ältere Installationen (ohne LCAppInfo.plist) für LiveContainer nachrüsten.
+    /// Installationen ohne (vollständige) LCAppInfo.plist für LiveContainer nachrüsten: fehlt die Datei oder darin der
+    /// Datencontainer (LiveContainer legt sie beim Anzeigen ggf. selbst leer an), werden Container-Einträge ergänzt.
+    /// Vorhandene Einträge – auch LiveContainers Signatur-Marker – bleiben dabei erhalten.
     private func repairLiveContainerInfo(_ entry: GameEntry) {
-        guard let app = installedApp(entry),
-              !FileManager.default.fileExists(atPath: app.appendingPathComponent("LCAppInfo.plist").path) else { return }
+        guard let app = installedApp(entry) else { return }
+        let infoURL = app.appendingPathComponent("LCAppInfo.plist")
+        var info = Self.readPlist(infoURL) ?? [:]
+        let containers = info["LCContainers"] as? [[String: Any]] ?? []
+        let uuid = (info["LCDataUUID"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        if let uuid, containers.contains(where: { ($0["folderName"] as? String) == uuid }) { return }
+
         let plist = Self.readPlist(app.appendingPathComponent("Info.plist")) ?? [:]
-        let legacy = (plist["LCDataUUID"] as? String).map { ["LCDataUUID": $0] as [String: Any] }
-        try? writeLiveContainerInfo(in: app, previous: legacy, entry: entry, bundleID: plist["CFBundleIdentifier"] as? String)
+        let dataUUID = uuid ?? (plist["LCDataUUID"] as? String) ?? entry.dataUUID
+        info["LCDataUUID"] = dataUUID
+        var list = containers
+        if !list.contains(where: { ($0["folderName"] as? String) == dataUUID }) {
+            list.insert(["folderName": dataUUID, "name": entry.name], at: 0)
+        }
+        info["LCContainers"] = list
+        try? Self.writePlist(info, to: infoURL)
+        // Container-Ordner + LCContainerInfo.plist anlegen (ohne vorhandene Marker anzufassen)
+        try? writeLiveContainerInfo(in: app, previous: info, entry: entry, bundleID: plist["CFBundleIdentifier"] as? String,
+                                    keepPreparation: true)
         try? writeEnvironment(entry)
     }
 
