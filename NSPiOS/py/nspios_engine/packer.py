@@ -79,6 +79,15 @@ def _install():
         return real_copytree(src, dst, symlinks, ignore, copy_function, ignore_dangling_symlinks, dirs_exist_ok)
     shutil.copytree = copytree
 
+    # spirv-cross ist kein Programm im PATH, sondern läuft im Prozess: die Suche des Packers darauf umlenken
+    real_which = shutil.which
+
+    def which(cmd, mode=os.F_OK | os.X_OK, path=None):
+        if os.path.basename(str(cmd)).lower() in ('spirv-cross', 'spirv-cross.exe'):
+            return SPIRV
+        return real_which(cmd, mode, path)
+    shutil.which = which
+
     subprocess.run = _run
     subprocess.call = lambda *a, **k: _run(*a, **k).returncode
     subprocess.check_call = lambda *a, **k: _run(*a, check=True, **k).returncode
@@ -284,6 +293,10 @@ def smoke(args):
     tail = log.read_text(encoding='utf-8', errors='replace').strip().splitlines()[-12:]
     if rc != 0:
         return {'rc': rc, 'log': '\n'.join(tail)}
+
+    import shutil
+    if shutil.which('spirv-cross') != SPIRV:
+        return {'rc': 3, 'log': 'spirv-cross is not found through shutil.which'}
 
     # Shader-Übersetzung wie im Fertigbau: vk_shaders.py mit einer „Aufnahme“ aus einem Test-Shader
     from nspios_engine.selftest import _minimal_compute_spirv
