@@ -14,6 +14,8 @@ struct SettingsView: View {
     @AppStorage(FileStore.xciSecureOnlyKey) private var xciSecureOnly = false
     @AppStorage(FileStore.decryptKey) private var decrypt = true
     @AppStorage(FileStore.keepNCAKey) private var keepNCA = false
+    @AppStorage(GameLibrary.cleanAfterBuildKey) private var cleanAfterBuild = true
+    @AppStorage(GameLibrary.deleteSourceNCAKey) private var deleteSourceNCAs = false
 
     @AppStorage(UpdateManager.autoCheckKey) private var autoCheck = true
     @AppStorage(UpdateManager.autoInstallKey) private var autoInstall = false
@@ -96,7 +98,13 @@ struct SettingsView: View {
             .padding(.vertical, 4)
             .listRowBackground(Theme.rowBackground)
 
-            Button { store.cleanUp() } label: {
+            Button {
+                store.cleanUp()
+                Task {
+                    let freed = await GameLibrary.shared.cleanUpAll()
+                    if freed > 1_000_000 { store.toast = L("Games: \(formatBytes(freed)) freed", "Spiele: \(formatBytes(freed)) frei") }
+                }
+            } label: {
                 SettingLabel(L("Clean up", "Bereinigen"), icon: "sparkles", color: .teal)
             }
             .listRowBackground(Theme.rowBackground)
@@ -167,6 +175,7 @@ struct SettingsView: View {
 
     // MARK: - Entpacken
 
+    @ViewBuilder
     private var extractionSection: some View {
         Section(L("Extraction", "Entpacken")) {
             Toggle(isOn: $deleteAfterExtract) {
@@ -177,6 +186,17 @@ struct SettingsView: View {
             Toggle(isOn: $xciSecureOnly) {
                 SettingLabel(L("XCI: game data only", "XCI: nur Spieldaten"), icon: "sdcard.fill", color: .purple)
             }
+            .listRowBackground(Theme.rowBackground)
+        }
+        Section("Games") {
+            Toggle(isOn: $cleanAfterBuild) {
+                SettingLabel(L("Clean up after building", "Nach dem Bauen aufräumen"), icon: "sparkles", color: .teal)
+            }
+            .listRowBackground(Theme.rowBackground)
+            Toggle(isOn: $deleteSourceNCAs) {
+                SettingLabel(L("Then delete NCA files", "Danach NCA-Dateien löschen"), icon: "cube.fill", color: .gray)
+            }
+            .disabled(!cleanAfterBuild)
             .listRowBackground(Theme.rowBackground)
         }
     }

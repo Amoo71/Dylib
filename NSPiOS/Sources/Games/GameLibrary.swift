@@ -64,7 +64,13 @@ final class GameLibrary: ObservableObject {
 
     private var autoFinishing = Set<String>()
 
-    init() { load() }
+    nonisolated static let cleanAfterBuildKey = "gamesCleanAfterBuild"
+    nonisolated static let deleteSourceNCAKey = "gamesDeleteSourceNCAs"
+
+    init() {
+        UserDefaults.standard.register(defaults: [Self.cleanAfterBuildKey: true])
+        load()
+    }
 
     // MARK: - Speicher
 
@@ -176,6 +182,9 @@ final class GameLibrary: ObservableObject {
             message = final
                 ? L("\(entry.name) is ready", "\(entry.name) ist bereit")
                 : L("Start \(entry.name) once to capture its shaders", "\(entry.name) einmal starten, um die Shader aufzunehmen")
+            if UserDefaults.standard.bool(forKey: Self.cleanAfterBuildKey) {
+                await cleanUp(entry, deleteNCAs: final && UserDefaults.standard.bool(forKey: Self.deleteSourceNCAKey))
+            }
         } catch {
             entry.state = final ? .needsCapture : .failed
             entry.lastError = error.localizedDescription
@@ -322,6 +331,81 @@ final class GameLibrary: ObservableObject {
 
     nonisolated static func iconURL(_ tid: String) -> URL {
         GameBuilder.gamesRoot.appendingPathComponent(tid).appendingPathComponent("icon.jpg")
+    }
+
+    // MARK: - Aufräumen
+
+    /// Löscht, was nach dem Bauen nicht mehr gebraucht wird. Behalten wird, was einen Neubau schnell macht:
+    /// umgeschriebener Spielcode (build/patched) und die Shader-Aufnahme.
+    func cleanUp(_ entry: GameEntry, deleteNCAs: Bool) async {
+        let tid = entry.titleID
+        let source = URL(fileURLWithPath: entry.exefsPath).deletingLastPathComponent()
+        let freed = await Task.detached(priority: .utility) {
+            Self.cleanWork(tid) + (deleteNCAs ? Self.deleteNCAs(in: source) : 0) + Self.cleanTemp()
+        }.value
+        if freed > 1_000_000 {
+            message = L("Cleaned up · \(formatBytes(freed)) freed", "Aufgeräumt · \(formatBytes(freed)) frei")
+        }
+    }
+
+    /// Alle Spiele aufräumen (Einstellungen › Bereinigen).
+    func cleanUpAll() async -> Int64 {
+        let ids = games.map(\.titleID)
+        return await Task.detached(priority: .utility) {
+            ids.reduce(Int64(0)) { $0 + Self.cleanWork($1) } + Self.cleanTemp()
+        }.value
+    }
+
+    nonisolated private static func remove(_ url: URL) -> Int64 {
+        guard FileManager.default.fileExists(atPath: url.path) else { return 0 }
+        let size = FS.size(of: url)
+        return (try? FileManager.default.removeItem(at: url)) != nil ? size : 0
+    }
+
+    nonisolated static func cleanWork(_ tid: String) -> Int64 {
+        let fm = FileManager.default
+        let game = GameBuilder.gamesRoot.appendingPathComponent(tid)
+        let pack = game.appendingPathComponent("dump/\(tid)_pack")
+        var freed: Int64 = 0
+        // App-Bäume (die fertige App liegt schon in LiveContainer), übersetzte Shader (stecken in der App), Zwischenstände
+        for name in ["build/vkroot", "build/ios", "build/gl", "shader", "gl_prebuilt", "ue_shaders", "extract"] {
+            freed += remove(pack.appendingPathComponent(name))
+        }
+        for child in (try? fm.contentsOfDirectory(at: pack, includingPropertiesForKeys: nil)) ?? []
+        where child.lastPathComponent.hasPrefix("stage") {
+            freed += remove(child)
+        }
+        // Logs: die letzten 5 behalten
+        let logs = game.appendingPathComponent("logs")
+        let files = ((try? fm.contentsOfDirectory(at: logs, includingPropertiesForKeys: nil)) ?? [])
+            .sorted { $0.lastPathComponent > $1.lastPathComponent }
+        for old in files.dropFirst(5) { freed += remove(old) }
+        return freed
+    }
+
+    /// Temporäre Dateien der Engine (Python-Aufrufe, Downloads, Probeläufe).
+    nonisolated static func cleanTemp() -> Int64 {
+        let tmp = FileManager.default.temporaryDirectory
+        let items = (try? FileManager.default.contentsOfDirectory(at: tmp, includingPropertiesForKeys: nil)) ?? []
+        return items.filter { $0.lastPathComponent.hasPrefix("nspios-") || $0.lastPathComponent.hasPrefix("NSPiOS-") || $0.pathExtension == "tmp" }
+            .reduce(Int64(0)) { $0 + remove($1) }
+    }
+
+    /// Verschlüsselte NCA-Dateien im Quellordner – nach dem Bauen braucht sie niemand mehr (RomFS/ExeFS sind entpackt).
+    nonisolated static func deleteNCAs(in folder: URL) -> Int64 {
+        let fm = FileManager.default
+        var freed: Int64 = 0
+        let skip: Set<String> = ["romfs", "exefs", "control"]
+        guard let enumerator = fm.enumerator(at: folder, includingPropertiesForKeys: [.isDirectoryKey]) else { return 0 }
+        for case let file as URL in enumerator {
+            let name = file.lastPathComponent.lowercased()
+            if (try? file.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+                if skip.contains(where: { name == $0 || name.hasPrefix($0 + "_") }) { enumerator.skipDescendants() }
+                continue
+            }
+            if ["nca", "ncz", "tik", "cert"].contains(file.pathExtension.lowercased()) { freed += remove(file) }
+        }
+        return freed
     }
 
     // MARK: - Einstellungen (Documents/env.txt des Spiels)
