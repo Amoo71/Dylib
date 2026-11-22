@@ -216,11 +216,12 @@ final class FileStore: ObservableObject {
                     errors.append("\(url.lastPathComponent): \(error.localizedDescription)")
                 }
             }
-            await self.didImport(imported, errors: errors, extract: extractAfterwards)
+            let updates = Set(imported.filter { Self.isUpdatePackage($0) })
+            await self.didImport(imported, errors: errors, extract: extractAfterwards, updates: updates)
         }
     }
 
-    private func didImport(_ imported: [URL], errors: [String], extract: Bool) {
+    private func didImport(_ imported: [URL], errors: [String], extract: Bool, updates: Set<URL> = []) {
         busy = nil
         if !errors.isEmpty {
             alert = AlertMessage(title: L("Import failed", "Import fehlgeschlagen"), message: errors.joined(separator: "\n\n"))
@@ -228,9 +229,74 @@ final class FileStore: ObservableObject {
             toast = L("\(imported.count) imported", "\(imported.count) importiert")
         }
         if extract {
-            for url in imported { enqueueExtraction(of: url) }
+            // Updates allein zu entpacken bringt nichts (nur Änderungen): die spielt autoInstallUpdates ein
+            for url in imported where !updates.contains(url) { enqueueExtraction(of: url) }
         }
         refresh()
+        autoInstallUpdates(touching: imported)
+    }
+
+    /// Ist das Paket ein Update (CNMT-Typ Patch)? Liest nur die kleine CNMT-NCA.
+    nonisolated static func isUpdatePackage(_ url: URL) -> Bool {
+        guard let keys = KeyStore.load() else { return false }
+        return PackageReader.contents(of: url, keys: keys).contains { $0.isUpdate }
+    }
+
+    // MARK: - Updates automatisch einspielen
+
+    /// Nach einem Import: Gibt es für ein Spiel ein neueres Update und das Basisspiel unter Pakete, werden beide
+    /// zusammengeführt und das Spiel neu gebaut (Spielstände bleiben). Noch nicht im Games-Tab → wird hinzugefügt.
+    func autoInstallUpdates(touching urls: [URL]) {
+        guard keyCount > 0, !urls.isEmpty else { return }
+        let all = Array(Set(packages.map(\.url) + urls))
+        Task.detached(priority: .userInitiated) {
+            guard let keys = KeyStore.load() else { return }
+            var metas: [URL: [ContentMeta.Info]] = [:]
+            for url in all { metas[url] = PackageReader.contents(of: url, keys: keys) }
+            await self.applyUpdates(touching: urls, metas: metas)
+        }
+    }
+
+    private func applyUpdates(touching urls: [URL], metas: [URL: [ContentMeta.Info]]) {
+        let touched = Set(urls.flatMap { metas[$0] ?? [] }.filter { $0.type == 0x80 || $0.isUpdate }.map(\.baseTitleID))
+        for tid in touched {
+            let updates = metas.flatMap { url, list in list.filter { $0.isUpdate && $0.baseTitleID == tid }.map { (url, $0) } }
+                .sorted { $0.1.version > $1.1.version }
+            guard let newest = updates.first else { continue }
+            let (updateURL, update) = newest
+            let tidHex = String(format: "%016llX", tid)
+            let library = GameLibrary.shared
+            if let game = library.game(tidHex), (game.version ?? 0) >= update.version { continue }
+            let name = GameBuilder.profileIndex[tidHex]?.name ?? tidHex
+            guard let baseURL = metas.first(where: { $0.value.contains { $0.type == 0x80 && $0.titleID == tid } })?.key else {
+                alert = AlertMessage(
+                    title: L("Update found", "Update erkannt"),
+                    message: L("\(name) v\(update.version): the base game is missing. Import the base game's NSP/XCI as well – then NSPiOS continues on its own.",
+                               "\(name) v\(update.version): Das Basisspiel fehlt. Importiere auch das NSP/XCI des Basisspiels – dann macht NSPiOS automatisch weiter."))
+                continue
+            }
+            toast = L("Update v\(update.version) for \(name) – installing", "Update v\(update.version) für \(name) – wird eingespielt")
+            let extracted = extractedDir
+            enqueueMerged(base: baseURL, update: updateURL) { folder in
+                guard let program = GameBuilder.findPrograms(in: folder).first(where: { $0.titleID == tidHex }) else { return }
+                Task { @MainActor in
+                    if let game = library.game(tidHex) {
+                        let oldFolder = URL(fileURLWithPath: game.exefsPath).deletingLastPathComponent().standardizedFileURL
+                        await library.update(game, with: program)
+                        // alten (Basis-)Ordner aufräumen, wenn das Spiel jetzt aus dem neuen gebaut ist
+                        if library.game(tidHex)?.state != .failed,
+                           UserDefaults.standard.bool(forKey: GameLibrary.cleanAfterBuildKey),
+                           oldFolder != folder.standardizedFileURL,
+                           oldFolder.deletingLastPathComponent().standardizedFileURL == extracted.standardizedFileURL {
+                            try? FileManager.default.removeItem(at: oldFolder)
+                            self.refresh()
+                        }
+                    } else if program.isSupported {
+                        await library.add(program)
+                    }
+                }
+            }
+        }
     }
 
     /// Datei, die über „Öffnen in …“ / Teilen an die App übergeben wurde.
@@ -242,6 +308,7 @@ final class FileStore: ObservableObject {
             do {
                 try FileManager.default.moveItem(at: url, to: destination)
                 toast = L("Imported", "Importiert")
+                autoInstallUpdates(touching: [destination])
             } catch {
                 alert = AlertMessage(title: L("Import failed", "Import fehlgeschlagen"), message: error.localizedDescription)
             }
@@ -281,6 +348,10 @@ final class FileStore: ObservableObject {
     // MARK: - Entpacken
 
     func enqueueExtraction(of url: URL, securityScoped: Bool = false) {
+        if !securityScoped, keyCount > 0, packages.contains(where: { $0.url == url }), Self.isUpdatePackage(url) {
+            autoInstallUpdates(touching: [url])
+            return
+        }
         let isOwnCopy = url.deletingLastPathComponent().resolvingSymlinksInPath().path
             == packagesDir.resolvingSymlinksInPath().path
         let deleteSource = !securityScoped && isOwnCopy
