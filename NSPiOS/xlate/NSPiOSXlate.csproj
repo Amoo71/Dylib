@@ -8,6 +8,9 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <PublishAot>true</PublishAot>
     <NativeLib>Shared</NativeLib>
+    <!-- NativeAOT for iOS outside the iOS workload: the runtime pack from NuGet (as dotnet/runtime's iOS NativeAOT samples) -->
+    <PublishAotUsingRuntimePack>true</PublishAotUsingRuntimePack>
+    <SelfContained>true</SelfContained>
     <InvariantGlobalization>true</InvariantGlobalization>
     <UseSystemResourceKeys>true</UseSystemResourceKeys>
     <AssemblyName>NSPiOSXlate</AssemblyName>
