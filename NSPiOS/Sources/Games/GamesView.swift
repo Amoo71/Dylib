@@ -12,6 +12,7 @@ struct GamesView: View {
     @State private var deleteFor: GameEntry?
     @State private var logFor: GameEntry?
     @State private var tvFor: GameEntry?
+    @State private var installUpdateFor: GameEntry?
 
     var body: some View {
         NavigationStack {
@@ -79,6 +80,10 @@ struct GamesView: View {
             }
             .sheet(item: $logFor) { game in
                 GameLogSheet(game: game)
+            }
+            .sheet(item: $installUpdateFor) { game in
+                InstallUpdateSheet(game: game)
+                    .presentationDetents([.medium, .large])
             }
             .sheet(item: $tvFor) { game in
                 TVPlaySheet(game: game)
@@ -150,8 +155,12 @@ struct GamesView: View {
             }
             .disabled(builder.running)
         }
+        Button { installUpdateFor = game } label: {
+            Label(L("Install update…", "Update installieren …"), systemImage: "arrow.down.app")
+        }
+        .disabled(builder.running)
         Button { updateFor = game } label: {
-            Label(L("Update / other files", "Update / andere Dateien"), systemImage: "square.and.arrow.down.on.square")
+            Label(L("Other files", "Andere Dateien"), systemImage: "square.and.arrow.down.on.square")
         }
         .disabled(builder.running)
         Button { logFor = game } label: { Label(L("Logs", "Logs"), systemImage: "doc.text.magnifyingglass") }

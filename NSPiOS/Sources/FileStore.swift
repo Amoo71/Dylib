@@ -91,6 +91,8 @@ final class FileStore: ObservableObject {
         var romfsOnly = false
         /// Update-Paket: Basisspiel + Update zu einem Ordner im Update-Stand zusammenführen.
         var update: URL? = nil
+        /// Nach erfolgreichem Zusammenführen: Ordner des Ergebnisses (z. B. Spiel neu bauen).
+        var then: (@MainActor @Sendable (URL) -> Void)? = nil
     }
 
     private var pending: [PendingExtraction] = []
@@ -311,7 +313,7 @@ final class FileStore: ObservableObject {
     }
 
     /// Basisspiel + Update entpacken: RomFS mit eingespieltem Update, ExeFS aus dem Update.
-    func enqueueMerged(base: URL, update: URL) {
+    func enqueueMerged(base: URL, update: URL, then: (@MainActor @Sendable (URL) -> Void)? = nil) {
         guard keyCount > 0 else {
             alert = AlertMessage(
                 title: L("prod.keys missing", "prod.keys fehlt"),
@@ -321,7 +323,7 @@ final class FileStore: ObservableObject {
         }
         pending.append(PendingExtraction(
             source: base, securityScoped: false, deleteSource: false,
-            options: PackageReader.ExtractOptions(), update: update
+            options: PackageReader.ExtractOptions(), update: update, then: then
         ))
         queuedCount = pending.count
         startNextIfIdle()
@@ -400,6 +402,7 @@ final class FileStore: ObservableObject {
         let finalURL = FS.uniqueURL(in: extractedDir, fileName: baseName, isDirectory: true)
         let partURL = extractedDir.appendingPathComponent(finalURL.lastPathComponent + ".part", isDirectory: true)
         let source = next.source
+        let then = next.then
 
         Task.detached(priority: .userInitiated) {
             let report: (UInt64, UInt64, String) -> Void = { done, total, file in
@@ -420,6 +423,9 @@ final class FileStore: ObservableObject {
                 outcome = .failure(error)
             }
             await self.finishJob(name: source.lastPathComponent, folder: finalURL.lastPathComponent, outcome: outcome)
+            if case .success = outcome, let then {
+                await then(finalURL)
+            }
         }
     }
 

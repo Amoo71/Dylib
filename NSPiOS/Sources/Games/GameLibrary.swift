@@ -231,6 +231,7 @@ final class GameLibrary: ObservableObject {
         plist["CFBundleDisplayName"] = entry.name
         Self.writeIcon(for: entry, into: app, plist: &plist)
         try Self.writePlist(plist, to: plistURL)
+        GameTVHook.install(into: app)   // TV + Controller → iPhone-Bildschirm schwarz (NSPiOSTV)
 
         let previous = Self.readPlist(target.appendingPathComponent("LCAppInfo.plist"))
         try writeLiveContainerInfo(in: app, previous: previous, entry: entry,

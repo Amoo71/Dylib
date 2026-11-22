@@ -63,6 +63,20 @@ struct TVPlaySheet: View {
                 .listRowBackground(Theme.rowBackground)
 
                 Section {
+                    Toggle(isOn: Binding(
+                        get: { values[Self.blackKey] != "0" },
+                        set: { values[Self.blackKey] = $0 ? nil : "0" }
+                    )) {
+                        SettingLabel(L("iPhone black with controller", "iPhone schwarz mit Controller"), icon: "iphone.slash", color: Theme.accent)
+                    }
+                    .tint(Theme.accent)
+                } footer: {
+                    Text(L("While the TV shows the game and a Bluetooth controller is connected, the iPhone shows only black (OLED pixels off). Double-tap shows it for 10 s.",
+                           "Solange der Fernseher das Spiel zeigt und ein Bluetooth-Controller verbunden ist, zeigt das iPhone nur Schwarz (OLED-Pixel aus). Doppeltippen zeigt es für 10 s."))
+                }
+                .listRowBackground(Theme.rowBackground)
+
+                Section {
                     ForEach(options) { option in
                         Picker(selection: binding(option.key)) {
                             Text(L("Like on iPhone", "Wie auf dem iPhone")).tag("")
@@ -116,6 +130,7 @@ struct TVPlaySheet: View {
     }
 
     private var current: GameEntry { library.game(game.titleID) ?? game }
+    static let blackKey = "NSPIOS_TV_BLACK"   // liest NSPiOSTV.framework im Spiel (Documents/env.txt)
 
     private func step(_ number: Int, _ text: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
@@ -136,8 +151,8 @@ struct TVPlaySheet: View {
     }
 
     private func save() {
-        var merged = current.settings.filter { !$0.key.hasPrefix(GameLibrary.tvPrefix) }
-        for (key, value) in values where key.hasPrefix(GameLibrary.tvPrefix) && !value.isEmpty {
+        var merged = current.settings.filter { !$0.key.hasPrefix(GameLibrary.tvPrefix) && $0.key != Self.blackKey }
+        for (key, value) in values where (key.hasPrefix(GameLibrary.tvPrefix) || key == Self.blackKey) && !value.isEmpty {
             merged[key] = value
         }
         if merged != current.settings {

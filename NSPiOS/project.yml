@@ -46,6 +46,25 @@ targets:
         CODE_SIGNING_REQUIRED: NO
         CODE_SIGN_IDENTITY: ""
 
+  # Wird nicht von NSPiOS geladen: NSPiOS legt sie in jede Spiel-App (TV + Controller → iPhone-Bildschirm schwarz)
+  NSPiOSTV:
+    type: framework
+    platform: iOS
+    sources:
+      - path: GameTV
+    settings:
+      base:
+        PRODUCT_NAME: NSPiOSTV
+        PRODUCT_BUNDLE_IDENTIFIER: de.amoo71.NSPiOS.tv
+        GENERATE_INFOPLIST_FILE: YES
+        DEFINES_MODULE: NO
+        SKIP_INSTALL: YES
+        CLANG_ENABLE_OBJC_ARC: YES
+        OTHER_LDFLAGS: ["-framework", "UIKit", "-framework", "GameController"]
+        CODE_SIGNING_ALLOWED: NO
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGN_IDENTITY: ""
+
   NSPiOS:
     type: application
     platform: iOS
@@ -59,6 +78,9 @@ targets:
     dependencies:
       - target: NSPiOSNative
         embed: true
+      - target: NSPiOSTV
+        embed: true
+        link: false
       - framework: Vendor/Python.xcframework
         embed: true
     scheme: {}

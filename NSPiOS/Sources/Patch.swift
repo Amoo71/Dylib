@@ -164,14 +164,28 @@ final class PatchedSection: @unchecked Sendable {
 
 /// Titelversion eines Updates aus seiner CNMT-NCA (PFS0 mit <Typ>_<ID>.cnmt: Titel-ID @0, Version @8).
 enum ContentMeta {
-    static func version(fd: Int32, header: NCAHeader) -> UInt32? {
+    struct Info: Sendable {
+        let titleID: UInt64
+        let version: UInt32
+        /// 0x80 Spiel, 0x81 Update (Patch), 0x82 DLC
+        let type: UInt8
+        var isUpdate: Bool { type == 0x81 }
+        /// Titel-ID des Basisspiels (Update: ID − 0x800)
+        var baseTitleID: UInt64 { type == 0x81 ? titleID & ~0x800 : titleID }
+    }
+
+    static func info(fd: Int32, header: NCAHeader) -> Info? {
         for (_, fs, section) in header.sections where fs[2] == 1 || fs[3] == 2 {
             guard let jobs = try? NCAReader.planExeFS(fd: fd, section: section, fsHeader: fs, root: "cnmt"),
                   let cnmt = jobs.first(where: { $0.path.hasSuffix(".cnmt") }),
                   case .section(let s, let offset) = cnmt.source,
                   let data = try? s.read(fd: fd, at: offset, count: 0x10) else { continue }
-            return data.le32(8)
+            return Info(titleID: data.le64(0), version: data.le32(8), type: data[data.startIndex + 0xC])
         }
         return nil
+    }
+
+    static func version(fd: Int32, header: NCAHeader) -> UInt32? {
+        info(fd: fd, header: header)?.version
     }
 }

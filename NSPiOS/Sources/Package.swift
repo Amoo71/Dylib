@@ -278,6 +278,22 @@ enum PackageReader {
         return ExtractResult(fileCount: plan.jobs.count, decryptedCount: plan.decryptedNCAs.count, ncaCount: candidates.count, warnings: plan.warnings)
     }
 
+    /// Was ein Paket enthält (aus seinen CNMT-NCAs): Spiel, Update oder DLC mit Titel-ID und Version.
+    static func contents(of url: URL, keys: KeySet) -> [ContentMeta.Info] {
+        guard keys.headerKey != nil, let info = try? inspect(url) else { return [] }
+        let fd = open(url.path, O_RDONLY)
+        guard fd >= 0 else { return [] }
+        defer { close(fd) }
+        var result: [ContentMeta.Info] = []
+        for entry in info.entries where (info.format == .nsp || entry.path.hasPrefix("secure/"))
+            && entry.name.lowercased().hasSuffix(".cnmt.nca") {
+            guard let header = try? NCAReader.open(fd: fd, ncaOffset: entry.dataOffset, ncaSize: entry.size, keys: keys, tickets: [:]),
+                  let meta = ContentMeta.info(fd: fd, header: header) else { continue }
+            result.append(meta)
+        }
+        return result
+    }
+
     /// Name der Datei, in der ein mit Update entpackter Ordner seine Titelversion vermerkt (dezimal, z. B. 327680).
     static let versionMarker = "nspios-version.txt"
 
