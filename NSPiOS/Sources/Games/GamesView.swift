@@ -138,7 +138,7 @@ struct GamesView: View {
             Label(L("Update / other files", "Update / andere Dateien"), systemImage: "square.and.arrow.down.on.square")
         }
         .disabled(builder.running)
-        Button { logFor = game } label: { Label(L("Build log", "Build-Log"), systemImage: "doc.text.magnifyingglass") }
+        Button { logFor = game } label: { Label(L("Logs", "Logs"), systemImage: "doc.text.magnifyingglass") }
         Divider()
         Button(role: .destructive) { deleteFor = game } label: { Label(L("Delete", "Löschen"), systemImage: "trash") }
             .disabled(isBuilding(game))
@@ -396,6 +396,7 @@ struct GameSettingsSheet: View {
 struct GameLogSheet: View {
     let game: GameEntry
     @Environment(\.dismiss) private var dismiss
+    @State private var kind = 0          // 0 = Spiel-Log (log.txt), 1 = Build-Log
     @State private var text = ""
 
     var body: some View {
@@ -407,7 +408,16 @@ struct GameLogSheet: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding()
             }
-            .navigationTitle(L("Build log", "Build-Log"))
+            .safeAreaInset(edge: .top) {
+                Picker("", selection: $kind) {
+                    Text(L("Game log", "Spiel-Log")).tag(0)
+                    Text(L("Build log", "Build-Log")).tag(1)
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal)
+                .padding(.vertical, 6)
+            }
+            .navigationTitle(game.name)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -419,8 +429,25 @@ struct GameLogSheet: View {
                     }
                 }
             }
-            .task { text = Self.latestLog(game) }
+            .task(id: kind) { text = kind == 0 ? Self.gameLog(game) : Self.latestLog(game) }
         }
+    }
+
+    /// log.txt der Spiel-Shell (Documents des Spiels in LiveContainer) plus Shader-Status.
+    @MainActor
+    static func gameLog(_ game: GameEntry) -> String {
+        let library = GameLibrary.shared
+        var header = "state: \(game.state.rawValue) · shaders captured: \(library.capturedCount(game))/\(game.expectedShaders)"
+        header += " · prepared by LiveContainer: \(library.isPreparedByLiveContainer(game) ? "yes" : "no")\n"
+        guard let docs = library.documents(game) else { return header + "(no LiveContainer data folder)" }
+        header += "data: \(docs.path)\n"
+        if let env = try? String(contentsOf: docs.appendingPathComponent("env.txt"), encoding: .utf8) {
+            header += "env.txt:\n\(env)\n"
+        }
+        guard let log = try? String(contentsOf: docs.appendingPathComponent("log.txt"), encoding: .utf8) else {
+            return header + "(no log.txt yet – start the game once)"
+        }
+        return header + "\n" + (log.count > 80_000 ? "…\n" + String(log.suffix(80_000)) : log)
     }
 
     static func latestLog(_ game: GameEntry) -> String {
