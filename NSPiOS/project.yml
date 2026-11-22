@@ -28,6 +28,8 @@ targets:
         includes: [lz4.c]
       - path: Native
         includes: [zstd_decoder.c]
+        # zstd bringt eine module.modulemap mit; als Modul importiert fehlte ZSTD_STATIC_LINKING_ONLY
+        compilerFlags: ["-fno-modules", "-DZSTD_STATIC_LINKING_ONLY"]
     settings:
       base:
         PRODUCT_NAME: NSPiOSNative

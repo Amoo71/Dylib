@@ -27,6 +27,7 @@ clone capstone "$CAPSTONE_TAG" https://github.com/capstone-engine/capstone
 clone SPIRV-Cross "$SPIRV_TAG" https://github.com/KhronosGroup/SPIRV-Cross
 clone lz4 "$LZ4_TAG" https://github.com/lz4/lz4
 clone zstd "$ZSTD_TAG" https://github.com/facebook/zstd
+rm -f Vendor/zstd/lib/module.modulemap   # sonst importiert Clang zstd.h als Modul, ohne die erweiterten Typen
 
 clone ns2ios-shell "$NS2IOS_TAG" https://github.com/xinerqu/ns2ios-shell
 
