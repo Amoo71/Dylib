@@ -19,7 +19,7 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- gen/Program.cs: the original with Main made internal (callable from Exports.cs); the ORIGINAL files are embedded,
-         so `--source-sha` reports the same digest as the packer's copy (tool_lock.py compares them) -->
+         so the source-sha option reports the same digest as the packer's copy (tool_lock.py compares them) -->
     <Compile Include="gen/Program.cs" />
     <Compile Include="Exports.cs" />
     <EmbeddedResource Include="$(XlateSrc)/Program.cs" LogicalName="src0" />
