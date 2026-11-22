@@ -7,7 +7,8 @@ eigene argv/env/cwd/Ausgabe, frisch importierte Hilfsmodule), spirv-cross läuft
 import contextlib, io, os, runpy, signal, subprocess, sys, traceback
 from pathlib import Path
 
-PY = '/nspios/bin/python3'          # sys.executable für den Packer (es gibt kein echtes Programm)
+# sys.executable bleibt unverändert: Python auf iOS findet seine nativen Module (Frameworks) relativ dazu.
+# Der Packer ruft `[sys.executable, skript.py, ...]` auf – genau das wird erkannt und im Interpreter ausgeführt.
 SPIRV = '/nspios/bin/spirv-cross'   # SPIRV_CROSS für die Shader-Werkzeuge
 
 _installed = False
@@ -24,7 +25,6 @@ def _install():
     if _installed:
         return
     _installed = True
-    sys.executable = PY
     os.environ['SPIRV_CROSS'] = SPIRV
     os.environ['DM_REWRITE_J'] = '1'       # keine fork-Worker (auf iOS nicht möglich)
     os.environ.setdefault('J', '4')
@@ -85,7 +85,7 @@ def _run(cmd, *args, stdin=None, input=None, stdout=None, stderr=None, capture_o
     if capture_output:
         stdout = stderr = subprocess.PIPE
 
-    if prog == PY or base.startswith('python'):
+    if prog == sys.executable or base.startswith('python'):
         rc, out, err = _run_python(argv[1:], cwd, env, stdout, stderr)
     elif prog == SPIRV or base in ('spirv-cross', 'spirv-cross.exe'):
         from nspios_engine import native
