@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import UIKit
 
 /// Ein Programm (Spiel) in einem entpackten Ordner: exefs/ + romfs/ (bei Doppel-Cartridges exefs_<ID>/romfs_<ID>).
 struct GameProgram: Identifiable, Hashable, Sendable {
@@ -132,7 +133,18 @@ final class GameBuilder: ObservableObject {
     func build(_ program: GameProgram, noShaders: Bool, vkCapture: URL? = nil) async throws -> URL {
         guard !running else { throw GameBuilderError.pack(L("A build is already running.", "Es läuft schon ein Build.")) }
         running = true
-        defer { running = false; progress = nil }
+        // Bildschirm an lassen und kurz im Hintergrund weiterarbeiten dürfen (Builds dauern Minuten)
+        UIApplication.shared.isIdleTimerDisabled = true
+        var background = UIBackgroundTaskIdentifier.invalid
+        background = UIApplication.shared.beginBackgroundTask(withName: "NSPiOS build") {
+            UIApplication.shared.endBackgroundTask(background)
+        }
+        defer {
+            running = false
+            progress = nil
+            UIApplication.shared.isIdleTimerDisabled = false
+            UIApplication.shared.endBackgroundTask(background)
+        }
 
         let shell = try await ensureShell()
         progress = L("Preparing packer …", "Bereite Packer vor …")
