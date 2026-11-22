@@ -26,8 +26,8 @@ targets:
         includes: [main.cpp, spirv_cfg.cpp, spirv_cpp.cpp, spirv_cross.cpp, spirv_cross_parsed_ir.cpp, spirv_cross_util.cpp, spirv_glsl.cpp, spirv_hlsl.cpp, spirv_msl.cpp, spirv_parser.cpp, spirv_reflect.cpp]
       - path: Vendor/lz4/lib
         includes: [lz4.c]
-      - path: Vendor/zstd/lib
-        includes: ["common/debug.c", "common/entropy_common.c", "common/error_private.c", "common/fse_decompress.c", "common/xxhash.c", "common/zstd_common.c", "decompress/huf_decompress.c", "decompress/zstd_ddict.c", "decompress/zstd_decompress.c", "decompress/zstd_decompress_block.c"]
+      - path: Native
+        includes: [zstd_decoder.c]
     settings:
       base:
         PRODUCT_NAME: NSPiOSNative
@@ -37,8 +37,8 @@ targets:
         SKIP_INSTALL: YES
         CLANG_CXX_LANGUAGE_STANDARD: gnu++17
         GCC_OPTIMIZATION_LEVEL: "2"
-        GCC_PREPROCESSOR_DEFINITIONS: [CAPSTONE_HAS_ARM64, CAPSTONE_USE_SYS_DYN_MEM, ZSTD_DISABLE_ASM]
-        HEADER_SEARCH_PATHS: ["$(PROJECT_DIR)/Vendor/capstone/include", "$(PROJECT_DIR)/Vendor/capstone", "$(PROJECT_DIR)/Vendor/SPIRV-Cross", "$(PROJECT_DIR)/Vendor/lz4/lib", "$(PROJECT_DIR)/Vendor/zstd/lib", "$(PROJECT_DIR)/Vendor/zstd/lib/common"]
+        GCC_PREPROCESSOR_DEFINITIONS: [CAPSTONE_HAS_ARM64, CAPSTONE_USE_SYS_DYN_MEM]
+        HEADER_SEARCH_PATHS: ["$(PROJECT_DIR)/Vendor/capstone/include", "$(PROJECT_DIR)/Vendor/capstone", "$(PROJECT_DIR)/Vendor/SPIRV-Cross", "$(PROJECT_DIR)/Vendor/lz4/lib"]
         GCC_WARN_INHIBIT_ALL_WARNINGS: YES
         CODE_SIGNING_ALLOWED: NO
         CODE_SIGNING_REQUIRED: NO
