@@ -112,6 +112,9 @@ jobs:
           xcrun simctl install "$DEVICE" "$APP"
           xcrun simctl launch --console-pty "$DEVICE" de.amoo71.NSPiOS -nspios-selftest 2>&1 | tee selftest.log || true
           grep -q "NSPIOS_SELFTEST_OK" selftest.log
+          # Packer-Probe: Shell laden, Packer vorbereiten, Fake-Spiel bis nach dem Entpacken
+          xcrun simctl launch --console-pty "$DEVICE" de.amoo71.NSPiOS -nspios-packtest 2>&1 | tee packtest.log || true
+          grep -q "NSPIOS_PACKTEST_OK" packtest.log
 
       - name: Crash-Reports und System-Log sammeln (bei Fehler)
         if: failure()
@@ -129,6 +132,7 @@ jobs:
           path: |
             NSPiOS/build-sim.log
             NSPiOS/selftest.log
+            NSPiOS/packtest.log
             NSPiOS/diag/
           if-no-files-found: ignore
 

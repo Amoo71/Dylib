@@ -7,5 +7,7 @@ Payload/
 # Engine-Abhängigkeiten (werden von scripts/fetch_deps.sh geladen)
 Vendor/
 py/capstone/
+py/packer/
 build-sim/
 selftest.log
+__pycache__/

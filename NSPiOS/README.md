@@ -64,3 +64,11 @@ NSPiOS/
     ├── FS.swift             # Dateisystem-Hilfen
     └── Package.swift        # NSP (PFS0) + XCI (HFS0) Parser & schneller Entpacker
 ```
+
+## Spiele bauen (experimentell)
+
+NSPiOS enthält eine eingebettete Python-Engine (CPython 3.13 für iOS, capstone, SPIRV-Cross, lz4) und den Packer von
+[ns2ios-shell](https://github.com/xinerqu/ns2ios-shell) (MIT, auf Basis von [nxnative](https://github.com/seedds/nxnative)).
+Aus einem mit NSPiOS entpackten Ordner (`exefs/` + `romfs/`, mit deinen eigenen Keys) wird auf dem Gerät eine
+spielbare nxnative-App gebaut. Unterstützt: Super Mario Galaxy 2 und Super Mario Galaxy. Es sind keine Spieldaten,
+Keys oder Spiel-Code im Repo oder in der App.

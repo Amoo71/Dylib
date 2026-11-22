@@ -64,6 +64,8 @@ struct FolderView: View {
     @State private var loaded = false
     @State private var confirmDelete = false
     @State private var watcher: DirectoryWatcher?
+    @State private var programs: [GameProgram] = []
+    @State private var showBuild = false
 
     private var totalSize: Int64 { items.reduce(0) { $0 + $1.size } }
 
@@ -123,6 +125,11 @@ struct FolderView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Menu {
+                    if !programs.isEmpty {
+                        Button { showBuild = true } label: {
+                            Label(L("Build game", "Spiel bauen"), systemImage: "gamecontroller.fill")
+                        }
+                    }
                     Button { store.extractRomFS(from: url) } label: {
                         Label(L("Extract RomFS", "RomFS entpacken"), systemImage: "cube.transparent")
                     }
@@ -148,6 +155,10 @@ struct FolderView: View {
                 dismiss()
             }
         }
+        .sheet(isPresented: $showBuild) {
+            BuildGameSheet(programs: programs)
+                .presentationDetents([.medium, .large])
+        }
         .refreshable { await load() }
         .onAppear {
             // Änderungen in diesem Ordner (auch aus der Dateien-App) sofort übernehmen
@@ -164,7 +175,10 @@ struct FolderView: View {
 
     private func load() async {
         let folder = url
-        let result = await Task.detached(priority: .userInitiated) { FS.list(folder) }.value
+        let (result, found) = await Task.detached(priority: .userInitiated) {
+            (FS.list(folder), GameBuilder.findPrograms(in: folder))
+        }.value
+        programs = found
         withAnimation(.smooth) {
             items = result
             loaded = true

@@ -101,6 +101,12 @@ struct RootView: View {
 /// `-nspios-selftest`: Engine-Selbsttest ausgeben und beenden (für CI im Simulator).
 enum EngineSelfTest {
     static func runFromLaunchArgumentIfRequested() async {
+        if ProcessInfo.processInfo.arguments.contains("-nspios-packtest") {
+            let output = await GameBuilder.smokeTest()
+            FileHandle.standardOutput.write(Data((output + "\n").utf8))
+            fflush(stdout)
+            exit(0)
+        }
         guard ProcessInfo.processInfo.arguments.contains("-nspios-selftest") else { return }
         let line: String
         FileHandle.standardOutput.write(Data("[selftest] start (native: \(PythonEngine.nativeLibraryPath ?? "missing"))\n".utf8))
