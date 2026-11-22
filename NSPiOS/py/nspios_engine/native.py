@@ -100,4 +100,15 @@ def dmsh_xlate(args):
             err = f.read()
         os.remove(out_path)
         os.remove(err_path)
+    # Falls .NET doch über NSLog schreibt ("2026-01-01 12:00:00.000 NSPiOS[1:2] text"): Präfix entfernen, und
+    # Ausgaben ohne [RED] als stdout werten (dort erwartet der Packer z. B. die Quell-Prüfsumme).
+    import re
+    nslog = re.compile(r'^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d+ \S+\[\d+:\d+\] ')
+    if any(nslog.match(l) for l in err.splitlines()):
+        lines = [nslog.sub('', l) for l in err.splitlines()]
+        if not out.strip():
+            out = ''.join(l + '\n' for l in lines if not l.startswith('[RED]'))
+            err = ''.join(l + '\n' for l in lines if l.startswith('[RED]'))
+        else:
+            err = ''.join(l + '\n' for l in lines)
     return rc, out, err
