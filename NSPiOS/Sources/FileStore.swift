@@ -93,6 +93,8 @@ final class FileStore: ObservableObject {
         var update: URL? = nil
         /// Nach erfolgreichem Zusammenführen: Ordner des Ergebnisses (z. B. Spiel neu bauen).
         var then: (@MainActor @Sendable (URL) -> Void)? = nil
+        /// Ohne Basispaket: unveränderte Daten aus dem RomFS-Ordner des installierten Spiels.
+        var installedRomFS: URL? = nil
     }
 
     private var pending: [PendingExtraction] = []
@@ -268,7 +270,18 @@ final class FileStore: ObservableObject {
             let library = GameLibrary.shared
             if let game = library.game(tidHex), (game.version ?? 0) >= update.version { continue }
             let name = GameBuilder.profileIndex[tidHex]?.name ?? tidHex
+            let then: @MainActor @Sendable (URL) -> Void = { folder in
+                self.finishUpdate(tidHex: tidHex, folder: folder)
+            }
             guard let baseURL = metas.first(where: { $0.value.contains { $0.type == 0x80 && $0.titleID == tid } })?.key else {
+                // Kein Basispaket mehr: das installierte Spiel liefert die unveränderten Daten (geprüft per Prüfsummen)
+                if let game = library.game(tidHex), let app = library.installedApp(game),
+                   FileManager.default.fileExists(atPath: app.appendingPathComponent("romfs").path) {
+                    toast = L("Update v\(update.version) for \(name) – installing on the installed game",
+                              "Update v\(update.version) für \(name) – wird aufs installierte Spiel gespielt")
+                    enqueueUpdateOnInstalled(update: updateURL, installedRomFS: app.appendingPathComponent("romfs"), then: then)
+                    continue
+                }
                 alert = AlertMessage(
                     title: L("Update found", "Update erkannt"),
                     message: L("\(name) v\(update.version): the base game is missing. Import the base game's NSP/XCI as well – then NSPiOS continues on its own.",
@@ -276,25 +289,32 @@ final class FileStore: ObservableObject {
                 continue
             }
             toast = L("Update v\(update.version) for \(name) – installing", "Update v\(update.version) für \(name) – wird eingespielt")
-            let extracted = extractedDir
-            enqueueMerged(base: baseURL, update: updateURL) { folder in
-                guard let program = GameBuilder.findPrograms(in: folder).first(where: { $0.titleID == tidHex }) else { return }
-                Task { @MainActor in
-                    if let game = library.game(tidHex) {
-                        let oldFolder = URL(fileURLWithPath: game.exefsPath).deletingLastPathComponent().standardizedFileURL
-                        await library.update(game, with: program)
-                        // alten (Basis-)Ordner aufräumen, wenn das Spiel jetzt aus dem neuen gebaut ist
-                        if library.game(tidHex)?.state != .failed,
-                           UserDefaults.standard.bool(forKey: GameLibrary.cleanAfterBuildKey),
-                           oldFolder != folder.standardizedFileURL,
-                           oldFolder.deletingLastPathComponent().standardizedFileURL == extracted.standardizedFileURL {
-                            try? FileManager.default.removeItem(at: oldFolder)
-                            self.refresh()
-                        }
-                    } else if program.isSupported {
-                        await library.add(program)
-                    }
+            enqueueMerged(base: baseURL, update: updateURL, then: then)
+        }
+    }
+
+    /// Nach dem Zusammenführen: Spiel neu bauen (Spielstände bleiben) bzw. hinzufügen, alten Ordner aufräumen.
+    func finishUpdate(tidHex: String, folder: URL) {
+        let library = GameLibrary.shared
+        let extracted = extractedDir
+        guard let program = GameBuilder.findPrograms(in: folder).first(where: { $0.titleID == tidHex }) else {
+            library.errorMessage = L("The merged folder holds no program for this game.", "Im zusammengeführten Ordner ist kein Programm für dieses Spiel.")
+            return
+        }
+        Task { @MainActor in
+            if let game = library.game(tidHex) {
+                let oldFolder = URL(fileURLWithPath: game.exefsPath).deletingLastPathComponent().standardizedFileURL
+                await library.update(game, with: program)
+                // alten Ordner aufräumen, wenn das Spiel jetzt aus dem neuen gebaut ist
+                if library.game(tidHex)?.state != .failed,
+                   UserDefaults.standard.bool(forKey: GameLibrary.cleanAfterBuildKey),
+                   oldFolder != folder.standardizedFileURL,
+                   oldFolder.deletingLastPathComponent().standardizedFileURL == extracted.standardizedFileURL {
+                    try? FileManager.default.removeItem(at: oldFolder)
+                    self.refresh()
                 }
+            } else if program.isSupported {
+                await library.add(program)
             }
         }
     }
@@ -384,6 +404,17 @@ final class FileStore: ObservableObject {
     }
 
     /// Basisspiel + Update entpacken: RomFS mit eingespieltem Update, ExeFS aus dem Update.
+    /// Update direkt auf das installierte Spiel (ohne Basispaket).
+    func enqueueUpdateOnInstalled(update: URL, installedRomFS: URL, then: (@MainActor @Sendable (URL) -> Void)? = nil) {
+        guard keyCount > 0 else { return }
+        pending.append(PendingExtraction(
+            source: update, securityScoped: false, deleteSource: false,
+            options: PackageReader.ExtractOptions(), update: update, then: then, installedRomFS: installedRomFS
+        ))
+        queuedCount = pending.count
+        startNextIfIdle()
+    }
+
     func enqueueMerged(base: URL, update: URL, then: (@MainActor @Sendable (URL) -> Void)? = nil) {
         guard keyCount > 0 else {
             alert = AlertMessage(
@@ -469,7 +500,10 @@ final class FileStore: ObservableObject {
     }
 
     private func startMergedJob(_ next: PendingExtraction, update: URL, flag: CancelFlag) {
-        let baseName = next.source.deletingPathExtension().lastPathComponent + " + Update"
+        let installedRomFS = next.installedRomFS
+        let baseName = installedRomFS != nil
+            ? update.deletingPathExtension().lastPathComponent
+            : next.source.deletingPathExtension().lastPathComponent + " + Update"
         let finalURL = FS.uniqueURL(in: extractedDir, fileName: baseName, isDirectory: true)
         let partURL = extractedDir.appendingPathComponent(finalURL.lastPathComponent + ".part", isDirectory: true)
         let source = next.source
@@ -485,8 +519,10 @@ final class FileStore: ObservableObject {
             do {
                 guard let keys = KeyStore.load() else { throw NCAError.missingKey("header_key") }
                 try? FileManager.default.removeItem(at: partURL)
-                let result = try PackageReader.extractMerged(base: source, update: update, to: partURL,
-                                                             keys: keys, cancel: flag, progress: report)
+                let result = try installedRomFS.map {
+                    try PackageReader.extractUpdate(update, onto: $0, to: partURL, keys: keys, cancel: flag, progress: report)
+                } ?? PackageReader.extractMerged(base: source, update: update, to: partURL,
+                                                 keys: keys, cancel: flag, progress: report)
                 try FileManager.default.moveItem(at: partURL, to: finalURL)
                 outcome = .success(result)
             } catch {

@@ -31,11 +31,17 @@ struct InstallUpdateSheet: View {
                     .listRowBackground(Theme.rowBackground)
                 } else {
                     Section {
-                        statusRow(ok: base != nil,
-                                  title: base?.name ?? L("Base game missing", "Basisspiel fehlt"),
-                                  detail: base != nil ? L("Base game", "Basisspiel")
-                                                      : L("Import the base game's NSP/XCI in Packages – the update only holds changes.",
-                                                          "Importiere das NSP/XCI des Basisspiels unter Pakete – das Update enthält nur Änderungen."))
+                        if let base {
+                            statusRow(ok: true, title: base.name, detail: L("Base game", "Basisspiel"))
+                        } else if installedRomFS != nil {
+                            statusRow(ok: true, title: L("Installed game", "Installiertes Spiel"),
+                                      detail: L("No base package needed: the unchanged data comes from the installed game and is checked against the update's hashes.",
+                                                "Kein Basispaket nötig: unveränderte Daten kommen aus dem installierten Spiel und werden gegen die Prüfsummen des Updates geprüft."))
+                        } else {
+                            statusRow(ok: false, title: L("Base game missing", "Basisspiel fehlt"),
+                                      detail: L("Import the base game's NSP/XCI in Packages – the update only holds changes.",
+                                                "Importiere das NSP/XCI des Basisspiels unter Pakete – das Update enthält nur Änderungen."))
+                        }
                     }
                     .listRowBackground(Theme.rowBackground)
 
@@ -61,7 +67,7 @@ struct InstallUpdateSheet: View {
                                 }
                             }
                             .tint(.primary)
-                            .disabled(base == nil || store.job != nil)
+                            .disabled((base == nil && installedRomFS == nil) || store.job != nil)
                         }
                     } header: {
                         Text(L("Updates", "Updates"))
@@ -120,16 +126,20 @@ struct InstallUpdateSheet: View {
         scanning = false
     }
 
+    /// RomFS-Ordner des installierten Spiels (Basisdaten, wenn kein Basispaket mehr da ist).
+    private var installedRomFS: URL? {
+        guard let app = GameLibrary.shared.installedApp(game) else { return nil }
+        let romfs = app.appendingPathComponent("romfs")
+        return FileManager.default.fileExists(atPath: romfs.path) ? romfs : nil
+    }
+
     private func install(_ found: Found) {
-        guard let base else { return }
-        let entry = game
-        store.enqueueMerged(base: base.url, update: found.item.url) { folder in
-            guard let program = GameBuilder.findPrograms(in: folder).first(where: { $0.titleID == entry.titleID }) else {
-                GameLibrary.shared.errorMessage = L("The merged folder holds no program for this game.",
-                                                    "Im zusammengeführten Ordner ist kein Programm für dieses Spiel.")
-                return
-            }
-            Task { await GameLibrary.shared.update(GameLibrary.shared.game(entry.titleID) ?? entry, with: program) }
+        let tid = game.titleID
+        let then: @MainActor @Sendable (URL) -> Void = { [store] folder in store.finishUpdate(tidHex: tid, folder: folder) }
+        if let base {
+            store.enqueueMerged(base: base.url, update: found.item.url, then: then)
+        } else if let romfs = installedRomFS {
+            store.enqueueUpdateOnInstalled(update: found.item.url, installedRomFS: romfs, then: then)
         }
         dismiss()
     }

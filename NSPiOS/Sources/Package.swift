@@ -409,6 +409,12 @@ enum PackageReader {
         return ExtractResult(fileCount: jobs.count, decryptedCount: programIndex, ncaCount: jobs.count, warnings: warnings)
     }
 
+    /// Für andere Dateien (Update auf installiertes Spiel).
+    static func runJobs(_ jobs: [CopyJob], fds: [Int32], destination: URL, cancel: CancelFlag,
+                        progress: @escaping (_ done: UInt64, _ total: UInt64, _ currentFile: String) -> Void) throws {
+        try run(jobs, fds: fds, destination: destination, cancel: cancel, progress: progress)
+    }
+
     // MARK: - Ausführen
 
     private static func run(

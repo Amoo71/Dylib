@@ -20,8 +20,14 @@ final class PatchedSection: @unchecked Sendable {
         let generation: UInt32
     }
 
-    let base: NCASection
-    let baseFile: Int
+    /// Woher die unveränderten Teile kommen: Basis-NCA, aus den Dateien des installierten Spiels rekonstruiert, oder (noch) nicht verfügbar.
+    enum BaseSource {
+        case nca(NCASection, file: Int)
+        case files(ReconstructedBase)
+        case none
+    }
+
+    var baseSource: BaseSource
     let patch: NCASection
     let patchFile: Int
     let size: UInt64
@@ -30,9 +36,12 @@ final class PatchedSection: @unchecked Sendable {
 
     private static let nodeSize = 0x4000
 
-    init(base: NCASection, baseFile: Int, patch: NCASection, patchFile: Int, patchFS fs: Data, fds: [Int32]) throws {
-        self.base = base
-        self.baseFile = baseFile
+    convenience init(base: NCASection, baseFile: Int, patch: NCASection, patchFile: Int, patchFS fs: Data, fds: [Int32]) throws {
+        try self.init(baseSource: .nca(base, file: baseFile), patch: patch, patchFile: patchFile, patchFS: fs, fds: fds)
+    }
+
+    init(baseSource: BaseSource, patch: NCASection, patchFile: Int, patchFS fs: Data, fds: [Int32]) throws {
+        self.baseSource = baseSource
         self.patch = patch
         self.patchFile = patchFile
 
@@ -118,11 +127,42 @@ final class PatchedSection: @unchecked Sendable {
             if entry.fromPatch {
                 try readPatch(fd: fds[patchFile], at: physical, into: out + done, count: chunk)
             } else {
-                let data = try base.read(fd: fds[baseFile], at: physical, count: chunk)
-                data.withUnsafeBytes { out.advanced(by: done).copyMemory(from: $0.baseAddress!, byteCount: chunk) }
+                switch baseSource {
+                case .nca(let base, let file):
+                    let data = try base.read(fd: fds[file], at: physical, count: chunk)
+                    data.withUnsafeBytes { out.advanced(by: done).copyMemory(from: $0.baseAddress!, byteCount: chunk) }
+                case .files(let reconstructed):
+                    try reconstructed.read(at: physical, into: out + done, count: chunk)
+                case .none:
+                    throw NCAError.baseUnavailable
+                }
             }
             done += chunk
         }
+    }
+
+    struct Fragment {
+        let virtual: UInt64
+        let length: UInt64
+        let fromPatch: Bool
+        let physical: UInt64
+    }
+
+    /// Aus welchen Stücken (Update oder Basis, mit physischem Offset) ein virtueller Bereich besteht.
+    func fragments(at position: UInt64, count: UInt64) -> [Fragment] {
+        var result: [Fragment] = []
+        var v = position
+        let end = min(position + count, size)
+        while v < end {
+            let i = lastIndex(relocations, atOrBelow: v) { $0.virtual }
+            let entry = relocations[i]
+            let segmentEnd = min(i + 1 < relocations.count ? relocations[i + 1].virtual : size, end)
+            guard segmentEnd > v else { break }
+            result.append(Fragment(virtual: v, length: segmentEnd - v, fromPatch: entry.fromPatch,
+                                   physical: entry.physical + (v - entry.virtual)))
+            v = segmentEnd
+        }
+        return result
     }
 
     func read(fds: [Int32], at position: UInt64, count: Int) throws -> Data {

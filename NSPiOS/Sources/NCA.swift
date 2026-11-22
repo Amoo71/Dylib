@@ -84,6 +84,8 @@ enum NCAError: LocalizedError {
     case compressed
     case compressedSection
     case missingBase(String)
+    case baseUnavailable
+    case updateNeedsBase(String)
 
     var errorDescription: String? {
         switch self {
@@ -99,6 +101,11 @@ enum NCAError: LocalizedError {
             return L("NCZ (compressed) – RomFS needs .nca.", "NCZ (komprimiert) – RomFS nur aus .nca.")
         case .compressedSection:
             return L("This NCA uses compressed/sparse storage – not supported yet.", "Diese NCA nutzt komprimierten/sparse Speicher – noch nicht unterstützt.")
+        case .baseUnavailable:
+            return L("This part of the update needs the base game's package.", "Dieser Teil des Updates braucht das Paket des Basisspiels.")
+        case .updateNeedsBase(let why):
+            return L("The update can't be applied to the installed game alone (\(why)). Import the base game's NSP/XCI once.",
+                     "Das Update lässt sich nicht allein auf das installierte Spiel anwenden (\(why)). Importiere einmal das NSP/XCI des Basisspiels.")
         case .missingBase(let tid):
             return L("The base game for \(tid) is missing (the update only holds changes).", "Das Basisspiel für \(tid) fehlt (das Update enthält nur Änderungen).")
         }
