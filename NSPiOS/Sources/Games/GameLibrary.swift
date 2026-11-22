@@ -44,11 +44,14 @@ struct GameEntry: Codable, Identifiable, Hashable {
     var builtAt: Date?
     /// Anzahl der Shader, mit denen die installierte Version gebaut wurde.
     var builtShaders: Int?
+    /// Titelversion der Spieldateien (nil/0 = Basisspiel).
+    var version: UInt32?
 
     var id: String { titleID }
     var bundleName: String { "NSPiOS-\(titleID).app" }
     var program: GameProgram {
-        GameProgram(titleID: titleID, exefs: URL(fileURLWithPath: exefsPath), romfs: URL(fileURLWithPath: romfsPath))
+        GameProgram(titleID: titleID, exefs: URL(fileURLWithPath: exefsPath), romfs: URL(fileURLWithPath: romfsPath),
+                    version: version ?? 0)
     }
 }
 
@@ -156,6 +159,7 @@ final class GameLibrary: ObservableObject {
             expectedShaders: Self.expectedShaderCount(program.titleID))
         entry.exefsPath = program.exefs.path
         entry.romfsPath = program.romfs.path
+        entry.version = program.version
         entry.state = .building
         entry.lastError = nil
         save(entry)
@@ -424,11 +428,21 @@ final class GameLibrary: ObservableObject {
         do { try writeEnvironment(entry) } catch { errorMessage = error.localizedDescription }
     }
 
-    private func writeEnvironment(_ entry: GameEntry) throws {
+    /// Präfix für Einstellungen, die nur beim Spielen auf dem Fernseher gelten (TV-Modus).
+    static let tvPrefix = "TV:"
+
+    private func writeEnvironment(_ entry: GameEntry, tv: Bool = false) throws {
         guard let docs = documents(entry) else { return }
         let fm = FileManager.default
         try fm.createDirectory(at: docs, withIntermediateDirectories: true)
-        var lines = entry.settings.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }
+        var values = entry.settings.filter { !$0.key.hasPrefix(Self.tvPrefix) }
+        if tv {
+            // TV-Modus: eigene Werte des Spiels für den Fernseher gehen vor (Docked schaltet die Shell selbst)
+            for (key, value) in entry.settings where key.hasPrefix(Self.tvPrefix) {
+                values[String(key.dropFirst(Self.tvPrefix.count))] = value
+            }
+        }
+        var lines = values.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }
         // Shader-Aufnahme immer an: in der Aufnahme-Version für den Fertigbau, in der fertigen Version für Shader,
         // die erst später im Spiel entstehen (Neubau übernimmt sie dann).
         if entry.program.needsCapture {
@@ -483,12 +497,12 @@ final class GameLibrary: ObservableObject {
 
     // MARK: - Starten / Löschen
 
-    func launch(_ entry: GameEntry) {
+    func launch(_ entry: GameEntry, tv: Bool = false) {
         guard installedApp(entry) != nil else {
             errorMessage = L("The game is not installed in LiveContainer.", "Das Spiel ist nicht in LiveContainer installiert.")
             return
         }
-        try? writeEnvironment(entry)
+        try? writeEnvironment(entry, tv: tv)
         guard isPreparedByLiveContainer(entry) else {
             errorMessage = L("First start: open LiveContainer and tap „\(entry.name)“ in its app list. LiveContainer signs the game once – after that, Play works from NSPiOS.",
                              "Erster Start: Öffne LiveContainer und tippe dort in der App-Liste auf „\(entry.name)“. LiveContainer signiert das Spiel einmalig – danach startet es direkt aus NSPiOS.")
@@ -534,6 +548,7 @@ final class GameLibrary: ObservableObject {
         var entry = entry
         entry.exefsPath = program.exefs.path
         entry.romfsPath = program.romfs.path
+        entry.version = program.version
         save(entry)
         await buildAndInstall(entry, final: !entry.program.needsCapture || capturedCount(entry) > 0)
     }

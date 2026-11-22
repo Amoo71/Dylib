@@ -13,6 +13,8 @@ struct NCASection: Sendable {
     let key: Data
     /// Obere 8 Byte des CTR-Zählers.
     let counterHigh: [UInt8]
+    /// Update-Patch-Section (AES-CTR-Ex + BKTR): nur zusammen mit dem Basisspiel lesbar.
+    var isPatch = false
 
     /// IV für eine (16-Byte-ausgerichtete) Position innerhalb der NCA.
     func iv(atNCAOffset position: UInt64) -> [UInt8] {
@@ -53,6 +55,8 @@ struct CopyJob: Sendable {
         case raw(UInt64)
         /// Entschlüsselte Daten ab Offset innerhalb einer NCA-Section.
         case section(NCASection, UInt64)
+        /// Daten des gepatchten RomFS (Basisspiel + Update) ab virtuellem Offset.
+        case patched(PatchedSection, UInt64)
     }
 
     let path: String
@@ -78,6 +82,8 @@ enum NCAError: LocalizedError {
     case missingTicket
     case personalizedTicket
     case compressed
+    case compressedSection
+    case missingBase(String)
 
     var errorDescription: String? {
         switch self {
@@ -91,6 +97,10 @@ enum NCAError: LocalizedError {
             return L("Personalized ticket – not supported.", "Personalisiertes Ticket – nicht unterstützt.")
         case .compressed:
             return L("NCZ (compressed) – RomFS needs .nca.", "NCZ (komprimiert) – RomFS nur aus .nca.")
+        case .compressedSection:
+            return L("This NCA uses compressed/sparse storage – not supported yet.", "Diese NCA nutzt komprimierten/sparse Speicher – noch nicht unterstützt.")
+        case .missingBase(let tid):
+            return L("The base game for \(tid) is missing (the update only holds changes).", "Das Basisspiel für \(tid) fehlt (das Update enthält nur Änderungen).")
         }
     }
 }
@@ -182,12 +192,13 @@ enum NCAReader {
             let counterHigh = (0..<8).map { fs[0x140 + 7 - $0] }
 
             let encrypted: Bool
+            var isPatch = false
             switch encryption {
             case 1: encrypted = false
             case 3: encrypted = true
             case 4:
-                warnings.append(L("Section \(i): update patch (BKTR) needs the base game – skipped.", "Section \(i): Update-Patch (BKTR) braucht das Basisspiel – übersprungen."))
-                continue
+                encrypted = true
+                isPatch = true
             default:
                 warnings.append(L("Section \(i): encryption type \(encryption) not supported – skipped.", "Section \(i): Verschlüsselungstyp \(encryption) nicht unterstützt – übersprungen."))
                 continue
@@ -199,7 +210,8 @@ enum NCAReader {
                 size: end - start,
                 encrypted: encrypted,
                 key: contentKey,
-                counterHigh: counterHigh
+                counterHigh: counterHigh,
+                isPatch: isPatch
             )))
         }
         return NCAHeader(contentType: contentType, titleID: titleID, sections: sections, warnings: warnings)
@@ -208,6 +220,31 @@ enum NCAReader {
     // MARK: - RomFS
 
     static func planRomFS(fd: Int32, section: NCASection, fsHeader fs: Data, root: String) throws -> [CopyJob] {
+        try planRomFS(fsHeader: fs, root: root,
+                      read: { try section.read(fd: fd, at: $0, count: $1) },
+                      source: { .section(section, $0) })
+    }
+
+    /// Gepatchtes RomFS (Basisspiel + Update): Tabellen und Dateien kommen aus dem zusammengesetzten Strom.
+    static func planRomFS(patched: PatchedSection, fds: [Int32], fsHeader fs: Data, root: String) throws -> [CopyJob] {
+        try planRomFS(fsHeader: fs, root: root,
+                      read: { try patched.read(fds: fds, at: $0, count: $1) },
+                      source: { .patched(patched, $0) })
+    }
+
+    static func checkPlainStorage(_ fs: Data) throws {
+        // Sparse (0x148) oder Kompression (0x178): eigene Bucket-Tree-Schichten, die hier fehlen
+        // wie LibHac: Sparse-Schicht bei Generation ≠ 0, Kompression bei Tabelle mit Offset und Größe
+        let sparseGeneration = fs.count >= 0x172 ? UInt16(fs[fs.startIndex + 0x170]) | UInt16(fs[fs.startIndex + 0x171]) << 8 : 0
+        if fs.count >= 0x1A0, sparseGeneration != 0 || (fs.le64(0x178) != 0 && fs.le64(0x180) != 0) {
+            throw NCAError.compressedSection
+        }
+    }
+
+    private static func planRomFS(fsHeader fs: Data, root: String,
+                                  read: (UInt64, Int) throws -> Data,
+                                  source: (UInt64) -> CopyJob.Source) throws -> [CopyJob] {
+        try checkPlainStorage(fs)
         // Position der RomFS-Daten in der Section
         let romfsOffset: UInt64
         switch fs[3] {
@@ -227,15 +264,15 @@ enum NCAReader {
             throw PackageError.corruptHeader("unbekannter RomFS-Hashtyp \(fs[3])")
         }
 
-        let header = try section.read(fd: fd, at: romfsOffset, count: 0x50)
+        let header = try read(romfsOffset, 0x50)
         let dirMetaOffset = header.le64(24), dirMetaSize = header.le64(32)
         let fileMetaOffset = header.le64(56), fileMetaSize = header.le64(64)
         let fileDataOffset = header.le64(72)
         let limit: UInt64 = 256 * 1024 * 1024
         guard dirMetaSize < limit, fileMetaSize < limit else { throw PackageError.corruptHeader("RomFS-Tabellen zu groß") }
 
-        let dirs = try section.read(fd: fd, at: romfsOffset + dirMetaOffset, count: Int(dirMetaSize))
-        let files = try section.read(fd: fd, at: romfsOffset + fileMetaOffset, count: Int(fileMetaSize))
+        let dirs = try read(romfsOffset + dirMetaOffset, Int(dirMetaSize))
+        let files = try read(romfsOffset + fileMetaOffset, Int(fileMetaSize))
         let none: UInt32 = 0xFFFF_FFFF
 
         func name(in table: Data, at offset: Int, lengthAt: Int) -> String? {
@@ -265,7 +302,7 @@ enum NCAReader {
                     jobs.append(CopyJob(
                         path: path + "/" + sanitizeComponent(fileName),
                         size: size,
-                        source: .section(section, romfsOffset + fileDataOffset + dataOffset)
+                        source: source(romfsOffset + fileDataOffset + dataOffset)
                     ))
                 }
                 fileOffset = files.le32(f + 4)

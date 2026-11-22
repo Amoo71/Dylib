@@ -72,6 +72,11 @@ private struct ItemActions: ViewModifier {
                     Button { store.enqueueExtraction(of: item.url) } label: {
                         Label(L("Extract", "Entpacken"), systemImage: "arrow.down.to.line")
                     }
+                    if store.packages.count > 1 {
+                        Button { store.mergeBase = item } label: {
+                            Label(L("Extract with update…", "Mit Update entpacken …"), systemImage: "arrow.triangle.merge")
+                        }
+                    }
                     Button { store.inspected = item } label: {
                         Label(L("Contents", "Inhalt"), systemImage: "list.bullet.rectangle")
                     }

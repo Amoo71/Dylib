@@ -278,6 +278,121 @@ enum PackageReader {
         return ExtractResult(fileCount: plan.jobs.count, decryptedCount: plan.decryptedNCAs.count, ncaCount: candidates.count, warnings: plan.warnings)
     }
 
+    /// Name der Datei, in der ein mit Update entpackter Ordner seine Titelversion vermerkt (dezimal, z. B. 327680).
+    static let versionMarker = "nspios-version.txt"
+
+    /// Basisspiel + Update zu einem Ordner im Update-Stand entpacken (ExeFS/Control aus dem Update, RomFS gepatcht).
+    static func extractMerged(
+        base baseURL: URL,
+        update updateURL: URL,
+        to destination: URL,
+        keys: KeySet,
+        cancel: CancelFlag,
+        progress: @escaping (_ done: UInt64, _ total: UInt64, _ currentFile: String) -> Void
+    ) throws -> ExtractResult {
+        guard keys.headerKey != nil else { throw NCAError.missingKey("header_key") }
+        let baseInfo = try inspect(baseURL)
+        let updateInfo = try inspect(updateURL)
+
+        var fds: [Int32] = []
+        defer { fds.forEach { close($0) } }
+        for url in [baseURL, updateURL] {
+            let fd = open(url.path, O_RDONLY)
+            guard fd >= 0 else { throw posixError() }
+            _ = fcntl(fd, F_RDAHEAD, 1)
+            fds.append(fd)
+        }
+
+        func candidates(_ info: PackageInfo, file: Int) -> [NCACandidate] {
+            info.entries
+                .filter { info.format == .nsp || $0.path.hasPrefix("secure/") }
+                .filter { $0.name.lowercased().hasSuffix(".nca") }
+                .map { NCACandidate(name: $0.name, path: $0.path, file: file, offset: $0.dataOffset, size: $0.size) }
+        }
+        var tickets: [Data: Data] = [:]
+        for (info, fd) in [(baseInfo, fds[0]), (updateInfo, fds[1])] {
+            for entry in info.entries where entry.name.lowercased().hasSuffix(".tik") && entry.size <= 0x10000 {
+                if let data = readFully(fd, offset: entry.dataOffset, count: Int(entry.size)),
+                   let ticket = try? NCAReader.parseTicket(data) {
+                    tickets[ticket.rightsID] = ticket.encryptedTitleKey
+                }
+            }
+        }
+
+        var warnings: [String] = []
+        // RomFS-Sections der Basis-Programme
+        var baseRomFS: [UInt64: NCASection] = [:]
+        for c in candidates(baseInfo, file: 0) where !c.name.lowercased().hasSuffix(".cnmt.nca") {
+            do {
+                let header = try NCAReader.open(fd: fds[0], ncaOffset: c.offset, ncaSize: c.size, keys: keys, tickets: tickets)
+                guard header.isProgram else { continue }
+                for (_, fs, section) in header.sections where fs[2] == 0 && !section.isPatch {
+                    baseRomFS[header.titleID] = section
+                }
+            } catch {
+                warnings.append("\(c.name): \(error.localizedDescription)")
+            }
+        }
+        func baseSection(for titleID: UInt64) -> NCASection? {
+            baseRomFS[titleID] ?? baseRomFS[titleID & ~0x800] ?? (baseRomFS.count == 1 ? baseRomFS.values.first : nil)
+        }
+
+        var jobs: [CopyJob] = []
+        var usedPaths = Set<String>()
+        var version: UInt32?
+        var programIndex = 0
+        for c in candidates(updateInfo, file: 1) {
+            let header: NCAHeader
+            do {
+                header = try NCAReader.open(fd: fds[1], ncaOffset: c.offset, ncaSize: c.size, keys: keys, tickets: tickets)
+            } catch {
+                warnings.append("\(c.name): \(error.localizedDescription)")
+                continue
+            }
+            if c.name.lowercased().hasSuffix(".cnmt.nca") {
+                version = version ?? ContentMeta.version(fd: fds[1], header: header)
+                continue
+            }
+            let titleHex = String(format: "%016llx", header.titleID & ~0x800)
+            var planned: [CopyJob] = []
+            if header.isProgram {
+                let suffix = programIndex == 0 ? "" : "_\(titleHex)"
+                programIndex += 1
+                for (index, fs, section) in header.sections {
+                    if fs[2] == 0 {
+                        if section.isPatch {
+                            guard let base = baseSection(for: header.titleID) else {
+                                throw NCAError.missingBase(String(format: "%016llX", header.titleID & ~0x800))
+                            }
+                            let patched = try PatchedSection(base: base, baseFile: 0, patch: section, patchFile: 1, patchFS: fs, fds: fds)
+                            planned += try NCAReader.planRomFS(patched: patched, fds: fds, fsHeader: fs, root: "romfs" + suffix)
+                        } else {
+                            planned += try NCAReader.planRomFS(fd: fds[1], section: section, fsHeader: fs, root: "romfs" + suffix)
+                        }
+                    } else if fs[2] == 1, index == 0 {
+                        planned += try NCAReader.planExeFS(fd: fds[1], section: section, fsHeader: fs, root: "exefs" + suffix)
+                    }
+                }
+            } else if header.isControl {
+                for (_, fs, section) in header.sections where fs[2] == 0 && !section.isPatch {
+                    planned += try NCAReader.planRomFS(fd: fds[1], section: section, fsHeader: fs, root: "control")
+                }
+            }
+            for job in planned {
+                jobs.append(CopyJob(path: uniquePath(job.path, used: &usedPaths), size: job.size, source: job.source, file: 1))
+            }
+        }
+        guard programIndex > 0 else {
+            throw PackageError.corruptHeader(([L("No program found in the update.", "Kein Programm im Update gefunden.")] + warnings).joined(separator: "\n\n"))
+        }
+
+        try run(jobs, fds: fds, destination: destination, cancel: cancel, progress: progress)
+        if let version {
+            try? "\(version)\n".write(to: destination.appendingPathComponent(versionMarker), atomically: true, encoding: .utf8)
+        }
+        return ExtractResult(fileCount: jobs.count, decryptedCount: programIndex, ncaCount: jobs.count, warnings: warnings)
+    }
+
     // MARK: - Ausführen
 
     private static func run(
@@ -317,6 +432,27 @@ enum PackageReader {
             guard outFD >= 0 else { throw posixError() }
             defer { close(outFD) }
 
+            if case .patched(let patched, let start) = job.source {
+                // Basisspiel + Update: blockweise aus dem zusammengesetzten Strom
+                var position = start
+                var remaining = job.size
+                while remaining > 0 {
+                    if cancel.isCancelled { throw PackageError.cancelled }
+                    let chunk = Int(min(UInt64(bufferSize), remaining))
+                    try patched.read(fds: fds, at: position, into: plain, count: chunk)
+                    try writeAll(outFD, plain, chunk)
+                    position += UInt64(chunk)
+                    remaining -= UInt64(chunk)
+                    done += UInt64(chunk)
+                    let now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+                    if now &- lastTick >= 80_000_000 {
+                        lastTick = now
+                        progress(done, totalBytes, job.path)
+                    }
+                }
+                continue
+            }
+
             // Lese-Startposition, ggf. CTR-Stream und zu überspringende Bytes (16-Byte-Ausrichtung)
             var readOffset: UInt64
             var skip = 0
@@ -324,6 +460,8 @@ enum PackageReader {
             switch job.source {
             case .raw(let offset):
                 readOffset = offset
+            case .patched:
+                continue
             case .section(let section, let offset):
                 guard offset &+ job.size <= section.size else { throw PackageError.truncated }
                 let absolute = section.offset + offset
@@ -428,6 +566,10 @@ enum PackageReader {
 
                 var ncaJobs: [CopyJob] = []
                 for (index, fs, section) in header.sections {
+                    if section.isPatch {
+                        warnings.append("\(candidate.name): " + L("Section \(index) is an update patch – use „Extract with update…“ on the base game.", "Section \(index) ist ein Update-Patch – nutze „Mit Update entpacken …“ beim Basisspiel."))
+                        continue
+                    }
                     switch fs[2] {
                     case 0: // RomFS
                         ncaJobs += try NCAReader.planRomFS(fd: fd, section: section, fsHeader: fs, root: romfsRoot)

@@ -7,7 +7,22 @@ struct GameProgram: Identifiable, Hashable, Sendable {
     let titleID: String
     let exefs: URL
     let romfs: URL
+    /// Titelversion der Dateien (0 = Basisspiel; „Mit Update entpacken“ vermerkt die Update-Version).
+    var version: UInt32 = 0
     var id: String { titleID }
+
+    /// Version, für die das nxnative-Profil gemacht und getestet ist.
+    var wantedVersion: UInt32 { profile?.version ?? 0 }
+    var versionMatches: Bool { wantedVersion == 0 || version == wantedVersion }
+
+    /// Hinweis, wenn die Dateien nicht der Version des Profils entsprechen (sonst oft Grafikfehler).
+    var versionHint: String? {
+        guard !versionMatches, let profile else { return nil }
+        let wanted = profile.versionName.isEmpty ? "v\(profile.version)" : "\(profile.versionName) (v\(profile.version))"
+        let have = version == 0 ? L("base game", "Basisspiel") : "v\(version)"
+        return L("Profile is made for update \(wanted), your files: \(have). Use „Extract with update…“ on the base game, otherwise graphics may break.",
+                 "Profil ist für Update \(wanted) gemacht, deine Dateien: \(have). Nutze „Mit Update entpacken …“ beim Basisspiel, sonst kann die Grafik kaputt sein.")
+    }
 
     var profile: GameProfileInfo? { GameBuilder.profileIndex[titleID] }
     var name: String { profile?.name ?? titleID }
@@ -30,6 +45,9 @@ struct GameProfileInfo: Sendable {
     let name: String
     let route: String
     let status: String
+    /// Titelversion, für die das Profil gemacht ist (0 = Basisspiel), und ihr Anzeigename (z. B. 1.4.0).
+    var version: UInt32 = 0
+    var versionName: String = ""
 }
 
 enum GameBuilderError: LocalizedError {
@@ -70,7 +88,9 @@ final class GameBuilder: ObservableObject {
         for line in text.split(whereSeparator: \.isNewline) where !line.hasPrefix("#") {
             let f = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
             guard f.count >= 4 else { continue }
-            index[f[0].uppercased()] = GameProfileInfo(name: f[1], route: f[2], status: f[3])
+            index[f[0].uppercased()] = GameProfileInfo(name: f[1], route: f[2], status: f[3],
+                                                       version: f.count > 4 ? UInt32(f[4]) ?? 0 : 0,
+                                                       versionName: f.count > 5 ? f[5] : "")
         }
         return index
     }()
@@ -108,12 +128,16 @@ final class GameBuilder: ObservableObject {
             .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true }
             .map { ($0.lastPathComponent.lowercased(), $0) })
 
+        let marker = folder.appendingPathComponent(PackageReader.versionMarker)
+        let version = (try? String(contentsOf: marker, encoding: .utf8))
+            .flatMap { UInt32($0.trimmingCharacters(in: .whitespacesAndNewlines)) } ?? 0
+
         var result: [GameProgram] = []
         for (name, exefs) in dirs where name == "exefs" || name.hasPrefix("exefs_") {
             let suffix = String(name.dropFirst("exefs".count))
             guard let romfs = dirs["romfs" + suffix],
                   let tid = titleID(npdm: exefs.appendingPathComponent("main.npdm")) else { continue }
-            result.append(GameProgram(titleID: tid, exefs: exefs, romfs: romfs))
+            result.append(GameProgram(titleID: tid, exefs: exefs, romfs: romfs, version: version))
         }
         return result.sorted { ($0.isSupported ? 0 : 1, $0.name) < ($1.isSupported ? 0 : 1, $1.name) }
     }
@@ -230,16 +254,21 @@ final class GameBuilder: ObservableObject {
         let packer = try await ensurePacker()
         try await ensureProfile(program.titleID)
 
-        // Spielordner: base/exefs und base/romfs als Verweise auf die entpackten Daten (nichts wird kopiert)
+        // Spielordner: base/exefs + base/romfs (Basisspiel) oder updates/<Version>/… (mit Update entpackt: das ganze
+        // Spiel im Update-Stand, so wie es der Packer für einen Dump ohne base/ erwartet) – als Verweise, nichts wird kopiert
         let fm = FileManager.default
         let gameDir = Self.gamesRoot.appendingPathComponent(program.titleID, isDirectory: true)
         let dump = gameDir.appendingPathComponent("dump", isDirectory: true)
-        let base = dump.appendingPathComponent("base", isDirectory: true)
-        try fm.createDirectory(at: base, withIntermediateDirectories: true)
+        try fm.createDirectory(at: dump, withIntermediateDirectories: true)
+        for old in ["base", "updates"] {
+            try? fm.removeItem(at: dump.appendingPathComponent(old))
+        }
+        let versionDir = program.version == 0
+            ? dump.appendingPathComponent("base", isDirectory: true)
+            : dump.appendingPathComponent("updates/\(program.version)", isDirectory: true)
+        try fm.createDirectory(at: versionDir, withIntermediateDirectories: true)
         for (name, target) in [("exefs", program.exefs), ("romfs", program.romfs)] {
-            let link = base.appendingPathComponent(name)
-            try? fm.removeItem(at: link)
-            try fm.createSymbolicLink(at: link, withDestinationURL: target)
+            try fm.createSymbolicLink(at: versionDir.appendingPathComponent(name), withDestinationURL: target)
         }
 
         let logs = gameDir.appendingPathComponent("logs", isDirectory: true)

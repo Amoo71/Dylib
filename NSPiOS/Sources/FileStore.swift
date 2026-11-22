@@ -71,6 +71,8 @@ final class FileStore: ObservableObject {
     @Published var alert: AlertMessage?
     @Published var exportRequest: ExportRequest?
     @Published var inspected: FileItem?
+    /// Basisspiel, zu dem gerade ein Update ausgewählt wird („Mit Update entpacken …“).
+    @Published var mergeBase: FileItem?
 
     // Import-Dialog
     @Published var showImporter = false
@@ -87,6 +89,8 @@ final class FileStore: ObservableObject {
         let options: PackageReader.ExtractOptions
         /// `true` = RomFS nachträglich aus NCA-Datei/Ordner erzeugen.
         var romfsOnly = false
+        /// Update-Paket: Basisspiel + Update zu einem Ordner im Update-Stand zusammenführen.
+        var update: URL? = nil
     }
 
     private var pending: [PendingExtraction] = []
@@ -306,6 +310,23 @@ final class FileStore: ObservableObject {
         startNextIfIdle()
     }
 
+    /// Basisspiel + Update entpacken: RomFS mit eingespieltem Update, ExeFS aus dem Update.
+    func enqueueMerged(base: URL, update: URL) {
+        guard keyCount > 0 else {
+            alert = AlertMessage(
+                title: L("prod.keys missing", "prod.keys fehlt"),
+                message: L("Load your prod.keys in Settings › RomFS first.", "Lade zuerst deine prod.keys unter Einstellungen › RomFS.")
+            )
+            return
+        }
+        pending.append(PendingExtraction(
+            source: base, securityScoped: false, deleteSource: false,
+            options: PackageReader.ExtractOptions(), update: update
+        ))
+        queuedCount = pending.count
+        startNextIfIdle()
+    }
+
     func cancelExtraction() {
         pending.removeAll()
         queuedCount = 0
@@ -326,6 +347,11 @@ final class FileStore: ObservableObject {
 
         if next.romfsOnly {
             startRomFSJob(next, flag: flag)
+            return
+        }
+
+        if let update = next.update {
+            startMergedJob(next, update: update, flag: flag)
             return
         }
 
@@ -366,6 +392,34 @@ final class FileStore: ObservableObject {
                 outcome = .failure(error)
             }
             await self.finishJob(name: next.source.lastPathComponent, folder: finalURL.lastPathComponent, outcome: outcome)
+        }
+    }
+
+    private func startMergedJob(_ next: PendingExtraction, update: URL, flag: CancelFlag) {
+        let baseName = next.source.deletingPathExtension().lastPathComponent + " + Update"
+        let finalURL = FS.uniqueURL(in: extractedDir, fileName: baseName, isDirectory: true)
+        let partURL = extractedDir.appendingPathComponent(finalURL.lastPathComponent + ".part", isDirectory: true)
+        let source = next.source
+
+        Task.detached(priority: .userInitiated) {
+            let report: (UInt64, UInt64, String) -> Void = { done, total, file in
+                Task { @MainActor in
+                    self.updateProgress(flag: flag, done: done, total: total, file: file)
+                }
+            }
+            let outcome: Result<PackageReader.ExtractResult, Error>
+            do {
+                guard let keys = KeyStore.load() else { throw NCAError.missingKey("header_key") }
+                try? FileManager.default.removeItem(at: partURL)
+                let result = try PackageReader.extractMerged(base: source, update: update, to: partURL,
+                                                             keys: keys, cancel: flag, progress: report)
+                try FileManager.default.moveItem(at: partURL, to: finalURL)
+                outcome = .success(result)
+            } catch {
+                try? FileManager.default.removeItem(at: partURL)
+                outcome = .failure(error)
+            }
+            await self.finishJob(name: source.lastPathComponent, folder: finalURL.lastPathComponent, outcome: outcome)
         }
     }
 

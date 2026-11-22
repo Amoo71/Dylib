@@ -11,6 +11,7 @@ struct GamesView: View {
     @State private var updateFor: GameEntry?
     @State private var deleteFor: GameEntry?
     @State private var logFor: GameEntry?
+    @State private var tvFor: GameEntry?
 
     var body: some View {
         NavigationStack {
@@ -79,6 +80,10 @@ struct GamesView: View {
             .sheet(item: $logFor) { game in
                 GameLogSheet(game: game)
             }
+            .sheet(item: $tvFor) { game in
+                TVPlaySheet(game: game)
+                    .presentationDetents([.large])
+            }
             .confirmationDialog(L("Delete game?", "Spiel löschen?"),
                                 isPresented: Binding(get: { deleteFor != nil }, set: { if !$0 { deleteFor = nil } }),
                                 titleVisibility: .visible, presenting: deleteFor) { game in
@@ -117,6 +122,8 @@ struct GamesView: View {
     @ViewBuilder
     private func menu(for game: GameEntry) -> some View {
         Button { library.launch(game) } label: { Label(L("Play", "Spielen"), systemImage: "play.fill") }
+            .disabled(isBuilding(game))
+        Button { tvFor = game } label: { Label(L("Play on TV (AirPlay)", "Auf TV spielen (AirPlay)"), systemImage: "airplayvideo") }
             .disabled(isBuilding(game))
         Button { settingsFor = game } label: { Label(L("Settings", "Einstellungen"), systemImage: "slider.horizontal.3") }
         Divider()
@@ -170,6 +177,14 @@ private struct GameCard: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(game.name).font(.headline).lineLimit(2)
                 status
+                if !game.program.versionMatches, game.state != .building, game.state != .buildingFinal {
+                    Label(L("Needs update \(game.program.profile?.versionName ?? "") – graphics may break",
+                            "Braucht Update \(game.program.profile?.versionName ?? "") – Grafik kann kaputt sein"),
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                        .lineLimit(2)
+                }
             }
             Spacer(minLength: 0)
             trailing
@@ -295,6 +310,11 @@ struct AddGameSheet: View {
                                      ?? "\(program.titleID) · \(program.exefs.deletingLastPathComponent().lastPathComponent)")
                                     .font(.caption.monospaced())
                                     .foregroundStyle(program.isSupported ? AnyShapeStyle(.secondary) : AnyShapeStyle(.orange))
+                                if program.isSupported, let hint = program.versionHint {
+                                    Label(hint, systemImage: "exclamationmark.triangle.fill")
+                                        .font(.caption)
+                                        .foregroundStyle(.orange)
+                                }
                             }
                         }
                     }
