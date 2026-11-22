@@ -47,6 +47,13 @@ final class GameBuilder: ObservableObject {
 
     @Published private(set) var running = false
     @Published private(set) var progress: String?
+    private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
+
+    private func endBackgroundWork() {
+        guard backgroundTask != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(backgroundTask)
+        backgroundTask = .invalid
+    }
 
     nonisolated static var root: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -135,15 +142,14 @@ final class GameBuilder: ObservableObject {
         running = true
         // Bildschirm an lassen und kurz im Hintergrund weiterarbeiten dürfen (Builds dauern Minuten)
         UIApplication.shared.isIdleTimerDisabled = true
-        var background = UIBackgroundTaskIdentifier.invalid
-        background = UIApplication.shared.beginBackgroundTask(withName: "NSPiOS build") {
-            UIApplication.shared.endBackgroundTask(background)
+        backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "NSPiOS build") {
+            Task { @MainActor in GameBuilder.shared.endBackgroundWork() }
         }
         defer {
             running = false
             progress = nil
             UIApplication.shared.isIdleTimerDisabled = false
-            UIApplication.shared.endBackgroundTask(background)
+            endBackgroundWork()
         }
 
         let shell = try await ensureShell()
