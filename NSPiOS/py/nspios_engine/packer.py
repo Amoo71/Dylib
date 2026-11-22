@@ -9,7 +9,7 @@ from pathlib import Path
 
 # sys.executable bleibt unverändert: Python auf iOS findet seine nativen Module (Frameworks) relativ dazu.
 # Der Packer ruft `[sys.executable, skript.py, ...]` auf – genau das wird erkannt und im Interpreter ausgeführt.
-SPIRV = '/nspios/bin/spirv-cross'   # SPIRV_CROSS für die Shader-Werkzeuge
+SPIRV = '/nspios/bin/spirv-cross'   # SPIRV_CROSS für die Shader-Werkzeuge (_install legt eine echte Platzhalterdatei an)
 
 _installed = False
 _real_run = subprocess.run
@@ -19,13 +19,40 @@ class Packed(Exception):
     pass
 
 
+def _make_spirv_stub():
+    """Platzhalterdatei für spirv-cross: Werkzeug-Prüfungen (which, Fingerabdruck per Datei-Hash) brauchen eine echte
+    Datei. Ausgeführt wird sie nie – Aufrufe dieses Pfads leitet _run in NSPiOSNative.framework um."""
+    global SPIRV
+    import tempfile
+    from . import native
+    d = os.path.join(tempfile.gettempdir(), 'nspios-bin')
+    os.makedirs(d, exist_ok=True)
+    path = os.path.join(d, 'spirv-cross')
+    body = '#!/bin/sh\n# spirv-cross %s\n' % native.REVISION
+    try:
+        with open(path) as f:
+            same = f.read() == body
+    except OSError:
+        same = False
+    if not same:
+        with open(path, 'w') as f:
+            f.write(body)
+    try:
+        os.chmod(path, 0o755)
+    except OSError:
+        pass
+    SPIRV = path
+
+
 def _install():
     """Einmalig: Unterprozesse umleiten, Signale tolerant machen, Umgebung setzen."""
     global _installed
     if _installed:
         return
     _installed = True
+    _make_spirv_stub()
     os.environ['SPIRV_CROSS'] = SPIRV
+    os.environ.setdefault('JT', '4')       # Threads der Shader-Übersetzung (Standard wäre 2× Kerne)
     os.environ['DM_REWRITE_J'] = '1'       # keine fork-Worker (auf iOS nicht möglich)
     os.environ['DMSH_PROCS'] = '0'         # dmsh_build.py: Shader in Threads statt Prozessen fertigstellen
     os.environ['NXN_METAL_TOOLS'] = 'off'  # kein Metal-Compiler: Quellen ins Paket, das Gerät kompiliert beim 1. Start

@@ -16,7 +16,7 @@ def spirv_cross(args):
     damit parallele Aufrufe sich nicht die Standardausgabe teilen.
     """
     args = [str(a) for a in args]
-    if '--revision' in args:
+    if '--revision' in args or list(args) == ['--version']:   # Werkzeug-Fingerabdruck des Packers
         return 0, REVISION + '\n'
     tmp = None
     if '--output' not in args:
