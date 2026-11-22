@@ -259,4 +259,23 @@ def smoke(args):
         rc, _, _ = _run_python([str(script), str(args['shell']), str(root), '--stop-after', 'extract', '--keep-work'],
                                None, None, f, subprocess.STDOUT)
     tail = log.read_text(encoding='utf-8', errors='replace').strip().splitlines()[-12:]
-    return {'rc': rc, 'log': '\n'.join(tail)}
+    if rc != 0:
+        return {'rc': rc, 'log': '\n'.join(tail)}
+
+    # Shader-Übersetzung wie im Fertigbau: vk_shaders.py mit einer „Aufnahme“ aus einem Test-Shader
+    from nspios_engine.selftest import _minimal_compute_spirv
+    cap = root / 'vkcap'
+    cap.mkdir()
+    (cap / '0000000000000001.spv').write_bytes(_minimal_compute_spirv())
+    out = root / 'vkout'
+    vk = Path(args['packer']) / 'dm' / 'gfx' / 'tools' / 'vk_shaders.py'
+    vlog = root / 'vk.log'
+    with open(vlog, 'w', encoding='utf-8', errors='replace') as f:
+        vrc, _, _ = _run_python([str(vk), str(romfs), str(cap), str(out), '--source-only'],
+                                None, None, f, subprocess.STDOUT)
+    vtail = vlog.read_text(encoding='utf-8', errors='replace').strip().splitlines()[-12:]
+    table = out / 'vk' / 'vk_shaders.tsv'
+    if vrc == 0 and not table.is_file():
+        vrc = 2
+        vtail.append('no vk_shaders.tsv written')
+    return {'rc': vrc, 'log': '\n'.join(tail + ['--- vk_shaders.py ---'] + vtail)}
