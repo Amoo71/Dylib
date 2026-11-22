@@ -175,9 +175,7 @@ def _run_python(args, cwd, env, stdout, stderr):
 
 
 def prepare(args):
-    """Kopiert den gebündelten Packer in einen beschreibbaren Ordner (er schreibt in seine Profile) und legt
-    kleingeschriebene Profil-Aliase an, falls das Dateisystem Groß-/Kleinschreibung unterscheidet
-    (der Packer liest Titel-IDs klein, die Profilordner heißen groß)."""
+    """Kopiert den gebündelten Packer in einen beschreibbaren Ordner (er schreibt in seine Profile)."""
     import shutil
     src, dst = Path(args['bundle']), Path(args['dest'])
     tag = (src / 'NSPIOS_PACKER_TAG').read_text().strip() if (src / 'NSPIOS_PACKER_TAG').is_file() else '?'
@@ -187,15 +185,8 @@ def prepare(args):
             shutil.rmtree(dst)
         shutil.copytree(src, dst)
     games = dst / 'dm' / 'games'
-    for d in list(games.iterdir()):
-        lower = games / d.name.lower()
-        if d.is_dir() and not d.is_symlink() and d.name != d.name.lower() and not lower.exists():
-            try:
-                os.symlink(d.name, lower)
-            except FileExistsError:
-                pass                 # Dateisystem ohne Groß-/Kleinschreibung: der Name findet den Ordner schon
-        if d.is_dir() and not (games / d.name.lower() / 'game.tsv').is_file():
-            raise RuntimeError(f'profile {d.name} is not reachable as {d.name.lower()}')
+    if not any((d / 'game.tsv').is_file() for d in games.iterdir()):
+        raise RuntimeError('no game profiles in the packer')
     return {'packer': str(dst), 'tag': tag}
 
 

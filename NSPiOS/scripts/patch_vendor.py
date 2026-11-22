@@ -42,4 +42,12 @@ if 'nspios_spirv_cross_main' not in text:
     text = text.replace('exit(EXIT_FAILURE);', 'throw std::runtime_error("spirv-cross: invalid input or arguments");')
     text = text.replace('int main(int argc, char *argv[])', 'extern "C" int nspios_spirv_cross_main(int argc, char *argv[])')
     main.write_text(text)
+# ns2ios-shell: der Ordner-Weg liest die Titel-ID klein (main.npdm), alle Profile und der NSP-Weg schreiben sie groß.
+# Auf einem Dateisystem mit Groß-/Kleinschreibung (iOS) findet der Packer das Profil sonst nicht.
+if (root / 'py/packer/scripts/nxn_pack.py').is_file():
+    patch('py/packer/scripts/nxn_pack.py',
+          "    return '%016x' % struct.unpack_from('<Q', d, off + 0x10)[0]",
+          "    return '%016X' % struct.unpack_from('<Q', d, off + 0x10)[0]   # NSPiOS: upper case, as the profile folders",
+          'NSPiOS: upper case')
+
 print('patch_vendor: ok')
