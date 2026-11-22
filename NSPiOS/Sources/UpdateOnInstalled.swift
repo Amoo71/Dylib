@@ -124,26 +124,76 @@ final class ReconstructedBase: @unchecked Sendable {
         }
         guard !installed.isEmpty else { throw NCAError.updateNeedsBase(L("no installed game files", "keine installierten Spieldateien")) }
 
-        // 3) Anker: Dateien, deren Basis-Stücke einheitlich auf eine Startposition zeigen
+        // 3) Anker. Stark: Datei ganz aus der Basis, am Stück, gleiche Größe → lag dort unverändert.
+        //    Schwach: geänderte Datei mit altem Inhalt → Startposition, die alle ihre Basis-Stücke abdeckt.
         var strong: [Span] = []
         var weak: [Span] = []
-        var baseFragments: [(start: UInt64, length: UInt64)] = []
+        var baseFragments: [(start: UInt64, length: UInt64, path: String)] = []
+        var used = Set<String>()
         for job in jobs {
             guard case .patched(_, let virtualStart) = job.source, job.size > 0 else { continue }
             let pieces = patched.fragments(at: virtualStart, count: job.size)
             let fromBase = pieces.filter { !$0.fromPatch }
             guard !fromBase.isEmpty else { continue }
-            baseFragments += fromBase.map { ($0.physical, $0.length) }
+            baseFragments += fromBase.map { ($0.physical, $0.length, job.path) }
             guard let file = installed[job.path] else { continue }
-            let starts = Set(fromBase.map { $0.physical &- ($0.virtual - virtualStart) })
-            guard starts.count == 1, let start = starts.first else { continue }
-            let span = Span(start: start, end: start + file.size, url: file.url)
-            if fromBase.count == pieces.count, file.size == job.size { strong.append(span) } else { weak.append(span) }
+            let candidates = fromBase.map { $0.physical &- ($0.virtual - virtualStart) }
+            let contiguous = Set(candidates).count == 1
+            if contiguous, fromBase.count == pieces.count, file.size == job.size {
+                strong.append(Span(start: candidates[0], end: candidates[0] + file.size, url: file.url))
+                used.insert(job.path)
+                continue
+            }
+            // die Startposition, deren Bereich die meisten (am liebsten alle) Basis-Stücke enthält
+            var best: (start: UInt64, inside: Int, votes: Int)?
+            for c in Set(candidates) {
+                let inside = fromBase.filter { $0.physical >= c && $0.physical + $0.length <= c + file.size }.count
+                let votes = candidates.filter { $0 == c }.count
+                if inside > 0, best == nil || (inside, votes) > (best!.inside, best!.votes) { best = (c, inside, votes) }
+            }
+            if let best {
+                weak.append(Span(start: best.start, end: best.start + file.size, url: file.url))
+                used.insert(job.path)
+            }
         }
         var spans = strong
-        let strongSorted = strong.sorted { $0.start < $1.start }
-        for w in weak where !strongSorted.contains(where: { $0.start < w.end && w.start < $0.end }) {
+        for w in weak where !spans.contains(where: { $0.start < w.end && w.start < $0.end }) {
             spans.append(w)
+        }
+
+        // 3b) Lücken füllen: Basis-Stücke, die noch in keinem Bereich liegen, gehören zu Dateien, die im Update anders
+        //     heißen oder fehlen. Eine noch nicht zugeordnete Datei, die in die Lücke passt und das Stück enthält, wird
+        //     dort angenommen (die Prüfung gegen die Prüfsummen deckt Fehlgriffe auf).
+        var free = installed.filter { !used.contains($0.key) }
+        func align(_ v: UInt64) -> UInt64 { (v + 15) & ~15 }
+        var changed = true
+        while changed {
+            changed = false
+            let probe = ReconstructedBase(spans: spans)
+            let sorted = spans.sorted { $0.start < $1.start }
+            for fragment in baseFragments where !probe.covers(fragment.start, fragment.length) {
+                let gapStart = align(sorted.last(where: { $0.start <= fragment.start })?.end ?? 0)
+                let gapEnd = sorted.first(where: { $0.start > fragment.start })?.start ?? UInt64.max
+                guard gapStart <= fragment.start, fragment.start + fragment.length <= gapEnd else { continue }
+                let gap = gapEnd == UInt64.max ? UInt64.max : gapEnd - gapStart
+                var choice: (key: String, span: Span, score: UInt64)?
+                for (key, file) in free where file.size > 0 && align(file.size) <= gap {
+                    for position in [gapStart, gapEnd == UInt64.max ? gapStart : (gapEnd - align(file.size)) & ~15] {
+                        guard position <= fragment.start, fragment.start + fragment.length <= position + file.size else { continue }
+                        // bevorzugt: Datei füllt die Lücke (fast) genau, sonst die mit dem kleinsten Rest
+                        let rest = gap == UInt64.max ? UInt64.max - file.size : gap - align(file.size)
+                        if choice == nil || rest < choice!.score {
+                            choice = (key, Span(start: position, end: position + file.size, url: file.url), rest)
+                        }
+                    }
+                }
+                if let choice {
+                    spans.append(choice.span)
+                    free.removeValue(forKey: choice.key)
+                    changed = true
+                    break
+                }
+            }
         }
         let base = ReconstructedBase(spans: spans)
 
@@ -151,8 +201,11 @@ final class ReconstructedBase: @unchecked Sendable {
         let missing = baseFragments.filter { !base.covers($0.start, $0.length) }
         guard missing.isEmpty else {
             let bytes = missing.reduce(UInt64(0)) { $0 + $1.length }
-            throw NCAError.updateNeedsBase(L("\(bytes / 1024) KB of base data not found in the installed game",
-                                             "\(bytes / 1024) KB Basisdaten nicht im installierten Spiel gefunden"))
+            var paths: [String] = []
+            for m in missing where !paths.contains(m.path) && paths.count < 3 { paths.append(m.path) }
+            NSLog("NSPiOS: update on installed game: unresolved base data in \(Set(missing.map(\.path)).sorted())")
+            throw NCAError.updateNeedsBase(L("\(bytes / 1024) KB of base data not found in the installed game – \(paths.joined(separator: ", "))",
+                                             "\(bytes / 1024) KB Basisdaten nicht im installierten Spiel gefunden – \(paths.joined(separator: ", "))"))
         }
         patched.baseSource = .files(base)
 
