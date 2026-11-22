@@ -45,7 +45,8 @@ def _install():
 
     def link_or_copy2(src, dst, *, follow_symlinks=True):
         s = os.fspath(src)
-        if os.sep + 'romfs' + os.sep in s:
+        marker = os.sep + 'romfs' + os.sep
+        if marker in s or marker in os.fspath(dst):
             target = os.path.join(dst, os.path.basename(s)) if os.path.isdir(dst) else os.fspath(dst)
             try:
                 if os.path.lexists(target):
@@ -56,6 +57,16 @@ def _install():
                 pass
         return real_copy2(src, dst, follow_symlinks=follow_symlinks)
     shutil.copy2 = link_or_copy2
+
+    # copytree bindet copy2 schon als Standardwert beim Definieren – dort ebenfalls umleiten
+    real_copytree = shutil.copytree
+
+    def copytree(src, dst, symlinks=False, ignore=None, copy_function=None,
+                 ignore_dangling_symlinks=False, dirs_exist_ok=False):
+        if copy_function is None or copy_function is real_copy2:
+            copy_function = link_or_copy2
+        return real_copytree(src, dst, symlinks, ignore, copy_function, ignore_dangling_symlinks, dirs_exist_ok)
+    shutil.copytree = copytree
 
     subprocess.run = _run
     subprocess.call = lambda *a, **k: _run(*a, **k).returncode

@@ -18,12 +18,13 @@ struct NSPiOSApp: App {
 }
 
 private enum AppTab: Hashable {
-    case library, extracted, storage
+    case library, extracted, games, storage
 }
 
 struct RootView: View {
     @EnvironmentObject private var store: FileStore
     @EnvironmentObject private var updater: UpdateManager
+    @ObservedObject private var gameLibrary = GameLibrary.shared
     @Environment(\.scenePhase) private var scenePhase
     @State private var tab: AppTab = .library
 
@@ -42,6 +43,11 @@ struct RootView: View {
             Tab(L("Extracted", "Entpackt"), systemImage: "folder.fill", value: AppTab.extracted) {
                 ExtractedView()
             }
+
+            Tab("Games", systemImage: "gamecontroller.fill", value: AppTab.games) {
+                GamesView()
+            }
+            .badge(gameLibrary.games.filter { $0.state == .needsCapture }.count)
 
             Tab(L("Settings", "Einstellungen"), systemImage: "gearshape.fill", value: AppTab.storage) {
                 SettingsView()
@@ -91,6 +97,7 @@ struct RootView: View {
         .sensoryFeedback(.success, trigger: store.completedCount)
         .onChange(of: scenePhase, initial: true) { _, phase in
             if phase == .active {
+                Task { await GameLibrary.shared.refresh() }   // Shader-Aufnahme fertig? → automatisch fertig bauen
                 store.refresh()          // Änderungen aus der Dateien-App übernehmen
                 updater.checkIfDue()
             }

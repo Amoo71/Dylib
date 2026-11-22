@@ -156,8 +156,11 @@ struct FolderView: View {
             }
         }
         .sheet(isPresented: $showBuild) {
-            BuildGameSheet(programs: programs)
-                .presentationDetents([.medium, .large])
+            AddGameSheet(programs: programs, title: L("Build game", "Spiel bauen")) { program in
+                store.toast = L("Building \(program.name) – see Games", "Baue \(program.name) – siehe Games")
+                Task { await GameLibrary.shared.add(program) }
+            }
+            .presentationDetents([.medium, .large])
         }
         .refreshable { await load() }
         .onAppear {
