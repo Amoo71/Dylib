@@ -95,6 +95,8 @@ final class FileStore: ObservableObject {
         var then: (@MainActor @Sendable (URL) -> Void)? = nil
         /// Ohne Basispaket: unveränderte Daten aus dem RomFS-Ordner des installierten Spiels.
         var installedRomFS: URL? = nil
+        /// DLC: (Spiel-ID, DLC-ID) – Inhalt nach Games/<ID>/dlc/<DLC-ID>/romfs.
+        var dlc: (game: String, id: String)? = nil
     }
 
     private var pending: [PendingExtraction] = []
@@ -218,7 +220,7 @@ final class FileStore: ObservableObject {
                     errors.append("\(url.lastPathComponent): \(error.localizedDescription)")
                 }
             }
-            let updates = Set(imported.filter { Self.isUpdatePackage($0) })
+            let updates = Set(imported.filter { Self.isAddOnPackage($0) })
             await self.didImport(imported, errors: errors, extract: extractAfterwards, updates: updates)
         }
     }
@@ -238,10 +240,11 @@ final class FileStore: ObservableObject {
         autoInstallUpdates(touching: imported)
     }
 
-    /// Ist das Paket ein Update (CNMT-Typ Patch)? Liest nur die kleine CNMT-NCA.
-    nonisolated static func isUpdatePackage(_ url: URL) -> Bool {
+    /// Ist das Paket ein Update oder DLC (CNMT-Typ Patch / AddOnContent)? Liest nur die kleine CNMT-NCA.
+    nonisolated static func isAddOnPackage(_ url: URL) -> Bool {
         guard let keys = KeyStore.load() else { return false }
-        return PackageReader.contents(of: url, keys: keys).contains { $0.isUpdate }
+        let contents = PackageReader.contents(of: url, keys: keys)
+        return !contents.isEmpty && contents.allSatisfy { $0.isUpdate || $0.isDLC }
     }
 
     // MARK: - Updates automatisch einspielen
@@ -260,7 +263,19 @@ final class FileStore: ObservableObject {
     }
 
     private func applyUpdates(touching urls: [URL], metas: [URL: [ContentMeta.Info]]) {
+        // DLC: Inhalt unter dem Spiel ablegen, Spiel neu bauen (oder beim Hinzufügen mitnehmen)
+        for url in urls {
+            for dlc in (metas[url] ?? []) where dlc.isDLC {
+                let tidHex = String(format: "%016llX", dlc.baseTitleID)
+                let dlcHex = String(format: "%016llX", dlc.titleID)
+                let name = GameBuilder.profileIndex[tidHex]?.name ?? tidHex
+                toast = L("DLC for \(name) – installing", "DLC für \(name) – wird eingespielt")
+                enqueueDLC(url, gameTitleID: tidHex, dlcTitleID: dlcHex)
+            }
+        }
+
         let touched = Set(urls.flatMap { metas[$0] ?? [] }.filter { $0.type == 0x80 || $0.isUpdate }.map(\.baseTitleID))
+        guard !touched.isEmpty else { return }
         for tid in touched {
             let updates = metas.flatMap { url, list in list.filter { $0.isUpdate && $0.baseTitleID == tid }.map { (url, $0) } }
                 .sorted { $0.1.version > $1.1.version }
@@ -368,7 +383,7 @@ final class FileStore: ObservableObject {
     // MARK: - Entpacken
 
     func enqueueExtraction(of url: URL, securityScoped: Bool = false) {
-        if !securityScoped, keyCount > 0, packages.contains(where: { $0.url == url }), Self.isUpdatePackage(url) {
+        if !securityScoped, keyCount > 0, packages.contains(where: { $0.url == url }), Self.isAddOnPackage(url) {
             autoInstallUpdates(touching: [url])
             return
         }
@@ -411,6 +426,18 @@ final class FileStore: ObservableObject {
             source: update, securityScoped: false, deleteSource: false,
             options: PackageReader.ExtractOptions(), update: update, then: then, installedRomFS: installedRomFS
         ))
+        queuedCount = pending.count
+        startNextIfIdle()
+    }
+
+    /// DLC-Paket entpacken und beim Spiel ablegen; danach wird das Spiel neu gebaut.
+    func enqueueDLC(_ url: URL, gameTitleID: String, dlcTitleID: String) {
+        guard keyCount > 0 else { return }
+        var options = PackageReader.ExtractOptions()
+        options.decrypt = true
+        options.partition = "secure"
+        pending.append(PendingExtraction(source: url, securityScoped: false, deleteSource: false, options: options,
+                                         dlc: (gameTitleID, dlcTitleID)))
         queuedCount = pending.count
         startNextIfIdle()
     }
@@ -458,6 +485,10 @@ final class FileStore: ObservableObject {
             startMergedJob(next, update: update, flag: flag)
             return
         }
+        if let dlc = next.dlc {
+            startDLCJob(next, game: dlc.game, id: dlc.id, flag: flag)
+            return
+        }
 
         let baseName = next.source.deletingPathExtension().lastPathComponent
         let finalURL = FS.uniqueURL(in: extractedDir, fileName: baseName, isDirectory: true)
@@ -496,6 +527,46 @@ final class FileStore: ObservableObject {
                 outcome = .failure(error)
             }
             await self.finishJob(name: next.source.lastPathComponent, folder: finalURL.lastPathComponent, outcome: outcome)
+        }
+    }
+
+    private func startDLCJob(_ next: PendingExtraction, game: String, id: String, flag: CancelFlag) {
+        let source = next.source
+        let partURL = extractedDir.appendingPathComponent(".dlc-\(UUID().uuidString).part", isDirectory: true)
+        let target = GameBuilder.dlcRoot(game).appendingPathComponent(id, isDirectory: true)
+        let baseOptions = next.options
+
+        Task.detached(priority: .userInitiated) {
+            var options = baseOptions
+            let report: (UInt64, UInt64, String) -> Void = { done, total, file in
+                Task { @MainActor in self.updateProgress(flag: flag, done: done, total: total, file: file) }
+            }
+            let fm = FileManager.default
+            let outcome: Result<PackageReader.ExtractResult, Error>
+            do {
+                guard let keys = KeyStore.load() else { throw NCAError.missingKey("header_key") }
+                options.keys = keys
+                let result = try PackageReader.extract(source, to: partURL, options: options, cancel: flag, progress: report)
+                // Data-NCA → romfs_<DLC-ID>
+                let children = (try? fm.contentsOfDirectory(at: partURL, includingPropertiesForKeys: nil)) ?? []
+                guard let romfs = children.first(where: { $0.lastPathComponent.lowercased() == "romfs_\(id.lowercased())" })
+                        ?? children.first(where: { $0.lastPathComponent.lowercased().hasPrefix("romfs") }) else {
+                    throw PackageError.corruptHeader(([L("No DLC content found.", "Kein DLC-Inhalt gefunden.")] + result.warnings).joined(separator: "\n\n"))
+                }
+                try fm.createDirectory(at: target, withIntermediateDirectories: true)
+                let destination = target.appendingPathComponent("romfs", isDirectory: true)
+                if fm.fileExists(atPath: destination.path) { try fm.removeItem(at: destination) }
+                try fm.moveItem(at: romfs, to: destination)
+                try? fm.removeItem(at: partURL)
+                outcome = .success(result)
+            } catch {
+                try? fm.removeItem(at: partURL)
+                outcome = .failure(error)
+            }
+            await self.finishJob(name: source.lastPathComponent, folder: "DLC \(id)", outcome: outcome)
+            if case .success = outcome {
+                await MainActor.run { GameLibrary.shared.scheduleRebuild(game) }
+            }
         }
     }
 

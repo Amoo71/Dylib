@@ -168,7 +168,31 @@ final class GameLibrary: ObservableObject {
     }
 
     /// Baut und installiert. `final == false`: Aufnahme-Lauf (Spiel nimmt beim Start seine Shader auf).
+    /// Spiele, die nach dem laufenden Build neu gebaut werden sollen (z. B. neues DLC).
+    private var rebuildQueued: [String] = []
+
+    /// Neu bauen, sobald kein Build läuft (DLC hinzugefügt).
+    func scheduleRebuild(_ tid: String) {
+        guard let entry = game(tid) else { return }
+        if GameBuilder.shared.running || entry.state == .building || entry.state == .buildingFinal {
+            if !rebuildQueued.contains(tid) { rebuildQueued.append(tid) }
+            return
+        }
+        Task { await rebuild(entry, recapture: false) }
+    }
+
+    private func runQueuedRebuild() {
+        while !rebuildQueued.isEmpty {
+            let tid = rebuildQueued.removeFirst()
+            if let entry = game(tid) {
+                Task { await rebuild(entry, recapture: false) }
+                return
+            }
+        }
+    }
+
     func buildAndInstall(_ start: GameEntry, final: Bool) async {
+        defer { runQueuedRebuild() }
         var entry = start
         entry.state = final ? .buildingFinal : .building
         entry.lastError = nil

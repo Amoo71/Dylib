@@ -185,6 +185,13 @@ private struct GameCard: View {
                 .clipShape(.rect(cornerRadius: 15, style: .continuous))
             VStack(alignment: .leading, spacing: 4) {
                 Text(game.name).font(.headline).lineLimit(2)
+                let dlc = GameBuilder.dlcIDs(game.titleID).count
+                if (game.version ?? 0) > 0 || dlc > 0 {
+                    Text([(game.version ?? 0) > 0 ? "v\(game.version ?? 0)" : nil, dlc > 0 ? "\(dlc) DLC" : nil]
+                        .compactMap { $0 }.joined(separator: " · "))
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.secondary)
+                }
                 status
                 if !game.program.versionMatches, game.state != .building, game.state != .buildingFinal {
                     Label(L("Needs update \(game.program.profile?.versionName ?? "") – graphics may break",

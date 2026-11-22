@@ -110,6 +110,17 @@ final class GameBuilder: ObservableObject {
             .appendingPathComponent("NSPiOS", isDirectory: true)
     }
     nonisolated static var gamesRoot: URL { root.appendingPathComponent("Games", isDirectory: true) }
+    /// DLC eines Spiels: <Games>/<ID>/dlc/<DLC-ID>/romfs (bleibt über Neubauten und Updates erhalten).
+    nonisolated static func dlcRoot(_ titleID: String) -> URL {
+        gamesRoot.appendingPathComponent(titleID, isDirectory: true).appendingPathComponent("dlc", isDirectory: true)
+    }
+
+    nonisolated static func dlcIDs(_ titleID: String) -> [String] {
+        let fm = FileManager.default
+        let dirs = (try? fm.contentsOfDirectory(atPath: dlcRoot(titleID).path)) ?? []
+        return dirs.filter { fm.fileExists(atPath: dlcRoot(titleID).appendingPathComponent("\($0)/romfs").path) }.sorted()
+    }
+
     nonisolated static var shellPath: URL { root.appendingPathComponent("shell/\(shellFile)") }
     nonisolated static var packerPath: URL { root.appendingPathComponent("packer", isDirectory: true) }
     nonisolated static var bundledPacker: URL? {
@@ -260,7 +271,7 @@ final class GameBuilder: ObservableObject {
         let gameDir = Self.gamesRoot.appendingPathComponent(program.titleID, isDirectory: true)
         let dump = gameDir.appendingPathComponent("dump", isDirectory: true)
         try fm.createDirectory(at: dump, withIntermediateDirectories: true)
-        for old in ["base", "updates"] {
+        for old in ["base", "updates", "dlc"] {
             try? fm.removeItem(at: dump.appendingPathComponent(old))
         }
         let versionDir = program.version == 0
@@ -269,6 +280,13 @@ final class GameBuilder: ObservableObject {
         try fm.createDirectory(at: versionDir, withIntermediateDirectories: true)
         for (name, target) in [("exefs", program.exefs), ("romfs", program.romfs)] {
             try fm.createSymbolicLink(at: versionDir.appendingPathComponent(name), withDestinationURL: target)
+        }
+        // DLC: dlc/<DLC-ID>/romfs (der Packer macht daraus aoc/<Index>.img)
+        for id in Self.dlcIDs(program.titleID) {
+            let dir = dump.appendingPathComponent("dlc/\(id)", isDirectory: true)
+            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            try fm.createSymbolicLink(at: dir.appendingPathComponent("romfs"),
+                                      withDestinationURL: Self.dlcRoot(program.titleID).appendingPathComponent("\(id)/romfs"))
         }
 
         let logs = gameDir.appendingPathComponent("logs", isDirectory: true)

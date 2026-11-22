@@ -210,8 +210,15 @@ enum ContentMeta {
         /// 0x80 Spiel, 0x81 Update (Patch), 0x82 DLC
         let type: UInt8
         var isUpdate: Bool { type == 0x81 }
-        /// Titel-ID des Basisspiels (Update: ID − 0x800)
-        var baseTitleID: UInt64 { type == 0x81 ? titleID & ~0x800 : titleID }
+        var isDLC: Bool { type == 0x82 }
+        /// Titel-ID des Basisspiels (Update: ID − 0x800; DLC: Basis + 0x1000 + n)
+        var baseTitleID: UInt64 {
+            switch type {
+            case 0x81: return titleID & ~0x800
+            case 0x82: return (titleID & ~0xFFF) &- 0x1000
+            default: return titleID
+            }
+        }
     }
 
     static func info(fd: Int32, header: NCAHeader) -> Info? {
