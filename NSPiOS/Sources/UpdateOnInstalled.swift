@@ -110,13 +110,16 @@ final class ReconstructedBase: @unchecked Sendable {
         }
 
         // 2) Dateien des installierten Spiels
+        // relative Pfade direkt vom Enumerator (unabhängig von /var ↔ /private/var)
         var installed: [String: (url: URL, size: UInt64)] = [:]
-        let rootPath = installedRomFS.standardizedFileURL.path
-        if let walker = FileManager.default.enumerator(at: installedRomFS, includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey]) {
-            for case let url as URL in walker {
-                guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey]), values.isRegularFile == true else { continue }
-                let path = String(url.standardizedFileURL.path.dropFirst(rootPath.count))
-                installed[path] = (url, UInt64(values.fileSize ?? 0))
+        let fm = FileManager.default
+        let root = installedRomFS.resolvingSymlinksInPath()
+        if let walker = fm.enumerator(atPath: root.path) {
+            while let relative = walker.nextObject() as? String {
+                guard let attributes = walker.fileAttributes,
+                      attributes[.type] as? FileAttributeType == .typeRegular else { continue }
+                let size = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
+                installed["/" + relative] = (root.appendingPathComponent(relative), size)
             }
         }
         guard !installed.isEmpty else { throw NCAError.updateNeedsBase(L("no installed game files", "keine installierten Spieldateien")) }
