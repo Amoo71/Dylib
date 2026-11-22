@@ -29,6 +29,7 @@ struct GamesView: View {
                     ForEach(library.games) { game in
                         GameCard(game: game,
                                  captured: library.captured[game.titleID] ?? 0,
+                                 prepared: library.isPreparedByLiveContainer(game),
                                  progress: builder.running && isBuilding(game) ? builder.progress : nil)
                             .onTapGesture { tap(game) }
                             .contextMenu { menu(for: game) }
@@ -149,6 +150,7 @@ struct GamesView: View {
 private struct GameCard: View {
     let game: GameEntry
     let captured: Int
+    let prepared: Bool
     let progress: String?
 
     var body: some View {
@@ -190,6 +192,7 @@ private struct GameCard: View {
                 .lineLimit(2)
         case .needsCapture:
             VStack(alignment: .leading, spacing: 4) {
+                if !prepared { firstStartHint }
                 Text(L("Start once – captures shaders (~1 min)", "Einmal starten – nimmt Shader auf (~1 Min.)"))
                     .font(.caption)
                     .foregroundStyle(.orange)
@@ -202,15 +205,26 @@ private struct GameCard: View {
                 }
             }
         case .ready:
-            Label(L("Ready", "Bereit"), systemImage: "checkmark.circle.fill")
-                .font(.caption)
-                .foregroundStyle(.green)
+            if prepared {
+                Label(L("Ready", "Bereit"), systemImage: "checkmark.circle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.green)
+            } else {
+                firstStartHint
+            }
         case .failed:
             Text(game.lastError ?? L("Build failed", "Build fehlgeschlagen"))
                 .font(.caption)
                 .foregroundStyle(Theme.danger)
                 .lineLimit(2)
         }
+    }
+
+    private var firstStartHint: some View {
+        Label(L("First start in LiveContainer's list (signs once)", "Erster Start in LiveContainers Liste (signiert einmalig)"),
+              systemImage: "signature")
+            .font(.caption)
+            .foregroundStyle(.orange)
     }
 
     @ViewBuilder

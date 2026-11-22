@@ -108,8 +108,8 @@ final class GameLibrary: ObservableObject {
         guard let root = LiveContainer.dataRoot else { return nil }
         var uuid = entry.dataUUID
         if let app = installedApp(entry),
-           let plist = Self.readPlist(app.appendingPathComponent("Info.plist")),
-           let assigned = plist["LCDataUUID"] as? String, !assigned.isEmpty {
+           let info = Self.readPlist(app.appendingPathComponent("LCAppInfo.plist")),
+           let assigned = info["LCDataUUID"] as? String, !assigned.isEmpty {
             uuid = assigned
         }
         return root.appendingPathComponent(uuid, isDirectory: true).appendingPathComponent("Documents", isDirectory: true)
@@ -211,22 +211,70 @@ final class GameLibrary: ObservableObject {
         let target = apps.appendingPathComponent(entry.bundleName, isDirectory: true)
         let plistURL = app.appendingPathComponent("Info.plist")
         var plist = Self.readPlist(plistURL) ?? [:]
-
-        // Einträge von LiveContainer aus der alten Installation übernehmen (Datencontainer = Spielstände & Aufnahme)
-        if let old = Self.readPlist(target.appendingPathComponent("Info.plist")) {
-            for (key, value) in old where key.hasPrefix("LC") && key != "LCPatchRevision" && !key.contains("Sign") {
-                plist[key] = value
-            }
-        }
-        if (plist["LCDataUUID"] as? String)?.isEmpty ?? true {
-            plist["LCDataUUID"] = entry.dataUUID
-        }
         plist["CFBundleDisplayName"] = entry.name
         Self.writeIcon(for: entry, into: app, plist: &plist)
         try Self.writePlist(plist, to: plistURL)
 
+        let previous = Self.readPlist(target.appendingPathComponent("LCAppInfo.plist"))
+        try writeLiveContainerInfo(in: app, previous: previous, entry: entry,
+                                   bundleID: plist["CFBundleIdentifier"] as? String)
+
         if fm.fileExists(atPath: target.path) { try fm.removeItem(at: target) }
         try fm.moveItem(at: app, to: target)
+    }
+
+    /// LCAppInfo.plist (Datencontainer) wie LiveContainer selbst – ohne Vorbereitungs-/Signatur-Marker, damit
+    /// LiveContainer die neue Binary beim nächsten Start aus seiner Liste vorbereitet und signiert.
+    private func writeLiveContainerInfo(in app: URL, previous: [String: Any]?, entry: GameEntry, bundleID: String?) throws {
+        let fm = FileManager.default
+        var lcInfo = previous ?? [:]
+        for key in Array(lcInfo.keys) where Self.isPreparationKey(key) { lcInfo.removeValue(forKey: key) }
+        let dataUUID = (lcInfo["LCDataUUID"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? entry.dataUUID
+        lcInfo["LCDataUUID"] = dataUUID
+        var containers = lcInfo["LCContainers"] as? [[String: Any]] ?? []
+        if !containers.contains(where: { ($0["folderName"] as? String) == dataUUID }) {
+            containers.insert(["folderName": dataUUID, "name": entry.name], at: 0)
+        }
+        lcInfo["LCContainers"] = containers
+        try Self.writePlist(lcInfo, to: app.appendingPathComponent("LCAppInfo.plist"))
+
+        // Datencontainer mit LCContainerInfo.plist, wie LiveContainer ihn anlegt
+        if let dataRoot = LiveContainer.dataRoot {
+            let container = dataRoot.appendingPathComponent(dataUUID, isDirectory: true)
+            try fm.createDirectory(at: container.appendingPathComponent("Documents"), withIntermediateDirectories: true)
+            let infoURL = container.appendingPathComponent("LCContainerInfo.plist")
+            if !fm.fileExists(atPath: infoURL.path) {
+                try Self.writePlist([
+                    "appIdentifier": bundleID ?? "org.nxnative.\(entry.titleID.lowercased())",
+                    "name": entry.name,
+                    "keychainGroupId": 0,
+                    "isolateAppGroup": false,
+                    "spoofIdentifierForVendor": false,
+                ], to: infoURL)
+            }
+        }
+    }
+
+    /// Ältere Installationen (ohne LCAppInfo.plist) für LiveContainer nachrüsten.
+    private func repairLiveContainerInfo(_ entry: GameEntry) {
+        guard let app = installedApp(entry),
+              !FileManager.default.fileExists(atPath: app.appendingPathComponent("LCAppInfo.plist").path) else { return }
+        let plist = Self.readPlist(app.appendingPathComponent("Info.plist")) ?? [:]
+        let legacy = (plist["LCDataUUID"] as? String).map { ["LCDataUUID": $0] as [String: Any] }
+        try? writeLiveContainerInfo(in: app, previous: legacy, entry: entry, bundleID: plist["CFBundleIdentifier"] as? String)
+        try? writeEnvironment(entry)
+    }
+
+    /// Marker, mit denen LiveContainer eine vorbereitete/signierte Binary erkennt.
+    private static func isPreparationKey(_ key: String) -> Bool {
+        key == "LCPatchRevision" || key == "LCJITLessSignID" || key == "LCExpirationDate" || key == "LCTeamId"
+    }
+
+    /// Hat LiveContainer das (aktuelle) Spiel schon vorbereitet und signiert? Erst dann klappt der Start aus NSPiOS.
+    func isPreparedByLiveContainer(_ entry: GameEntry) -> Bool {
+        guard let app = installedApp(entry),
+              let info = Self.readPlist(app.appendingPathComponent("LCAppInfo.plist")) else { return false }
+        return info["LCPatchRevision"] != nil
     }
 
     /// App-Icon aus den Control-Daten (icon_*.dat = JPEG) – der Packer kann es auf iOS nicht selbst schreiben.
@@ -280,6 +328,7 @@ final class GameLibrary: ObservableObject {
 
     func refresh() async {
         load()
+        for entry in games { repairLiveContainerInfo(entry) }
         for entry in games where entry.state == .needsCapture {
             let count = capturedCount(entry)
             captured[entry.titleID] = count
@@ -309,6 +358,11 @@ final class GameLibrary: ObservableObject {
             return
         }
         try? writeEnvironment(entry)
+        guard isPreparedByLiveContainer(entry) else {
+            errorMessage = L("First start: open LiveContainer and tap „\(entry.name)“ in its app list. LiveContainer signs the game once – after that, Play works from NSPiOS.",
+                             "Erster Start: Öffne LiveContainer und tippe dort in der App-Liste auf „\(entry.name)“. LiveContainer signiert das Spiel einmalig – danach startet es direkt aus NSPiOS.")
+            return
+        }
         guard let url = LiveContainer.launchURL(bundleName: entry.bundleName) else { return }
         UIApplication.shared.open(url) { [weak self] ok in
             guard !ok else { return }
