@@ -190,7 +190,12 @@ def prepare(args):
     for d in list(games.iterdir()):
         lower = games / d.name.lower()
         if d.is_dir() and not d.is_symlink() and d.name != d.name.lower() and not lower.exists():
-            os.symlink(d.name, lower)
+            try:
+                os.symlink(d.name, lower)
+            except FileExistsError:
+                pass                 # Dateisystem ohne Groß-/Kleinschreibung: der Name findet den Ordner schon
+        if d.is_dir() and not (games / d.name.lower() / 'game.tsv').is_file():
+            raise RuntimeError(f'profile {d.name} is not reachable as {d.name.lower()}')
     return {'packer': str(dst), 'tag': tag}
 
 
