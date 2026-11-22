@@ -342,7 +342,7 @@ final class GameLibrary: ObservableObject {
         let tid = entry.titleID
         let source = URL(fileURLWithPath: entry.exefsPath).deletingLastPathComponent()
         let freed = await Task.detached(priority: .utility) {
-            Self.cleanWork(tid) + (deleteNCAs ? Self.deleteNCAs(in: source) : 0) + Self.cleanTemp()
+            Self.cleanWork(tid) + (deleteNCAs ? Self.deleteNCAs(in: source) : 0) + Self.cleanTemp() + Self.cleanTools()
         }.value
         if freed > 1_000_000 {
             message = L("Cleaned up · \(formatBytes(freed)) freed", "Aufgeräumt · \(formatBytes(freed)) frei")
@@ -351,9 +351,10 @@ final class GameLibrary: ObservableObject {
 
     /// Alle Spiele aufräumen (Einstellungen › Bereinigen).
     func cleanUpAll() async -> Int64 {
+        guard !GameBuilder.shared.running else { return 0 }
         let ids = games.map(\.titleID)
         return await Task.detached(priority: .utility) {
-            ids.reduce(Int64(0)) { $0 + Self.cleanWork($1) } + Self.cleanTemp()
+            ids.reduce(Int64(0)) { $0 + Self.cleanWork($1) } + Self.cleanTemp() + Self.cleanTools()
         }.value
     }
 
@@ -382,6 +383,11 @@ final class GameLibrary: ObservableObject {
             .sorted { $0.lastPathComponent > $1.lastPathComponent }
         for old in files.dropFirst(5) { freed += remove(old) }
         return freed
+    }
+
+    /// Spiel-Shell, Packer-Arbeitskopie und geladene Profile – NSPiOS holt bzw. erstellt sie beim nächsten Bauen neu.
+    nonisolated static func cleanTools() -> Int64 {
+        remove(GameBuilder.shellPath.deletingLastPathComponent()) + remove(GameBuilder.packerPath)
     }
 
     /// Temporäre Dateien der Engine (Python-Aufrufe, Downloads, Probeläufe).

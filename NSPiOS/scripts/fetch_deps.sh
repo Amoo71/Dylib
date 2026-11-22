@@ -47,6 +47,14 @@ python3 -I scripts/make_profile_index.py Vendor/ns2ios-shell/dm/games py/packer/
 # Version + Prüfsumme der Dateien: NSPiOS erneuert seine Packer-Kopie, sobald sich der Inhalt ändert
 SUM=$(cd py/packer && find . -type f -exec shasum {} + | LC_ALL=C sort | shasum | cut -c1-12)
 echo "$NS2IOS_TAG-$SUM" > py/packer/NSPIOS_PACKER_TAG
+# Ryujinx-Quellen: dmsh_chain.py berechnet die Shader-Ketten-Version (NVN-Spiele) auch aus diesen Dateien
+mkdir -p py/packer/dm/third_party
+cp -R Vendor/ns2ios-shell/dm/third_party/ryujinx py/packer/dm/third_party/
+# Mac/Windows-Programme laufen auf iOS nicht (NSPiOS ruft spirv-cross und dmsh_xlate im Prozess auf): weglassen.
+# Der Packer prüft nur, ob dmsh_xlate als Datei da ist – ein Platzhalter genügt.
+rm -rf py/packer/dm/gfx/tools/spirv_cross_bin py/packer/dm/tools/nx_extract_bin py/packer/dm/gfx/tools/dmsh_xlate_bin
+mkdir -p py/packer/dm/gfx/tools/dmsh_xlate_bin
+echo "NSPiOS: the shader translator runs in-process (NSPiOSXlate.framework)" > py/packer/dm/gfx/tools/dmsh_xlate_bin/dmsh_xlate
 cp Vendor/ns2ios-shell/LICENSE py/packer/LICENSE
 find py/packer -name '__pycache__' -type d -prune -exec rm -rf {} +
 find py/packer -name '*.exe' -delete
