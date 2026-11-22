@@ -144,6 +144,7 @@ def _install():
     os.environ['DM_REWRITE_J'] = '1'       # keine fork-Worker (auf iOS nicht möglich)
     os.environ['DMSH_PROCS'] = '0'         # dmsh_build.py: Shader in Threads statt Prozessen fertigstellen
     os.environ['NXN_METAL_TOOLS'] = 'off'  # kein Metal-Compiler: Quellen ins Paket, das Gerät kompiliert beim 1. Start
+    os.environ['NSPIOS_ONE_LIBRARY'] = '1' # Reflexion ohne entry_u_side (keine <key>_bx, siehe scripts/patch_vendor.py)
     os.environ.setdefault('J', '4')
 
     # Prozess-Pools (shader_split.py u. a.) → Thread-Pools: iOS startet keine Zusatzprozesse.
@@ -472,6 +473,34 @@ def prepare(args):
     return {'packer': str(dst), 'tag': tag}
 
 
+# Stand der Shader-Bibliotheken, die NSPiOS selbst richtigstellt (entry_u_side, c1_full/cb_extent nach dem Abbruch in c1_guard).
+# Ein Arbeitsordner von einem älteren Stand wird neu übersetzt (der Shader-Cache bleibt, das geht schnell).
+SHADER_FIX = '2'
+
+
+def _refresh_stale_shaders(dump):
+    import shutil
+    for work in Path(dump).glob('*_pack'):
+        stamp = work / 'NSPIOS_SHADER_FIX'
+        if stamp.is_file() and stamp.read_text().strip() == SHADER_FIX:
+            continue
+        shutil.rmtree(work / 'build' / 'ios' / 'dmsh_b', ignore_errors=True)
+        cache = work / 'shader' / 'cache'
+        for old in list(cache.glob('b-*')) if cache.is_dir() else []:
+            if old.is_dir():
+                shutil.rmtree(old, ignore_errors=True)
+            else:
+                old.unlink(missing_ok=True)
+
+
+def _mark_shaders(dump):
+    for work in Path(dump).glob('*_pack'):
+        try:
+            (work / 'NSPIOS_SHADER_FIX').write_text(SHADER_FIX + '\n')
+        except OSError:
+            pass
+
+
 def pack(args):
     """Packt ein Spiel aus einem entpackten Ordner (base/exefs, base/romfs).
 
@@ -490,10 +519,14 @@ def pack(args):
     if args.get('version'):
         argv += ['-p', str(args['version'])]
 
+    if not args.get('no_shaders'):
+        _refresh_stale_shaders(args['dump'])
     log = Path(args['log'])
     log.parent.mkdir(parents=True, exist_ok=True)
     with open(log, 'w', encoding='utf-8', errors='replace') as f:
         rc, _, _ = _run_python([str(script)] + argv, None, None, f, subprocess.STDOUT)
+    if rc == 0 and not args.get('no_shaders'):
+        _mark_shaders(args['dump'])
     if rc != 0:
         tail = log.read_text(encoding='utf-8', errors='replace').strip().splitlines()[-25:]
         raise Packed('\n'.join(tail) or f'nxn_pack.py exit {rc}')

@@ -50,4 +50,23 @@ if (root / 'py/packer/scripts/nxn_pack.py').is_file():
           "    return '%016X' % struct.unpack_from('<Q', d, off + 0x10)[0]   # NSPiOS: upper case, as the profile folders",
           'NSPiOS: upper case')
 
+# ns2ios-shell, Weg ohne Apple-Compiler (nometal_run.py): Es gibt keine Seitenbibliothek <key>_bx; der typisierte Einstieg
+# (main0_u, Ganzzahl-G-Buffer z. B. Luigi's Mansion 3) steckt in der einen <key>_b-Bibliothek. dmsh_build.py schreibt in die
+# Reflexion trotzdem entry_u_side, und die Shell sucht ihn dann nur in <key>_bx: jeder G-Buffer-Shader fällt aus (keine Texturen).
+# dmsh_mtlcache.py gehört nicht zur Übersetzungskette (dmsh_chain.FILES): die Kettenversion bleibt gleich.
+if (root / 'py/packer/dm/gfx/tools/dmsh_mtlcache.py').is_file():
+    patch('py/packer/dm/gfx/tools/dmsh_mtlcache.py',
+          'def _replace(src, dst, tries=40):\n',
+          'def _nspios_one_library(path):\n'
+          '    """NSPiOS: no side library on this route, the typed-output entry point is in the base library (see patch_vendor.py)."""\n'
+          '    try:\n'
+          '        with open(path, encoding="utf-8") as f: value = json.load(f)\n'
+          '    except (OSError, ValueError): return\n'
+          '    if isinstance(value, dict) and value.pop("entry_u_side", None) is not None:\n'
+          '        with open(path, "w", encoding="utf-8") as f: json.dump(value, f, ensure_ascii=False, indent=1)\n'
+          '\n\n'
+          'def _replace(src, dst, tries=40):\n'
+          '    if str(dst).endswith("_b.json") and os.environ.get("NSPIOS_ONE_LIBRARY") == "1": _nspios_one_library(src)\n',
+          'NSPiOS: no side library')
+
 print('patch_vendor: ok')
