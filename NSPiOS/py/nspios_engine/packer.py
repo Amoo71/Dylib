@@ -19,6 +19,87 @@ class Packed(Exception):
     pass
 
 
+class _Result:
+    """Das, was Pool.apply_async/map_async zurückgeben, über einem Future."""
+    def __init__(self, future, one=True):
+        self._f, self._one = future, one
+
+    def get(self, timeout=None):
+        return self._f.result(timeout)
+
+    def wait(self, timeout=None):
+        import concurrent.futures as cf
+        cf.wait([self._f], timeout)
+
+    def ready(self):
+        return self._f.done()
+
+    def successful(self):
+        return self._f.done() and self._f.exception() is None
+
+
+class ThreadPoolAsMPPool:
+    """multiprocessing.Pool mit Threads: gleiche Aufrufe, gleiche Reihenfolge der Ergebnisse."""
+    def __init__(self, processes=None, initializer=None, initargs=(), maxtasksperchild=None, context=None):
+        import concurrent.futures as cf
+        self._ex = cf.ThreadPoolExecutor(max_workers=processes or int(os.environ.get('J', '4')),
+                                         initializer=initializer, initargs=initargs)
+        self._closed = False
+
+    def apply(self, func, args=(), kwds={}):
+        return self._ex.submit(func, *args, **kwds).result()
+
+    def apply_async(self, func, args=(), kwds={}, callback=None, error_callback=None):
+        f = self._ex.submit(func, *args, **kwds)
+        if callback or error_callback:
+            def done(fut):
+                e = fut.exception()
+                if e is None:
+                    if callback: callback(fut.result())
+                elif error_callback:
+                    error_callback(e)
+            f.add_done_callback(done)
+        return _Result(f)
+
+    def map(self, func, iterable, chunksize=None):
+        return list(self._ex.map(func, iterable))
+
+    def map_async(self, func, iterable, chunksize=None, callback=None, error_callback=None):
+        items = list(iterable)
+        return self.apply_async(self.map, (func, items),
+                                callback=callback, error_callback=error_callback)
+
+    def imap(self, func, iterable, chunksize=1):
+        return self._ex.map(func, iterable)
+
+    def imap_unordered(self, func, iterable, chunksize=1):
+        import concurrent.futures as cf
+        fs = [self._ex.submit(func, x) for x in iterable]
+        return (f.result() for f in cf.as_completed(fs))
+
+    def starmap(self, func, iterable, chunksize=None):
+        return [r for r in self._ex.map(lambda a: func(*a), iterable)]
+
+    def starmap_async(self, func, iterable, chunksize=None, callback=None, error_callback=None):
+        items = list(iterable)
+        return self.apply_async(self.starmap, (func, items), callback=callback, error_callback=error_callback)
+
+    def close(self):
+        self._closed = True
+
+    def terminate(self):
+        self._ex.shutdown(wait=False, cancel_futures=True)
+
+    def join(self):
+        self._ex.shutdown(wait=True)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.terminate()   # wie multiprocessing.Pool: __exit__ beendet den Pool
+
+
 def _make_spirv_stub():
     """Platzhalterdatei für spirv-cross: Werkzeug-Prüfungen (which, Fingerabdruck per Datei-Hash) brauchen eine echte
     Datei. Ausgeführt wird sie nie – Aufrufe dieses Pfads leitet _run in NSPiOSNative.framework um."""
@@ -66,6 +147,12 @@ def _install():
             super().__init__(max_workers=max_workers or int(os.environ.get('J', '4')),
                              initializer=initializer, initargs=initargs)
     cf.ProcessPoolExecutor = ThreadPoolAsProcessPool
+
+    # multiprocessing.Pool (c1_guard.py, patch_nso.py) → Threads. Auch multiprocessing.pool.ThreadPool ginge nicht:
+    # es legt intern Prozess-Sperren an, und dafür fehlt _multiprocessing auf iOS.
+    import multiprocessing, multiprocessing.context
+    multiprocessing.Pool = ThreadPoolAsMPPool
+    multiprocessing.context.BaseContext.Pool = lambda self, *a, **k: ThreadPoolAsMPPool(*a, **k)
 
     real_signal = signal.signal
 
@@ -324,6 +411,10 @@ def smoke(args):
     import shutil
     if shutil.which('spirv-cross') != SPIRV:
         return {'rc': 3, 'log': 'spirv-cross is not found through shutil.which'}
+    import multiprocessing
+    with multiprocessing.Pool() as pool:   # c1_guard.py: ohne _multiprocessing nur mit dem Thread-Ersatz
+        if pool.map(abs, [-1, -2], chunksize=64) != [1, 2]:
+            return {'rc': 3, 'log': 'multiprocessing.Pool replacement is broken'}
 
     # Shader-Übersetzung wie im Fertigbau: vk_shaders.py mit einer „Aufnahme“ aus einem Test-Shader
     from nspios_engine.selftest import _minimal_compute_spirv
