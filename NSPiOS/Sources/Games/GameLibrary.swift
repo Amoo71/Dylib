@@ -42,6 +42,8 @@ struct GameEntry: Codable, Identifiable, Hashable {
     var settings: [String: String] = [:]
     var lastError: String?
     var builtAt: Date?
+    /// Anzahl der Shader, mit denen die installierte Version gebaut wurde.
+    var builtShaders: Int?
 
     var id: String { titleID }
     var bundleName: String { "NSPiOS-\(titleID).app" }
@@ -166,6 +168,7 @@ final class GameLibrary: ObservableObject {
             if entry.expectedShaders == 0 { entry.expectedShaders = Self.expectedShaderCount(entry.titleID) }
             try install(app, entry: entry)
             entry.state = final ? .ready : .needsCapture
+            entry.builtShaders = final ? capturedCount(entry) : nil
             entry.packerTag = GameBuilder.shellTag
             entry.builtAt = Date()
             save(entry)
@@ -335,10 +338,10 @@ final class GameLibrary: ObservableObject {
         let fm = FileManager.default
         try fm.createDirectory(at: docs, withIntermediateDirectories: true)
         var lines = entry.settings.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }
-        if entry.state == .needsCapture {
-            try fm.createDirectory(at: docs.appendingPathComponent("vkcap"), withIntermediateDirectories: true)
-            lines.append("DM_VK_CAPTURE=vkcap")
-        }
+        // Shader-Aufnahme immer an: in der Aufnahme-Version für den Fertigbau, in der fertigen Version für Shader,
+        // die erst später im Spiel entstehen (Neubau übernimmt sie dann).
+        try fm.createDirectory(at: docs.appendingPathComponent("vkcap"), withIntermediateDirectories: true)
+        lines.append("DM_VK_CAPTURE=vkcap")
         let text = "# NSPiOS – per-game settings (edit them in NSPiOS)\n" + lines.joined(separator: "\n") + "\n"
         try text.write(to: docs.appendingPathComponent("env.txt"), atomically: true, encoding: .utf8)
     }
@@ -348,17 +351,33 @@ final class GameLibrary: ObservableObject {
     func refresh() async {
         load()
         for entry in games { repairLiveContainerInfo(entry) }
+        for entry in games where entry.state == .ready {
+            captured[entry.titleID] = capturedCount(entry)
+        }
         for entry in games where entry.state == .needsCapture {
             let count = capturedCount(entry)
             captured[entry.titleID] = count
             // Aufnahme vollständig → automatisch fertig bauen
-            if entry.expectedShaders > 0, count >= entry.expectedShaders, !autoFinishing.contains(entry.titleID),
+            if entry.expectedShaders > 0, count >= Self.autoFinishThreshold(entry.expectedShaders),
+               !autoFinishing.contains(entry.titleID),
                !GameBuilder.shared.running {
                 autoFinishing.insert(entry.titleID)
                 await buildAndInstall(entry, final: true)
                 autoFinishing.remove(entry.titleID)
             }
         }
+    }
+
+    /// Ab hier wird automatisch fertig gebaut: 99 % – einzelne Shader entstehen erst später im Spiel und kommen
+    /// mit einem späteren Neubau dazu.
+    nonisolated static func autoFinishThreshold(_ expected: Int) -> Int {
+        max(1, Int((Double(expected) * 0.99).rounded(.down)))
+    }
+
+    /// Neu aufgenommene Shader seit dem letzten Fertigbau (für „Shader aktualisieren“).
+    func newShaders(_ entry: GameEntry) -> Int {
+        guard entry.state == .ready, let built = entry.builtShaders else { return 0 }
+        return max(0, capturedCount(entry) - built)
     }
 
     func capturedCount(_ entry: GameEntry) -> Int {

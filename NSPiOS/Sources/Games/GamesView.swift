@@ -126,6 +126,13 @@ struct GamesView: View {
             }
             .disabled(builder.running || library.capturedCount(game) == 0)
         }
+        if game.state == .ready, library.newShaders(game) > 0 {
+            Button { Task { await library.buildAndInstall(game, final: true) } } label: {
+                Label(L("Update shaders (+\(library.newShaders(game)))", "Shader aktualisieren (+\(library.newShaders(game)))"),
+                      systemImage: "sparkles")
+            }
+            .disabled(builder.running)
+        }
         Button { Task { await library.rebuild(game, recapture: false) } } label: {
             Label(L("Rebuild", "Neu bauen"), systemImage: "arrow.triangle.2.circlepath")
         }
@@ -205,12 +212,20 @@ private struct GameCard: View {
                 }
             }
         case .ready:
-            if prepared {
-                Label(L("Ready", "Bereit"), systemImage: "checkmark.circle.fill")
-                    .font(.caption)
-                    .foregroundStyle(.green)
-            } else {
-                firstStartHint
+            VStack(alignment: .leading, spacing: 4) {
+                if prepared {
+                    Label(L("Ready", "Bereit"), systemImage: "checkmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                } else {
+                    firstStartHint
+                }
+                if let built = game.builtShaders, captured > built {
+                    Label(L("+\(captured - built) new shaders – hold › Update shaders", "+\(captured - built) neue Shader – halten › Shader aktualisieren"),
+                          systemImage: "sparkles")
+                        .font(.caption)
+                        .foregroundStyle(Theme.accent)
+                }
             }
         case .failed:
             Text(game.lastError ?? L("Build failed", "Build fehlgeschlagen"))
