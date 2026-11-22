@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Lädt die Abhängigkeiten der NSPiOS-Engine (nicht im Repo):
-#   Python für iOS (BeeWare), capstone (Disassembler), SPIRV-Cross (Shader), lz4.
+#   Python für iOS (BeeWare), capstone (Disassembler), SPIRV-Cross (Shader), lz4, zstd.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -9,6 +9,7 @@ PY_ASSET=Python-3.13-iOS-support.b18.tar.gz
 CAPSTONE_TAG=5.0.6
 SPIRV_TAG=vulkan-sdk-1.4.357.0
 LZ4_TAG=v1.10.0
+ZSTD_TAG=v1.5.7
 # ns2ios-shell (nxnative ohne Mac): Packer-Quellen; die Shell-App lädt NSPiOS zur Laufzeit aus demselben Release
 NS2IOS_TAG=v0.0.0047
 
@@ -25,6 +26,7 @@ clone() { [ -d "Vendor/$1" ] || git clone -q --depth 1 --branch "$2" "$3" "Vendo
 clone capstone "$CAPSTONE_TAG" https://github.com/capstone-engine/capstone
 clone SPIRV-Cross "$SPIRV_TAG" https://github.com/KhronosGroup/SPIRV-Cross
 clone lz4 "$LZ4_TAG" https://github.com/lz4/lz4
+clone zstd "$ZSTD_TAG" https://github.com/facebook/zstd
 
 clone ns2ios-shell "$NS2IOS_TAG" https://github.com/xinerqu/ns2ios-shell
 

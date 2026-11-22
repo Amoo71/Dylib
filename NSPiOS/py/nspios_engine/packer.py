@@ -19,6 +19,13 @@ class Packed(Exception):
     pass
 
 
+class _Exec(BaseException):
+    """os.exec* in einem eingebetteten „Prozess“: Befehl und Umgebung für den Neustart."""
+    def __init__(self, argv, env):
+        super().__init__(argv)
+        self.argv, self.env = argv, env
+
+
 class _Result:
     """Das, was Pool.apply_async/map_async zurückgeben, über einem Future."""
     def __init__(self, future, one=True):
@@ -151,8 +158,15 @@ def _install():
     # multiprocessing.Pool (c1_guard.py, patch_nso.py) → Threads. Auch multiprocessing.pool.ThreadPool ginge nicht:
     # es legt intern Prozess-Sperren an, und dafür fehlt _multiprocessing auf iOS.
     import multiprocessing, multiprocessing.context
-    multiprocessing.Pool = ThreadPoolAsMPPool
-    multiprocessing.context.BaseContext.Pool = lambda self, *a, **k: ThreadPoolAsMPPool(*a, **k)
+    from . import mp_threads
+    mp_threads.install(ThreadPoolAsMPPool)
+
+    # os.execv*/execve: ein Skript, das sich selbst neu startet (patch_nso.py bei großem Code), würde NSPiOS ersetzen.
+    # Stattdessen bricht der „Prozess“ ab und _run_python führt den neuen Befehl im Interpreter aus.
+    def exec_instead(path, argv, env=None):
+        raise _Exec(list(argv), dict(env) if env is not None else None)
+    for name in ('execv', 'execve', 'execvp', 'execvpe'):
+        setattr(os, name, exec_instead)
 
     real_signal = signal.signal
 
@@ -251,7 +265,12 @@ def _run(cmd, *args, stdin=None, input=None, stdout=None, stderr=None, capture_o
         elif stdout is None:
             sys.stdout.write(out); out = ''
     else:
-        raise FileNotFoundError(f'NSPiOS: the program {prog!r} is not available on iOS')
+        res = _builtin_tool(base, argv, input, cwd)
+        if res is None:
+            raise FileNotFoundError(f'NSPiOS: the program {prog!r} is not available on iOS')
+        rc, out, err = res
+        out = _deliver(out, stdout, sys.stdout, stdout)
+        err = _deliver(err, stderr, sys.stderr, stdout)
 
     if not as_text:
         out = out.encode() if isinstance(out, str) else out
@@ -262,6 +281,102 @@ def _run(cmd, *args, stdin=None, input=None, stdout=None, stderr=None, capture_o
     if check and rc:
         raise subprocess.CalledProcessError(rc, argv, result.stdout, result.stderr)
     return result
+
+
+def _deliver(data, target, console, stdout_target):
+    """Ausgabe eines eingebauten Befehls dorthin, wohin ein echter Prozess sie geschrieben hätte. → was in PIPE bleibt."""
+    if not data or target == subprocess.PIPE:
+        return data
+    if target == subprocess.STDOUT:
+        target = stdout_target
+        if target == subprocess.PIPE:
+            return data
+    if target == subprocess.DEVNULL:
+        return b'' if isinstance(data, bytes) else ''
+    if target is None:
+        target = console
+    if isinstance(target, int):
+        os.write(target, data if isinstance(data, bytes) else data.encode())
+    else:
+        try:
+            target.write(data)
+        except TypeError:
+            target.write(data.decode(errors='replace') if isinstance(data, bytes) else data.encode())
+    return b'' if isinstance(data, bytes) else ''
+
+
+def _builtin_tool(base, argv, input, cwd):
+    """Kleine Unix-Befehle, die der Packer aufruft, im Prozess nachgebildet. → (rc, stdout, stderr) oder None."""
+    import shutil
+    here = lambda p: p if os.path.isabs(p) or not cwd else os.path.join(cwd, p)
+    opts = [a for a in argv[1:] if a.startswith('-')]
+    args = [a for a in argv[1:] if not a.startswith('-')]
+    if base in ('zstd', 'zstd.exe', 'unzstd', 'zstdcat'):
+        if base == 'zstd' and not ({'-d', '--decompress', '-dc', '-cd', '-dcq'} & set(opts)):
+            return None                                   # Packen braucht der Packer nicht
+        from backports import zstd as z
+        try:
+            if input is not None:
+                data = bytes(input)
+            else:
+                data = b''.join(open(here(a), 'rb').read() for a in args)
+            return 0, z.decompress(data), ''
+        except (z.ZstdError, OSError) as e:
+            return 1, b'', 'zstd: %s\n' % e
+    if base == 'cp':
+        if len(args) < 2:
+            return 1, '', 'cp: missing operand\n'
+        srcs, dst = [here(a) for a in args[:-1]], here(args[-1])
+        recursive = any(o in ('-R', '-r', '-a') or ('R' in o and not o.startswith('--')) for o in opts)
+        try:
+            for src in srcs:
+                target = os.path.join(dst, os.path.basename(src.rstrip('/'))) if os.path.isdir(dst) else dst
+                if os.path.isdir(src):
+                    if not recursive:
+                        return 1, '', 'cp: %s is a directory\n' % src
+                    shutil.copytree(src, target, symlinks=True, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(src, target)
+            return 0, '', ''
+        except OSError as e:
+            return 1, '', 'cp: %s\n' % e
+    if base == 'xattr':
+        return 1, '', 'xattr: no such xattr\n'            # iOS-Dateien tragen keine Packer-Attribute
+    if base == 'sysctl':
+        name = args[0] if args else ''
+        val = {'hw.optional.arm64': '1', 'hw.ncpu': str(os.cpu_count() or 4), 'hw.logicalcpu': str(os.cpu_count() or 4),
+               'hw.physicalcpu': str(os.cpu_count() or 4), 'hw.perflevel0.physicalcpu': str(os.cpu_count() or 4)}.get(name)
+        if val is None and name == 'hw.memsize':
+            try:
+                val = str(os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES'))
+            except (ValueError, OSError, AttributeError):
+                val = str(6 << 30)
+        if val is None:
+            return 1, '', 'sysctl: unknown oid %r\n' % name
+        return 0, (val if '-n' in opts else '%s: %s' % (name, val)) + '\n', ''
+    if base == 'which':
+        hits = [shutil.which(a) for a in args]
+        return (0 if hits and all(hits) else 1), ''.join(h + '\n' for h in hits if h), ''
+    if base == 'uname':
+        return 0, ('arm64' if '-m' in opts or '-p' in opts else 'Darwin') + '\n', ''
+    if base == 'true':
+        return 0, '', ''
+    if base == 'false':
+        return 1, '', ''
+    if base == 'ln':
+        if len(args) != 2:
+            return 1, '', 'ln: usage\n'
+        try:
+            dst = here(args[1])
+            if os.path.isdir(dst) and not os.path.islink(dst):
+                dst = os.path.join(dst, os.path.basename(args[0]))
+            if '-f' in ''.join(opts) and os.path.lexists(dst):
+                os.unlink(dst)
+            (os.symlink if 's' in ''.join(opts) else os.link)(args[0] if 's' in ''.join(opts) else here(args[0]), dst)
+            return 0, '', ''
+        except OSError as e:
+            return 1, '', 'ln: %s\n' % e
+    return None
 
 
 def _run_python(args, cwd, env, stdout, stderr):
@@ -289,6 +404,7 @@ def _run_python(args, cwd, env, stdout, stderr):
     saved_env = dict(os.environ)
     saved_modules = set(sys.modules)
     rc = 0
+    again = None
     try:
         if env is not None:
             os.environ.clear()
@@ -306,6 +422,8 @@ def _run_python(args, cwd, env, stdout, stderr):
                     sys.argv = [script] + script_args[1:]
                     sys.path.insert(0, os.path.dirname(script))
                     runpy.run_path(script, run_name='__main__')
+            except _Exec as e:
+                again = e
             except SystemExit as e:
                 if e.code is None:
                     rc = 0
@@ -328,7 +446,14 @@ def _run_python(args, cwd, env, stdout, stderr):
         for name in list(sys.modules):
             if name not in saved_modules:
                 del sys.modules[name]
-    return rc, (out_buf.getvalue() if out_buf else ''), (err_buf.getvalue() if err_buf else '')
+    out_text, err_text = (out_buf.getvalue() if out_buf else ''), (err_buf.getvalue() if err_buf else '')
+    if again is not None:
+        prog = again.argv[0] if again.argv else ''
+        if not (prog == sys.executable or os.path.basename(prog).lower().startswith('python')):
+            return 1, out_text, err_text + 'NSPiOS: exec of %r is not possible on iOS\n' % prog
+        rc, o2, e2 = _run_python(again.argv[1:], cwd, again.env if again.env is not None else env, stdout, stderr)
+        return rc, out_text + o2, err_text + e2
+    return rc, out_text, err_text
 
 
 def prepare(args):
@@ -415,6 +540,30 @@ def smoke(args):
     with multiprocessing.Pool() as pool:   # c1_guard.py: ohne _multiprocessing nur mit dem Thread-Ersatz
         if pool.map(abs, [-1, -2], chunksize=64) != [1, 2]:
             return {'rc': 3, 'log': 'multiprocessing.Pool replacement is broken'}
+    v = multiprocessing.get_context('fork').Value('i', 0)
+    with v.get_lock():
+        v.value += 1
+    # zstd (Spieldateien), eingebaute Befehle und ein Skript, das sich per os.execve neu startet
+    from backports import zstd
+    frame = bytes.fromhex('28b52ffd60e0009d0000604e5350694f53207a737464200100d1574b12')
+    if zstd.decompress(frame) != b'NSPiOS zstd ' * 40:
+        return {'rc': 3, 'log': 'zstd decompress is broken'}
+    if subprocess.run(['zstd', '-d', '-c', '-q'], input=frame, capture_output=True).stdout != b'NSPiOS zstd ' * 40:
+        return {'rc': 3, 'log': 'the zstd command is broken'}
+    import tempfile
+    tdir = Path(tempfile.mkdtemp(prefix='nspios-smoke-'))
+    (tdir / 'again.py').write_text("import os, sys\n"
+                                   "if 'AGAIN' not in os.environ:\n"
+                                   "    os.execve(sys.executable, [sys.executable] + sys.argv, dict(os.environ, AGAIN='1'))\n"
+                                   "sys.exit(7)\n")
+    if subprocess.run([sys.executable, str(tdir / 'again.py')], capture_output=True).returncode != 7:
+        return {'rc': 3, 'log': 'os.execve re-run is broken'}
+    if subprocess.run(['cp', '-c', str(tdir / 'again.py'), str(tdir / 'copy.py')]).returncode or not (tdir / 'copy.py').is_file():
+        return {'rc': 3, 'log': 'the cp command is broken'}
+    if subprocess.run(['sysctl', '-n', 'hw.optional.arm64'], capture_output=True, text=True).stdout.strip() != '1':
+        return {'rc': 3, 'log': 'the sysctl command is broken'}
+    import shutil as _sh
+    _sh.rmtree(tdir, ignore_errors=True)
 
     # Shader-Übersetzung wie im Fertigbau: vk_shaders.py mit einer „Aufnahme“ aus einem Test-Shader
     from nspios_engine.selftest import _minimal_compute_spirv
