@@ -587,9 +587,12 @@ enum PackageReader {
                 }
 
                 var ncaJobs: [CopyJob] = []
+                var hasPatch = false
                 for (index, fs, section) in header.sections {
                     if section.isPatch {
-                        warnings.append("\(candidate.name): " + L("Section \(index) is an update patch – use „Extract with update…“ on the base game.", "Section \(index) ist ein Update-Patch – nutze „Mit Update entpacken …“ beim Basisspiel."))
+                        // Die NCA bleibt erhalten: mit ihr lässt sich das Update später einspielen (Games › Update installieren)
+                        hasPatch = true
+                        _ = index
                         continue
                     }
                     switch fs[2] {
@@ -609,7 +612,7 @@ enum PackageReader {
                     let path = uniquePath(job.path, used: &usedPaths)
                     jobs.append(CopyJob(path: path, size: job.size, source: job.source, file: candidate.file))
                 }
-                decrypted.insert(candidate.path)
+                if !hasPatch { decrypted.insert(candidate.path) }
             } catch {
                 warnings.append("\(candidate.name): \(error.localizedDescription)")
             }

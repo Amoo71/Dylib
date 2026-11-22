@@ -420,10 +420,17 @@ final class FileStore: ObservableObject {
 
     /// Basisspiel + Update entpacken: RomFS mit eingespieltem Update, ExeFS aus dem Update.
     /// Update direkt auf das installierte Spiel (ohne Basispaket).
-    func enqueueUpdateOnInstalled(update: URL, installedRomFS: URL, then: (@MainActor @Sendable (URL) -> Void)? = nil) {
-        guard keyCount > 0 else { return }
+    func enqueueUpdateOnInstalled(update: URL, installedRomFS: URL, securityScoped: Bool = false,
+                                  then: (@MainActor @Sendable (URL) -> Void)? = nil) {
+        guard keyCount > 0 else {
+            alert = AlertMessage(
+                title: L("prod.keys missing", "prod.keys fehlt"),
+                message: L("Load your prod.keys in Settings › RomFS first.", "Lade zuerst deine prod.keys unter Einstellungen › RomFS.")
+            )
+            return
+        }
         pending.append(PendingExtraction(
-            source: update, securityScoped: false, deleteSource: false,
+            source: update, securityScoped: securityScoped, deleteSource: false,
             options: PackageReader.ExtractOptions(), update: update, then: then, installedRomFS: installedRomFS
         ))
         queuedCount = pending.count
@@ -573,14 +580,17 @@ final class FileStore: ObservableObject {
     private func startMergedJob(_ next: PendingExtraction, update: URL, flag: CancelFlag) {
         let installedRomFS = next.installedRomFS
         let baseName = installedRomFS != nil
-            ? update.deletingPathExtension().lastPathComponent
+            ? update.deletingPathExtension().lastPathComponent + " (Update)"
             : next.source.deletingPathExtension().lastPathComponent + " + Update"
         let finalURL = FS.uniqueURL(in: extractedDir, fileName: baseName, isDirectory: true)
         let partURL = extractedDir.appendingPathComponent(finalURL.lastPathComponent + ".part", isDirectory: true)
         let source = next.source
         let then = next.then
+        let scopedSource = next.securityScoped
 
         Task.detached(priority: .userInitiated) {
+            let scoped = scopedSource && update.startAccessingSecurityScopedResource()
+            defer { if scoped { update.stopAccessingSecurityScopedResource() } }
             let report: (UInt64, UInt64, String) -> Void = { done, total, file in
                 Task { @MainActor in
                     self.updateProgress(flag: flag, done: done, total: total, file: file)

@@ -213,8 +213,9 @@ final class ReconstructedBase: @unchecked Sendable {
 
 extension PackageReader {
     /// Update auf ein installiertes Spiel anwenden, ohne Basispaket: unveränderte Daten kommen aus dessen RomFS-Ordner.
+    /// `source`: Update-Paket (NSP/XCI), eine NCA-Datei oder ein Ordner mit den NCAs (+ .tik) des Updates.
     static func extractUpdate(
-        _ updateURL: URL,
+        _ source: URL,
         onto installedRomFS: URL,
         to destination: URL,
         keys: KeySet,
@@ -222,60 +223,95 @@ extension PackageReader {
         progress: @escaping (_ done: UInt64, _ total: UInt64, _ currentFile: String) -> Void
     ) throws -> ExtractResult {
         guard keys.headerKey != nil else { throw NCAError.missingKey("header_key") }
-        let info = try inspect(updateURL)
-        let fd = open(updateURL.path, O_RDONLY)
-        guard fd >= 0 else { throw PackageError.corruptHeader(updateURL.lastPathComponent) }
-        defer { close(fd) }
-        _ = fcntl(fd, F_RDAHEAD, 1)
-        let fds = [fd]
-
-        let entries = info.entries.filter { info.format == .nsp || $0.path.hasPrefix("secure/") }
+        var fds: [Int32] = []
+        defer { fds.forEach { close($0) } }
+        var ncas: [(name: String, file: Int, offset: UInt64, size: UInt64)] = []
         var tickets: [Data: Data] = [:]
-        for entry in entries where entry.name.lowercased().hasSuffix(".tik") && entry.size <= 0x10000 {
-            var data = Data(count: Int(entry.size))
-            let got = data.withUnsafeMutableBytes { pread(fd, $0.baseAddress, Int(entry.size), off_t(entry.dataOffset)) }
-            if got == Int(entry.size), let ticket = try? NCAReader.parseTicket(data) {
-                tickets[ticket.rightsID] = ticket.encryptedTitleKey
+
+        func openFile(_ url: URL) throws -> Int {
+            let fd = open(url.path, O_RDONLY)
+            guard fd >= 0 else { throw PackageError.corruptHeader(url.lastPathComponent) }
+            _ = fcntl(fd, F_RDAHEAD, 1)
+            fds.append(fd)
+            return fds.count - 1
+        }
+        func addTicket(_ data: Data) {
+            if let ticket = try? NCAReader.parseTicket(data) { tickets[ticket.rightsID] = ticket.encryptedTitleKey }
+        }
+
+        let isDirectory = (try? source.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+        if isDirectory || source.pathExtension.lowercased() == "nca" {
+            let found = FS.ncaFiles(in: source)
+            for url in found.ncas where url.pathExtension.lowercased() == "nca" {
+                let size = UInt64((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+                ncas.append((url.lastPathComponent, try openFile(url), 0, size))
+            }
+            for url in found.tickets {
+                if let data = try? Data(contentsOf: url), data.count <= 0x10000 { addTicket(data) }
+            }
+        } else {
+            let info = try inspect(source)
+            let file = try openFile(source)
+            let entries = info.entries.filter { info.format == .nsp || $0.path.hasPrefix("secure/") }
+            for entry in entries where entry.name.lowercased().hasSuffix(".tik") && entry.size <= 0x10000 {
+                var data = Data(count: Int(entry.size))
+                let got = data.withUnsafeMutableBytes { pread(fds[file], $0.baseAddress, Int(entry.size), off_t(entry.dataOffset)) }
+                if got == Int(entry.size) { addTicket(data) }
+            }
+            for entry in entries where entry.name.lowercased().hasSuffix(".nca") {
+                ncas.append((entry.name, file, entry.dataOffset, entry.size))
             }
         }
 
         var jobs: [CopyJob] = []
         var version: UInt32?
         var programs = 0
-        for entry in entries where entry.name.lowercased().hasSuffix(".nca") {
-            guard let header = try? NCAReader.open(fd: fd, ncaOffset: entry.dataOffset, ncaSize: entry.size, keys: keys, tickets: tickets) else { continue }
-            if entry.name.lowercased().hasSuffix(".cnmt.nca") {
+        var patchFound = false
+        for nca in ncas {
+            let fd = fds[nca.file]
+            guard let header = try? NCAReader.open(fd: fd, ncaOffset: nca.offset, ncaSize: nca.size, keys: keys, tickets: tickets) else { continue }
+            if nca.name.lowercased().hasSuffix(".cnmt.nca") {
                 version = version ?? ContentMeta.version(fd: fd, header: header)
                 continue
             }
+            var planned: [CopyJob] = []
             if header.isProgram {
                 guard programs == 0 else { continue }   // ein Programm: das installierte Spiel
                 programs += 1
                 for (index, fs, section) in header.sections {
                     if fs[2] == 0 {
                         if section.isPatch {
-                            let patched = try PatchedSection(baseSource: .none, patch: section, patchFile: 0, patchFS: fs, fds: fds)
+                            patchFound = true
+                            let patched = try PatchedSection(baseSource: .none, patch: section, patchFile: nca.file, patchFS: fs, fds: fds)
                             _ = try ReconstructedBase.build(patched: patched, fds: fds, patchFS: fs, installedRomFS: installedRomFS,
                                                             cancel: cancel, progress: progress)
-                            jobs += try NCAReader.planRomFS(patched: patched, fds: fds, fsHeader: fs, root: "romfs")
+                            planned += try NCAReader.planRomFS(patched: patched, fds: fds, fsHeader: fs, root: "romfs")
                         } else {
-                            jobs += try NCAReader.planRomFS(fd: fd, section: section, fsHeader: fs, root: "romfs")
+                            planned += try NCAReader.planRomFS(fd: fd, section: section, fsHeader: fs, root: "romfs")
                         }
                     } else if fs[2] == 1, index == 0 {
-                        jobs += try NCAReader.planExeFS(fd: fd, section: section, fsHeader: fs, root: "exefs")
+                        planned += try NCAReader.planExeFS(fd: fd, section: section, fsHeader: fs, root: "exefs")
                     }
                 }
             } else if header.isControl {
                 for (_, fs, section) in header.sections where fs[2] == 0 && !section.isPatch {
-                    jobs += try NCAReader.planRomFS(fd: fd, section: section, fsHeader: fs, root: "control")
+                    planned += try NCAReader.planRomFS(fd: fd, section: section, fsHeader: fs, root: "control")
                 }
             }
+            jobs += planned.map { CopyJob(path: $0.path, size: $0.size, source: $0.source, file: nca.file) }
         }
-        guard programs > 0 else { throw PackageError.corruptHeader(L("No program found in the update.", "Kein Programm im Update gefunden.")) }
+        guard programs > 0 else {
+            throw PackageError.corruptHeader(L("No update program found here. Pick the update NSP/XCI, or a folder that still holds its .nca files.",
+                                               "Hier ist kein Update-Programm. Wähle das Update-NSP/XCI oder einen Ordner, der noch seine .nca-Dateien hat."))
+        }
+        guard patchFound || jobs.contains(where: { $0.path.hasPrefix("romfs/") }) else {
+            throw PackageError.corruptHeader(L("This folder no longer holds the update's RomFS patch (.nca). Pick the update NSP/XCI instead.",
+                                               "Dieser Ordner enthält den RomFS-Patch des Updates (.nca) nicht mehr. Wähle stattdessen das Update-NSP/XCI."))
+        }
         try runJobs(jobs, fds: fds, destination: destination, cancel: cancel, progress: progress)
         if let version {
             try? "\(version)\n".write(to: destination.appendingPathComponent(versionMarker), atomically: true, encoding: .utf8)
         }
-        return ExtractResult(fileCount: jobs.count, decryptedCount: programs, ncaCount: jobs.count, warnings: [])
+        return ExtractResult(fileCount: jobs.count, decryptedCount: programs, ncaCount: ncas.count, warnings: [])
     }
 }
