@@ -27,7 +27,18 @@ def _install():
     _installed = True
     os.environ['SPIRV_CROSS'] = SPIRV
     os.environ['DM_REWRITE_J'] = '1'       # keine fork-Worker (auf iOS nicht möglich)
+    os.environ['DMSH_PROCS'] = '0'         # dmsh_build.py: Shader in Threads statt Prozessen fertigstellen
+    os.environ['NXN_METAL_TOOLS'] = 'off'  # kein Metal-Compiler: Quellen ins Paket, das Gerät kompiliert beim 1. Start
     os.environ.setdefault('J', '4')
+
+    # Prozess-Pools (shader_split.py u. a.) → Thread-Pools: iOS startet keine Zusatzprozesse.
+    import concurrent.futures as cf
+
+    class ThreadPoolAsProcessPool(cf.ThreadPoolExecutor):
+        def __init__(self, max_workers=None, mp_context=None, initializer=None, initargs=(), **_):
+            super().__init__(max_workers=max_workers or int(os.environ.get('J', '4')),
+                             initializer=initializer, initargs=initargs)
+    cf.ProcessPoolExecutor = ThreadPoolAsProcessPool
 
     real_signal = signal.signal
 
@@ -98,6 +109,16 @@ def _run(cmd, *args, stdin=None, input=None, stdout=None, stderr=None, capture_o
 
     if prog == sys.executable or base.startswith('python'):
         rc, out, err = _run_python(argv[1:], cwd, env, stdout, stderr)
+    elif base in ('dmsh_xlate', 'dmsh_xlate.exe'):
+        from nspios_engine import native
+        rc, out, err = native.dmsh_xlate(argv[1:])
+        for text, target in ((out, stdout), (err, stderr)):
+            if text and target not in (subprocess.PIPE, None) and hasattr(target, 'write'):
+                target.write(text)
+        if stdout is None and out:
+            sys.stdout.write(out)
+        if stderr is None and err:
+            sys.stderr.write(err)
     elif prog == SPIRV or base in ('spirv-cross', 'spirv-cross.exe'):
         from nspios_engine import native
         rc, out = native.spirv_cross(argv[1:])
@@ -141,6 +162,7 @@ def _run_python(args, cwd, env, stdout, stderr):
         err_target = err_buf or (stderr if hasattr(stderr, 'write') else sys.stderr)
 
     saved_argv, saved_path, saved_cwd = sys.argv[:], sys.path[:], os.getcwd()
+    saved_sub = (subprocess.run, subprocess.Popen, subprocess.call, subprocess.check_call, subprocess.check_output)
     saved_env = dict(os.environ)
     saved_modules = set(sys.modules)
     rc = 0
@@ -174,6 +196,7 @@ def _run_python(args, cwd, env, stdout, stderr):
                 rc = 1
     finally:
         sys.argv, sys.path[:] = saved_argv, saved_path
+        (subprocess.run, subprocess.Popen, subprocess.call, subprocess.check_call, subprocess.check_output) = saved_sub
         os.chdir(saved_cwd)
         if env is not None:
             os.environ.clear()

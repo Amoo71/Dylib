@@ -43,6 +43,14 @@ jobs:
       - name: Engine-Abhängigkeiten laden (Python für iOS, capstone, SPIRV-Cross, lz4)
         run: ./scripts/fetch_deps.sh
 
+      - name: .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Shader-Übersetzer (dmsh_xlate) für iOS bauen (NativeAOT)
+        run: ./scripts/build_xlate.sh
+
       - name: Xcode-Projekt erzeugen
         run: xcodegen generate
 

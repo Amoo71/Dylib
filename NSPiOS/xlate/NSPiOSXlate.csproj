@@ -1,0 +1,32 @@
+<!-- dmsh_xlate (nxnative's Switch shader → SPIR-V translator, on Ryujinx's shader library) as a NativeAOT shared library
+     for iOS, so NSPiOS can call it in-process (iOS allows no helper processes). Built by scripts/build_xlate.sh. -->
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <PublishAot>true</PublishAot>
+    <NativeLib>Shared</NativeLib>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <UseSystemResourceKeys>true</UseSystemResourceKeys>
+    <AssemblyName>NSPiOSXlate</AssemblyName>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <NoWarn>$(NoWarn);CS8981;IL2026;IL3050;IL2104;IL3053</NoWarn>
+    <XlateSrc>$(MSBuildThisFileDirectory)../Vendor/ns2ios-shell/dm/gfx/tools/dmsh_xlate</XlateSrc>
+    <RyuSrc>$(MSBuildThisFileDirectory)../Vendor/ns2ios-shell/dm/third_party/ryujinx</RyuSrc>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- gen/Program.cs: the original with Main made internal (callable from Exports.cs); the ORIGINAL files are embedded,
+         so `--source-sha` reports the same digest as the packer's copy (tool_lock.py compares them) -->
+    <Compile Include="gen/Program.cs" />
+    <Compile Include="Exports.cs" />
+    <EmbeddedResource Include="$(XlateSrc)/Program.cs" LogicalName="src0" />
+    <EmbeddedResource Include="$(XlateSrc)/dmsh_xlate.csproj" LogicalName="src1" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="$(RyuSrc)/src/Ryujinx.Graphics.Shader/Ryujinx.Graphics.Shader.csproj" />
+    <ProjectReference Include="$(RyuSrc)/src/Ryujinx.Common/Ryujinx.Common.csproj" />
+  </ItemGroup>
+</Project>

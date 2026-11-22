@@ -9,8 +9,27 @@ struct GameProgram: Identifiable, Hashable, Sendable {
     let romfs: URL
     var id: String { titleID }
 
-    var name: String { GameBuilder.knownNames[titleID] ?? titleID }
-    var isSupported: Bool { GameBuilder.knownNames[titleID] != nil }
+    var profile: GameProfileInfo? { GameBuilder.profileIndex[titleID] }
+    var name: String { profile?.name ?? titleID }
+    var isSupported: Bool { profile?.status == "ok" }
+    /// Grafikweg „vulkan-capture“: das Spiel erzeugt seine Shader erst beim Laufen (Aufnahme nötig).
+    var needsCapture: Bool { profile?.route == "vulkan-capture" }
+
+    var unsupportedReason: String? {
+        switch profile?.status {
+        case "ok": return nil
+        case "mac_only": return L("Shaders only unpack on a Mac", "Shader nur auf einem Mac entpackbar")
+        case "multi_program": return L("Launcher title – not supported", "Launcher-Titel – nicht unterstützt")
+        case "gl": return L("OpenGL game – not yet", "OpenGL-Spiel – noch nicht")
+        default: return L("No nxnative profile", "Kein nxnative-Profil")
+        }
+    }
+}
+
+struct GameProfileInfo: Sendable {
+    let name: String
+    let route: String
+    let status: String
 }
 
 enum GameBuilderError: LocalizedError {
@@ -40,10 +59,21 @@ final class GameBuilder: ObservableObject {
     static let shellURL = URL(string: "https://github.com/xinerqu/ns2ios-shell/releases/download/v0.0.0047/ns2ios-20261121-ba34f1b-ba34f1b.zip")!
     static let shellSHA256 = "fb5175921a6ac63c82797093d2d66ddf7737952d7e2c56452eebfcc0c23dec4c"
 
-    static let knownNames: [String: String] = [
-        "0100FD8022DAA000": "Super Mario Galaxy 2",
-        "010099C022B96000": "Super Mario Galaxy",
-    ]
+    /// Commit von ns2ios-shell, zu dem der Packer gehört (Profile werden von genau diesem Stand geladen).
+    static let packerCommit = "ba34f1ba3e22ed18d215d73f50f76dfdb60f015e"
+
+    /// Alle Spiele mit nxnative-Profil (aus profiles_index.tsv im gebündelten Packer).
+    nonisolated static let profileIndex: [String: GameProfileInfo] = {
+        guard let url = bundledPacker?.appendingPathComponent("profiles_index.tsv"),
+              let text = try? String(contentsOf: url, encoding: .utf8) else { return [:] }
+        var index: [String: GameProfileInfo] = [:]
+        for line in text.split(whereSeparator: \.isNewline) where !line.hasPrefix("#") {
+            let f = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+            guard f.count >= 4 else { continue }
+            index[f[0].uppercased()] = GameProfileInfo(name: f[1], route: f[2], status: f[3])
+        }
+        return index
+    }()
 
     @Published private(set) var running = false
     @Published private(set) var progress: String?
@@ -133,6 +163,49 @@ final class GameBuilder: ObservableObject {
         return Self.packerPath
     }
 
+    // MARK: - Profile
+
+    private struct GitHubItem: Decodable {
+        let name: String
+        let type: String
+        let download_url: String?
+    }
+
+    /// Lädt das nxnative-Profil (dm/games/<ID>) vom passenden ns2ios-Stand, falls es noch fehlt.
+    func ensureProfile(_ titleID: String) async throws {
+        let dir = Self.packerPath.appendingPathComponent("dm/games/\(titleID)", isDirectory: true)
+        if FileManager.default.fileExists(atPath: dir.appendingPathComponent("game.tsv").path) { return }
+        progress = L("Downloading game profile …", "Lade Spielprofil …")
+        try await downloadFolder("dm/games/\(titleID)", to: dir)
+        guard FileManager.default.fileExists(atPath: dir.appendingPathComponent("game.tsv").path) else {
+            throw GameBuilderError.pack(L("No nxnative profile for \(titleID).", "Kein nxnative-Profil für \(titleID)."))
+        }
+    }
+
+    private func downloadFolder(_ path: String, to dir: URL) async throws {
+        guard let api = URL(string: "https://api.github.com/repos/xinerqu/ns2ios-shell/contents/\(path)?ref=\(Self.packerCommit)") else { return }
+        var request = URLRequest(url: api)
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.setValue("NSPiOS", forHTTPHeaderField: "User-Agent")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+            throw GameBuilderError.pack(L("Profile download failed (HTTP \(http.statusCode)).", "Profil-Download fehlgeschlagen (HTTP \(http.statusCode))."))
+        }
+        let items = try JSONDecoder().decode([GitHubItem].self, from: data)
+        let fm = FileManager.default
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        for item in items {
+            if item.type == "dir" {
+                try await downloadFolder("\(path)/\(item.name)", to: dir.appendingPathComponent(item.name, isDirectory: true))
+            } else if item.type == "file", let link = item.download_url, let url = URL(string: link) {
+                let (temp, _) = try await URLSession.shared.download(from: url)
+                let target = dir.appendingPathComponent(item.name)
+                try? fm.removeItem(at: target)
+                try fm.moveItem(at: temp, to: target)
+            }
+        }
+    }
+
     // MARK: - Bauen
 
     /// Baut die Spiel-App. `noShaders` = Aufnahme-Lauf (Spiel erzeugt seine Shader beim ersten Start).
@@ -155,6 +228,7 @@ final class GameBuilder: ObservableObject {
         let shell = try await ensureShell()
         progress = L("Preparing packer …", "Bereite Packer vor …")
         let packer = try await ensurePacker()
+        try await ensureProfile(program.titleID)
 
         // Spielordner: base/exefs und base/romfs als Verweise auf die entpackten Daten (nichts wird kopiert)
         let fm = FileManager.default

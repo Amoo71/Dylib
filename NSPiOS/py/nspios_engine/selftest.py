@@ -54,5 +54,14 @@ def run(_args=None):
     msl = native.spirv_to_msl(_minimal_compute_spirv())
     assert 'kernel void main0' in msl, msl[:200]
     result['spirv_cross'] = 'ok'
+
+    if native.xlate_available():
+        _step('dmsh_xlate')
+        rc, out, err = native.dmsh_xlate(['--source-sha'])
+        sha = out.strip()
+        assert rc == 0 and len(sha) == 16, (rc, out, err)
+        result['dmsh_xlate'] = sha
+    else:
+        result['dmsh_xlate'] = 'missing'
     _step('done')
     return result

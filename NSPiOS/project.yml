@@ -79,6 +79,20 @@ targets:
             rsync -au --delete "$XCF/$SLICE/lib/" "$CODESIGNING_FOLDER_PATH/python/lib/" --exclude 'libpython*.dylib'
           fi
           echo "Installed Python from $SLICE ($ARCH):"; ls "$CODESIGNING_FOLDER_PATH/python/lib"
+      - name: Embed shader translator (NativeAOT)
+        basedOnDependencyAnalysis: false
+        script: |
+          set -e
+          if [ "$EFFECTIVE_PLATFORM_NAME" = "-iphonesimulator" ]; then RID=iossimulator-arm64; else RID=ios-arm64; fi
+          SRC="$PROJECT_DIR/Vendor/xlate/$RID/NSPiOSXlate.dylib"
+          if [ ! -f "$SRC" ]; then echo "warning: $SRC missing (scripts/build_xlate.sh) – NVN games cannot be built"; exit 0; fi
+          FW="$CODESIGNING_FOLDER_PATH/Frameworks/NSPiOSXlate.framework"
+          mkdir -p "$FW"
+          cp "$SRC" "$FW/NSPiOSXlate"
+          cp "$PROJECT_DIR/Support/dylib-Info-template.plist" "$FW/Info.plist"
+          plutil -replace CFBundleExecutable -string NSPiOSXlate "$FW/Info.plist"
+          plutil -replace CFBundleIdentifier -string de.amoo71.NSPiOS.xlate "$FW/Info.plist"
+          echo "Embedded $(du -h "$FW/NSPiOSXlate" | cut -f1) shader translator ($RID)"
       - name: Prepare Python binary modules
         basedOnDependencyAnalysis: false
         script: |

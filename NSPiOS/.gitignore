@@ -11,3 +11,6 @@ py/packer/
 build-sim/
 selftest.log
 __pycache__/
+xlate/gen/
+xlate/bin/
+xlate/obj/

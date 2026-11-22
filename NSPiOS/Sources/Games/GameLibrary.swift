@@ -159,7 +159,8 @@ final class GameLibrary: ObservableObject {
         entry.state = .building
         entry.lastError = nil
         save(entry)
-        await buildAndInstall(entry, final: false)
+        // Spiele, die ihre Shader erst beim Laufen erzeugen (Galaxy): erst Aufnahme-Lauf. Alle anderen direkt fertig.
+        await buildAndInstall(entry, final: !program.needsCapture)
     }
 
     /// Baut und installiert. `final == false`: Aufnahme-Lauf (Spiel nimmt beim Start seine Shader auf).
@@ -169,7 +170,7 @@ final class GameLibrary: ObservableObject {
         entry.lastError = nil
         save(entry)
         do {
-            let capture = final ? try keepCapture(entry) : nil
+            let capture = final && entry.program.needsCapture ? try keepCapture(entry) : nil
             let app = try await GameBuilder.shared.build(entry.program, noShaders: !final, vkCapture: capture)
             if entry.expectedShaders == 0 { entry.expectedShaders = Self.expectedShaderCount(entry.titleID) }
             try install(app, entry: entry)
@@ -186,7 +187,7 @@ final class GameLibrary: ObservableObject {
                 await cleanUp(entry, deleteNCAs: final && UserDefaults.standard.bool(forKey: Self.deleteSourceNCAKey))
             }
         } catch {
-            entry.state = final ? .needsCapture : .failed
+            entry.state = final && entry.program.needsCapture ? .needsCapture : .failed
             entry.lastError = error.localizedDescription
             save(entry)
             errorMessage = error.localizedDescription
@@ -424,8 +425,10 @@ final class GameLibrary: ObservableObject {
         var lines = entry.settings.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }
         // Shader-Aufnahme immer an: in der Aufnahme-Version für den Fertigbau, in der fertigen Version für Shader,
         // die erst später im Spiel entstehen (Neubau übernimmt sie dann).
-        try fm.createDirectory(at: docs.appendingPathComponent("vkcap"), withIntermediateDirectories: true)
-        lines.append("DM_VK_CAPTURE=vkcap")
+        if entry.program.needsCapture {
+            try fm.createDirectory(at: docs.appendingPathComponent("vkcap"), withIntermediateDirectories: true)
+            lines.append("DM_VK_CAPTURE=vkcap")
+        }
         let text = "# NSPiOS – per-game settings (edit them in NSPiOS)\n" + lines.joined(separator: "\n") + "\n"
         try text.write(to: docs.appendingPathComponent("env.txt"), atomically: true, encoding: .utf8)
     }
@@ -516,7 +519,7 @@ final class GameLibrary: ObservableObject {
             entry.state = .needsCapture
             await buildAndInstall(entry, final: false)
         } else {
-            await buildAndInstall(entry, final: capturedCount(entry) > 0)
+            await buildAndInstall(entry, final: !entry.program.needsCapture || capturedCount(entry) > 0)
         }
     }
 
@@ -526,7 +529,7 @@ final class GameLibrary: ObservableObject {
         entry.exefsPath = program.exefs.path
         entry.romfsPath = program.romfs.path
         save(entry)
-        await buildAndInstall(entry, final: capturedCount(entry) > 0)
+        await buildAndInstall(entry, final: !entry.program.needsCapture || capturedCount(entry) > 0)
     }
 
     var needsRebuildForShell: [String] {

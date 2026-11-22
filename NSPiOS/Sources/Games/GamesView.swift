@@ -137,10 +137,12 @@ struct GamesView: View {
             Label(L("Rebuild", "Neu bauen"), systemImage: "arrow.triangle.2.circlepath")
         }
         .disabled(builder.running)
-        Button { Task { await library.rebuild(game, recapture: true) } } label: {
-            Label(L("Capture shaders again", "Shader neu aufnehmen"), systemImage: "camera.metering.center.weighted")
+        if game.program.needsCapture {
+            Button { Task { await library.rebuild(game, recapture: true) } } label: {
+                Label(L("Capture shaders again", "Shader neu aufnehmen"), systemImage: "camera.metering.center.weighted")
+            }
+            .disabled(builder.running)
         }
-        .disabled(builder.running)
         Button { updateFor = game } label: {
             Label(L("Update / other files", "Update / andere Dateien"), systemImage: "square.and.arrow.down.on.square")
         }
@@ -284,18 +286,20 @@ struct AddGameSheet: View {
                         dismiss()
                     } label: {
                         HStack(spacing: 12) {
-                            Image(systemName: program.isSupported ? "gamecontroller.fill" : "questionmark.square.dashed")
+                            Image(systemName: program.isSupported ? "gamecontroller.fill" : "nosign")
                                 .foregroundStyle(program.isSupported ? Theme.accent : .secondary)
                                 .frame(width: 28)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(program.name).font(.body.weight(.medium))
-                                Text("\(program.titleID) · \(program.exefs.deletingLastPathComponent().lastPathComponent)")
+                                Text(program.unsupportedReason
+                                     ?? "\(program.titleID) · \(program.exefs.deletingLastPathComponent().lastPathComponent)")
                                     .font(.caption.monospaced())
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(program.isSupported ? AnyShapeStyle(.secondary) : AnyShapeStyle(.orange))
                             }
                         }
                     }
                     .foregroundStyle(.primary)
+                    .disabled(!program.isSupported)
                     .listRowBackground(Theme.rowBackground)
                 }
             }

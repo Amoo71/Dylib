@@ -1,5 +1,5 @@
 """Zugriff auf die nativen Bibliotheken in NSPiOSNative.framework (SPIRV-Cross, lz4, capstone)."""
-import ctypes, os, tempfile
+import ctypes, os, tempfile, threading
 
 _lib = ctypes.CDLL(os.environ['NSPIOS_NATIVE_LIB'])
 
@@ -45,3 +45,59 @@ def spirv_to_msl(spirv: bytes, extra=()):
         if rc != 0:
             raise RuntimeError(f'spirv-cross failed ({rc})')
         return out
+
+
+# --- nxnatives Shader-Übersetzer (dmsh_xlate, NativeAOT) -------------------------------------------------------------
+
+_xlate = None
+_xlate_lock = threading.Lock()
+
+
+def xlate_available():
+    p = os.environ.get('NSPIOS_XLATE_LIB', '')
+    return bool(p) and os.path.exists(p)
+
+
+def dmsh_xlate(args):
+    """Führt dmsh_xlate im Prozess aus (wie die CLI). Gibt (Rückgabewert, stdout, stderr) zurück.
+
+    Der Übersetzer schreibt auf die Datei-Deskriptoren 1/2; die werden für die Dauer des Aufrufs in Temp-Dateien
+    umgeleitet (seriell, damit sich Aufrufe nicht die Ausgabe teilen).
+    """
+    global _xlate
+    if not xlate_available():
+        return 127, '', 'NSPiOS: the shader translator (NSPiOSXlate.framework) is missing from this build\n'
+    if _xlate is None:
+        _xlate = ctypes.CDLL(os.environ['NSPIOS_XLATE_LIB'])
+        _xlate.nspios_dmsh_xlate_main.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_char_p)]
+        _xlate.nspios_dmsh_xlate_main.restype = ctypes.c_int
+    argv = [str(a).encode() for a in args]
+    arr = (ctypes.c_char_p * max(len(argv), 1))(*argv)
+    with _xlate_lock:
+        out_fd, out_path = tempfile.mkstemp(suffix='.out')
+        err_fd, err_path = tempfile.mkstemp(suffix='.err')
+        import sys
+        for stream in (sys.stdout, sys.stderr):
+            try:
+                stream.flush()
+            except Exception:
+                pass
+        saved_out, saved_err = os.dup(1), os.dup(2)
+        try:
+            os.dup2(out_fd, 1)
+            os.dup2(err_fd, 2)
+            rc = _xlate.nspios_dmsh_xlate_main(len(argv), arr)
+        finally:
+            os.dup2(saved_out, 1)
+            os.dup2(saved_err, 2)
+            os.close(saved_out)
+            os.close(saved_err)
+            os.close(out_fd)
+            os.close(err_fd)
+        with open(out_path, encoding='utf-8', errors='replace') as f:
+            out = f.read()
+        with open(err_path, encoding='utf-8', errors='replace') as f:
+            err = f.read()
+        os.remove(out_path)
+        os.remove(err_path)
+    return rc, out, err

@@ -40,6 +40,11 @@ final class PythonEngine: @unchecked Sendable {
             throw EngineError.unavailable("NSPiOSNative.framework")
         }
         setenv("NSPIOS_NATIVE_LIB", native, 1)
+        // nxnatives Shader-Übersetzer (NativeAOT) für NVN-Spiele
+        if let frameworks = Bundle.main.privateFrameworksURL {
+            let xlate = frameworks.appendingPathComponent("NSPiOSXlate.framework/NSPiOSXlate").path
+            if FileManager.default.fileExists(atPath: xlate) { setenv("NSPIOS_XLATE_LIB", xlate, 1) }
+        }
         setenv("TMPDIR", NSTemporaryDirectory(), 1)
 
         let paths = [

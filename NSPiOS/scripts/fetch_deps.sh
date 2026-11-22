@@ -41,6 +41,9 @@ find Vendor/ns2ios-shell/dm/games -maxdepth 1 -type f -exec cp {} py/packer/dm/g
 for tid in 0100FD8022DAA000 010099C022B96000; do   # Super Mario Galaxy 2, Super Mario Galaxy
   cp -R "Vendor/ns2ios-shell/dm/games/$tid" py/packer/dm/games/
 done
+# Spieleliste aller Profile (Name, Grafikweg, Status); die Profile selbst lädt NSPiOS bei Bedarf
+python3 -I scripts/make_profile_index.py Vendor/ns2ios-shell/dm/games py/packer/profiles_index.tsv
+
 # Version + Prüfsumme der Dateien: NSPiOS erneuert seine Packer-Kopie, sobald sich der Inhalt ändert
 SUM=$(cd py/packer && find . -type f -exec shasum {} + | LC_ALL=C sort | shasum | cut -c1-12)
 echo "$NS2IOS_TAG-$SUM" > py/packer/NSPIOS_PACKER_TAG
