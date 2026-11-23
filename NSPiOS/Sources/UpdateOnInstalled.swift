@@ -29,6 +29,9 @@ final class ReconstructedBase: @unchecked Sendable {
 
     /// Kleine Lücken zwischen Dateien (Ausrichtung im RomFS) sind Nullen; größere Lücken sind unbekannte Daten.
     private static let maxPadding: UInt64 = 0x200
+    /// Unbekannte Basisbereiche als Nullen lesen (Füllbereiche im Original). Nur zulässig, wenn jeder betroffene Block
+    /// danach gegen eine Prüfsumme des Updates bestätigt wird (build → verify mit mustVerify).
+    var unknownAsZero = false
 
     private func fd(_ url: URL) throws -> Int32 {
         lock.lock(); defer { lock.unlock() }
@@ -86,7 +89,7 @@ final class ReconstructedBase: @unchecked Sendable {
             } else {
                 let next = i + 1 < spans.count ? spans[i + 1].start : UInt64.max
                 let n = Int(min(UInt64(count - done), next - p))
-                guard UInt64(n) <= Self.maxPadding else {
+                guard UInt64(n) <= Self.maxPadding || unknownAsZero else {
                     throw NCAError.updateNeedsBase(L("unknown base data", "unbekannte Basisdaten"))
                 }
                 memset(out + done, 0, n)
@@ -128,14 +131,14 @@ final class ReconstructedBase: @unchecked Sendable {
         //    Schwach: geänderte Datei mit altem Inhalt → Startposition, die alle ihre Basis-Stücke abdeckt.
         var strong: [Span] = []
         var weak: [Span] = []
-        var baseFragments: [(start: UInt64, length: UInt64, path: String)] = []
+        var baseFragments: [(start: UInt64, length: UInt64, path: String, virtual: UInt64)] = []
         var used = Set<String>()
         for job in jobs {
             guard case .patched(_, let virtualStart) = job.source, job.size > 0 else { continue }
             let pieces = patched.fragments(at: virtualStart, count: job.size)
             let fromBase = pieces.filter { !$0.fromPatch }
             guard !fromBase.isEmpty else { continue }
-            baseFragments += fromBase.map { ($0.physical, $0.length, job.path) }
+            baseFragments += fromBase.map { ($0.physical, $0.length, job.path, $0.virtual) }
             guard let file = installed[job.path] else { continue }
             let candidates = fromBase.map { $0.physical &- ($0.virtual - virtualStart) }
             let contiguous = Set(candidates).count == 1
@@ -197,37 +200,57 @@ final class ReconstructedBase: @unchecked Sendable {
         }
         let base = ReconstructedBase(spans: spans)
 
-        // 4) Jedes Basis-Stück einer Datei muss abgedeckt sein
+        // 4) Basis-Stücke, die in keiner Datei liegen: Füllbereiche des Originals (Nullen) – aber nur, wenn jeder Block
+        //    mit so einem Stück gegen eine Prüfsumme des Updates bestätigt wird. Sonst lieber abbrechen.
         let missing = baseFragments.filter { !base.covers($0.start, $0.length) }
-        guard missing.isEmpty else {
-            let bytes = missing.reduce(UInt64(0)) { $0 + $1.length }
-            var paths: [String] = []
-            for m in missing where !paths.contains(m.path) && paths.count < 3 { paths.append(m.path) }
-            NSLog("NSPiOS: update on installed game: unresolved base data in \(Set(missing.map(\.path)).sorted())")
-            throw NCAError.updateNeedsBase(L("\(bytes / 1024) KB of base data not found in the installed game – \(paths.joined(separator: ", "))",
-                                             "\(bytes / 1024) KB Basisdaten nicht im installierten Spiel gefunden – \(paths.joined(separator: ", "))"))
+        var paths: [String] = []
+        for m in missing where !paths.contains(m.path) && paths.count < 3 { paths.append(m.path) }
+        let bytes = missing.reduce(UInt64(0)) { $0 + $1.length }
+        let notFound = NCAError.updateNeedsBase(L("\(bytes / 1024) KB of base data not found in the installed game – \(paths.joined(separator: ", "))",
+                                                  "\(bytes / 1024) KB Basisdaten nicht im installierten Spiel gefunden – \(paths.joined(separator: ", "))"))
+        if !missing.isEmpty {
+            NSLog("NSPiOS: update on installed game: \(bytes) bytes of base data outside any file, in \(Set(missing.map(\.path)).sorted()) – read as zeros, every block must verify")
+            base.unknownAsZero = true
         }
         patched.baseSource = .files(base)
 
         // 5) Prüfen gegen die IVFC-Prüfsummen des Updates
-        try verify(patched: patched, fds: fds, fs: fs, cancel: cancel, progress: progress)
+        try verify(patched: patched, fds: fds, fs: fs, mustVerify: missing.map { ($0.virtual, $0.length) },
+                   failure: notFound, cancel: cancel, progress: progress)
         return base
     }
 
     /// Jeder Datenblock mit Basis-Anteil, dessen SHA-256 im Update liegt, muss stimmen.
     private static func verify(patched: PatchedSection, fds: [Int32], fs: Data,
+                               mustVerify: [(virtual: UInt64, length: UInt64)], failure: Error,
                                cancel: CancelFlag, progress: (UInt64, UInt64, String) -> Void) throws {
-        guard fs[3] == 3, String(decoding: fs.bytes(0x8, 4), as: UTF8.self) == "IVFC" else { return }
+        guard fs[3] == 3, String(decoding: fs.bytes(0x8, 4), as: UTF8.self) == "IVFC" else {
+            if !mustVerify.isEmpty { throw failure }
+            return
+        }
         let levels = Int(fs.le32(0x8 + 0xC))
         let dataLevel = min(levels - 2, 5)
-        guard dataLevel >= 1 else { return }
+        guard dataLevel >= 1 else {
+            if !mustVerify.isEmpty { throw failure }
+            return
+        }
         func level(_ i: Int) -> (offset: UInt64, size: UInt64, block: UInt64) {
             let at = 0x8 + 0x10 + i * 0x18
             return (fs.le64(at), fs.le64(at + 8), UInt64(1) << UInt64(fs.le32(at + 16)))
         }
         let data = level(dataLevel)
         let hashes = level(dataLevel - 1)
-        guard data.block >= 0x200, data.block <= 0x100000 else { return }
+        guard data.block >= 0x200, data.block <= 0x100000 else {
+            if !mustVerify.isEmpty { throw failure }
+            return
+        }
+        // Blöcke mit geratenen (Null-)Bereichen: müssen bestätigt werden
+        var required = IndexSet()
+        for piece in mustVerify where piece.length > 0 && piece.virtual >= data.offset {
+            let first = (piece.virtual - data.offset) / data.block
+            let last = (piece.virtual + piece.length - 1 - data.offset) / data.block
+            required.insert(integersIn: Int(first)...Int(last))
+        }
 
         // Blöcke mit Basis-Anteil
         var blocks = IndexSet()
@@ -247,7 +270,10 @@ final class ReconstructedBase: @unchecked Sendable {
             if checked % 64 == 0 { progress(checked, total, L("Checking game data …", "Prüfe Spieldaten …")) }
             let hashAt = hashes.offset + UInt64(k) * 32
             guard hashAt + 32 <= hashes.offset + hashes.size,
-                  patched.fragments(at: hashAt, count: 32).allSatisfy(\.fromPatch) else { continue }   // Prüfsumme unverändert: liegt nicht im Update
+                  patched.fragments(at: hashAt, count: 32).allSatisfy(\.fromPatch) else {   // Prüfsumme unverändert: liegt nicht im Update
+                if required.contains(k) { throw failure }
+                continue
+            }
             let expected = try patched.read(fds: fds, at: hashAt, count: 32)
             let blockStart = data.offset + UInt64(k) * data.block
             let length = Int(min(data.block, data.offset + data.size - blockStart))
@@ -259,6 +285,7 @@ final class ReconstructedBase: @unchecked Sendable {
                 ok = Data(SHA256.hash(data: UnsafeRawBufferPointer(start: buffer, count: Int(data.block)))) == expected
             }
             guard ok else {
+                if required.contains(k) { throw failure }
                 throw NCAError.updateNeedsBase(L("check failed at block \(k)", "Prüfung bei Block \(k) fehlgeschlagen"))
             }
             verified += 1

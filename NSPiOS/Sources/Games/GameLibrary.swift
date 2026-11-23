@@ -168,6 +168,48 @@ final class GameLibrary: ObservableObject {
     }
 
     /// Baut und installiert. `final == false`: Aufnahme-Lauf (Spiel nimmt beim Start seine Shader auf).
+    /// Gesicherte ExeFS (Programmcode, klein): Neu bauen geht auch, wenn der entpackte Ordner gelöscht ist.
+    nonisolated static func savedExeFS(_ tid: String) -> URL {
+        GameBuilder.gamesRoot.appendingPathComponent(tid, isDirectory: true).appendingPathComponent("source/exefs", isDirectory: true)
+    }
+
+    nonisolated static func keepExeFS(_ program: GameProgram) {
+        let target = savedExeFS(program.titleID)
+        guard program.exefs.standardizedFileURL != target.standardizedFileURL else { return }
+        let fm = FileManager.default
+        let temp = target.deletingLastPathComponent().appendingPathComponent("exefs.tmp", isDirectory: true)
+        try? fm.removeItem(at: temp)
+        do {
+            try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fm.copyItem(at: program.exefs, to: temp)
+            try? fm.removeItem(at: target)
+            try fm.moveItem(at: temp, to: target)
+        } catch {
+            try? fm.removeItem(at: temp)
+        }
+    }
+
+    /// Woraus gebaut wird: der entpackte Ordner, sonst gesicherte ExeFS + RomFS des installierten Spiels.
+    func sources(_ entry: GameEntry) throws -> GameProgram {
+        let fm = FileManager.default
+        var program = entry.program
+        let exefsOK = fm.fileExists(atPath: program.exefs.appendingPathComponent("main.npdm").path)
+        var isDir: ObjCBool = false
+        let romfsOK = fm.fileExists(atPath: program.romfs.path, isDirectory: &isDir) && isDir.boolValue
+        if exefsOK && romfsOK { return program }
+
+        let saved = Self.savedExeFS(entry.titleID)
+        let installedRomFS = installedApp(entry)?.appendingPathComponent("romfs", isDirectory: true)
+        let exefs = exefsOK ? program.exefs : (fm.fileExists(atPath: saved.appendingPathComponent("main.npdm").path) ? saved : nil)
+        let romfs = romfsOK ? program.romfs : installedRomFS.flatMap { fm.fileExists(atPath: $0.path) ? $0 : nil }
+        guard let exefs, let romfs else {
+            throw GameBuilderError.pack(L("The extracted game files were deleted. Install an update for this game (it brings its code), or extract the game again.",
+                                          "Die entpackten Spieldateien wurden gelöscht. Installiere ein Update für dieses Spiel (bringt seinen Code mit) oder entpacke das Spiel neu."))
+        }
+        program = GameProgram(titleID: entry.titleID, exefs: exefs, romfs: romfs, version: entry.version ?? 0)
+        return program
+    }
+
     /// Spiele, die nach dem laufenden Build neu gebaut werden sollen (z. B. neues DLC).
     private var rebuildQueued: [String] = []
 
@@ -199,7 +241,9 @@ final class GameLibrary: ObservableObject {
         save(entry)
         do {
             let capture = final && entry.program.needsCapture ? try keepCapture(entry) : nil
-            let app = try await GameBuilder.shared.build(entry.program, noShaders: !final, vkCapture: capture)
+            let program = try sources(entry)
+            let app = try await GameBuilder.shared.build(program, noShaders: !final, vkCapture: capture)
+            Self.keepExeFS(program)
             if entry.expectedShaders == 0 { entry.expectedShaders = Self.expectedShaderCount(entry.titleID) }
             try install(app, entry: entry)
             entry.state = final ? .ready : .needsCapture
