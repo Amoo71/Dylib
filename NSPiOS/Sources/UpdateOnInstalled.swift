@@ -15,7 +15,7 @@ final class ReconstructedBase: @unchecked Sendable {
         let url: URL
     }
 
-    private let spans: [Span]
+    let spans: [Span]
     private var handles: [URL: Int32] = [:]
     private let lock = NSLock()
 
@@ -128,9 +128,10 @@ final class ReconstructedBase: @unchecked Sendable {
         guard !installed.isEmpty else { throw NCAError.updateNeedsBase(L("no installed game files", "keine installierten Spieldateien")) }
 
         // 3) Anker. Stark: Datei ganz aus der Basis, am Stück, gleiche Größe → lag dort unverändert.
-        //    Schwach: geänderte Datei mit altem Inhalt → Startposition, die alle ihre Basis-Stücke abdeckt.
+        //    Geändert: Datei mit Teilen ihres alten Inhalts → mögliche alte Startpositionen, die Prüfsummen entscheiden.
+        let verifier = BlockVerifier(patched: patched, fds: fds, fs: fs)
         var strong: [Span] = []
-        var weak: [Span] = []
+        var changedFiles: [(path: String, url: URL, size: UInt64, candidates: [UInt64], pieces: [(virtual: UInt64, length: UInt64)])] = []
         var baseFragments: [(start: UInt64, length: UInt64, path: String, virtual: UInt64)] = []
         var used = Set<String>()
         for job in jobs {
@@ -139,61 +140,98 @@ final class ReconstructedBase: @unchecked Sendable {
             let fromBase = pieces.filter { !$0.fromPatch }
             guard !fromBase.isEmpty else { continue }
             baseFragments += fromBase.map { ($0.physical, $0.length, job.path, $0.virtual) }
-            guard let file = installed[job.path] else { continue }
-            let candidates = fromBase.map { $0.physical &- ($0.virtual - virtualStart) }
-            let contiguous = Set(candidates).count == 1
-            if contiguous, fromBase.count == pieces.count, file.size == job.size {
-                strong.append(Span(start: candidates[0], end: candidates[0] + file.size, url: file.url))
+            guard let file = installed[job.path], file.size > 0 else { continue }
+            let starts = fromBase.map { $0.physical &- ($0.virtual - virtualStart) }
+            if Set(starts).count == 1, fromBase.count == pieces.count, file.size == job.size {
+                strong.append(Span(start: starts[0], end: starts[0] + file.size, url: file.url))
                 used.insert(job.path)
                 continue
             }
-            // die Startposition, deren Bereich die meisten (am liebsten alle) Basis-Stücke enthält
-            var best: (start: UInt64, inside: Int, votes: Int)?
-            for c in Set(candidates) {
-                let inside = fromBase.filter { $0.physical >= c && $0.physical + $0.length <= c + file.size }.count
-                let votes = candidates.filter { $0 == c }.count
-                if inside > 0, best == nil || (inside, votes) > (best!.inside, best!.votes) { best = (c, inside, votes) }
+            // Die alte Datei muss alle ihre Basis-Stücke enthalten: Start in [größtes Ende − Größe, kleinster Anfang]
+            let lowest = fromBase.map(\.physical).min()!
+            let highestEnd = fromBase.map { $0.physical + $0.length }.max()!
+            let lo = highestEnd > file.size ? highestEnd - file.size : 0
+            var votes: [UInt64: Int] = [:]
+            for c in starts where c >= lo && c <= lowest { votes[c, default: 0] += 1 }
+            var candidates = votes.sorted { ($0.value, $1.key) > ($1.value, $0.key) }.map(\.key)
+            for edge in [lowest, lo, lowest & ~15, (lo + 15) & ~15] where edge >= lo && edge <= lowest && !candidates.contains(edge) {
+                candidates.append(edge)
             }
-            if let best {
-                weak.append(Span(start: best.start, end: best.start + file.size, url: file.url))
-                used.insert(job.path)
-            }
+            guard !candidates.isEmpty else { continue }
+            changedFiles.append((job.path, file.url, file.size, Array(candidates.prefix(48)),
+                                 fromBase.map { ($0.virtual, $0.length) }))
         }
+
         var spans = strong
-        for w in weak where !spans.contains(where: { $0.start < w.end && w.start < $0.end }) {
-            spans.append(w)
+        func overlaps(_ span: Span) -> Bool { spans.contains { $0.start < span.end && span.start < $0.end } }
+        /// Probiert Bereiche aus: der erste, dessen geprüfte Blöcke alle stimmen (mindestens einer geprüft), gewinnt;
+        /// lässt sich keiner prüfen, der erste.
+        func choose(_ options: [Span], pieces: [(virtual: UInt64, length: UInt64)]) -> (span: Span, verified: Bool)? {
+            let candidates = options.filter { !overlaps($0) }
+            guard let first = candidates.first else { return nil }
+            guard let verifier else { return (first, false) }
+            let blocks = verifier.blocks(of: pieces)
+            var untestable: Span?
+            for option in candidates {
+                if cancel.isCancelled { return nil }
+                patched.baseSource = .files(ReconstructedBase(spans: spans + [option]))
+                let result = verifier.sample(blocks, limit: 6)
+                if result.failed == 0 && result.passed > 0 { return (option, true) }
+                if result.failed == 0 && untestable == nil { untestable = option }
+            }
+            return untestable.map { ($0, false) }
+        }
+
+        // zwei Runden: in der zweiten stehen mehr Nachbarn fest, also lassen sich mehr Blöcke prüfen
+        var pending = changedFiles.sorted { $0.size > $1.size }
+        for round in 0..<2 {
+            var left: [(path: String, url: URL, size: UInt64, candidates: [UInt64], pieces: [(virtual: UInt64, length: UInt64)])] = []
+            for (n, file) in pending.enumerated() {
+                progress(UInt64(n), UInt64(pending.count), L("Matching changed files …", "Ordne geänderte Dateien zu …"))
+                let options = file.candidates.map { Span(start: $0, end: $0 + file.size, url: file.url) }
+                // Runde 1 nimmt nur bestätigte Treffer, Runde 2 auch ungeprüfte (die Endprüfung deckt Fehlgriffe auf)
+                if let pick = choose(options, pieces: file.pieces), pick.verified || round == 1 {
+                    spans.append(pick.span)
+                    used.insert(file.path)
+                } else {
+                    left.append(file)
+                }
+            }
+            pending = left
         }
 
         // 3b) Lücken füllen: Basis-Stücke, die noch in keinem Bereich liegen, gehören zu Dateien, die im Update anders
-        //     heißen oder fehlen. Eine noch nicht zugeordnete Datei, die in die Lücke passt und das Stück enthält, wird
-        //     dort angenommen (die Prüfung gegen die Prüfsummen deckt Fehlgriffe auf).
-        var free = installed.filter { !used.contains($0.key) }
+        //     heißen oder fehlen. Noch freie Dateien, die in die Lücke passen und das Stück enthalten, werden probiert.
+        var free = installed.filter { !used.contains($0.key) && $0.value.size > 0 }
         func align(_ v: UInt64) -> UInt64 { (v + 15) & ~15 }
-        var changed = true
-        while changed {
-            changed = false
+        var tried = Set<String>()
+        var progressMade = true
+        while progressMade {
+            progressMade = false
             let probe = ReconstructedBase(spans: spans)
             let sorted = spans.sorted { $0.start < $1.start }
             for fragment in baseFragments where !probe.covers(fragment.start, fragment.length) {
+                let key = "\(fragment.start)"
+                guard !tried.contains(key) else { continue }
+                tried.insert(key)
                 let gapStart = align(sorted.last(where: { $0.start <= fragment.start })?.end ?? 0)
                 let gapEnd = sorted.first(where: { $0.start > fragment.start })?.start ?? UInt64.max
                 guard gapStart <= fragment.start, fragment.start + fragment.length <= gapEnd else { continue }
                 let gap = gapEnd == UInt64.max ? UInt64.max : gapEnd - gapStart
-                var choice: (key: String, span: Span, score: UInt64)?
-                for (key, file) in free where file.size > 0 && align(file.size) <= gap {
-                    for position in [gapStart, gapEnd == UInt64.max ? gapStart : (gapEnd - align(file.size)) & ~15] {
+                var options: [(span: Span, rest: UInt64, key: String)] = []
+                for (path, file) in free where align(file.size) <= gap {
+                    for position in Set([gapStart, gapEnd == UInt64.max ? gapStart : (gapEnd - align(file.size)) & ~15]) {
                         guard position <= fragment.start, fragment.start + fragment.length <= position + file.size else { continue }
-                        // bevorzugt: Datei füllt die Lücke (fast) genau, sonst die mit dem kleinsten Rest
                         let rest = gap == UInt64.max ? UInt64.max - file.size : gap - align(file.size)
-                        if choice == nil || rest < choice!.score {
-                            choice = (key, Span(start: position, end: position + file.size, url: file.url), rest)
-                        }
+                        options.append((Span(start: position, end: position + file.size, url: file.url), rest, path))
                     }
                 }
-                if let choice {
-                    spans.append(choice.span)
-                    free.removeValue(forKey: choice.key)
-                    changed = true
+                options.sort { $0.rest < $1.rest }
+                if let chosen = choose(Array(options.prefix(24).map(\.span)), pieces: [(fragment.virtual, fragment.length)]),
+                   let pick = options.first(where: { $0.span.start == chosen.span.start && $0.span.url == chosen.span.url }) {
+                    spans.append(chosen.span)
+                    free.removeValue(forKey: pick.key)
+                    progressMade = true
                     break
                 }
             }
@@ -214,83 +252,111 @@ final class ReconstructedBase: @unchecked Sendable {
         }
         patched.baseSource = .files(base)
 
-        // 5) Prüfen gegen die IVFC-Prüfsummen des Updates
-        try verify(patched: patched, fds: fds, fs: fs, mustVerify: missing.map { ($0.virtual, $0.length) },
-                   failure: notFound, cancel: cancel, progress: progress)
+        // 5) Alles prüfen gegen die IVFC-Prüfsummen des Updates
+        guard let verifier else {
+            if !missing.isEmpty { throw notFound }
+            return base
+        }
+        let required = verifier.blocks(of: missing.map { ($0.virtual, $0.length) })
+        let all = verifier.baseBlocks()
+        var checked: UInt64 = 0, verified = 0
+        for k in all {
+            if cancel.isCancelled { throw PackageError.cancelled }
+            checked += 1
+            if checked % 64 == 0 { progress(checked, UInt64(all.count), L("Checking game data …", "Prüfe Spieldaten …")) }
+            switch verifier.check(k) {
+            case true?: verified += 1
+            case false?:
+                if required.contains(k) { throw notFound }
+                let owner = baseFragments.first { verifier.blocks(of: [($0.virtual, $0.length)]).contains(k) }?.path ?? "?"
+                throw NCAError.updateNeedsBase(L("check failed at block \(k) (\(owner))", "Prüfung bei Block \(k) fehlgeschlagen (\(owner))"))
+            case nil:
+                if required.contains(k) { throw notFound }
+            }
+        }
+        NSLog("NSPiOS: update on installed game: \(verified) of \(all.count) blocks checked against the update's hashes")
         return base
     }
+}
 
-    /// Jeder Datenblock mit Basis-Anteil, dessen SHA-256 im Update liegt, muss stimmen.
-    private static func verify(patched: PatchedSection, fds: [Int32], fs: Data,
-                               mustVerify: [(virtual: UInt64, length: UInt64)], failure: Error,
-                               cancel: CancelFlag, progress: (UInt64, UInt64, String) -> Void) throws {
-        guard fs[3] == 3, String(decoding: fs.bytes(0x8, 4), as: UTF8.self) == "IVFC" else {
-            if !mustVerify.isEmpty { throw failure }
-            return
-        }
+/// Prüft Datenblöcke des gepatchten RomFS gegen die IVFC-Prüfsummen (SHA-256 je Block), soweit sie im Update liegen.
+final class BlockVerifier {
+    private let patched: PatchedSection
+    private let fds: [Int32]
+    private let data: (offset: UInt64, size: UInt64, block: UInt64)
+    private let hashes: (offset: UInt64, size: UInt64, block: UInt64)
+    private let buffer: UnsafeMutableRawPointer
+
+    init?(patched: PatchedSection, fds: [Int32], fs: Data) {
+        guard fs[3] == 3, String(decoding: fs.bytes(0x8, 4), as: UTF8.self) == "IVFC" else { return nil }
         let levels = Int(fs.le32(0x8 + 0xC))
         let dataLevel = min(levels - 2, 5)
-        guard dataLevel >= 1 else {
-            if !mustVerify.isEmpty { throw failure }
-            return
-        }
+        guard dataLevel >= 1 else { return nil }
         func level(_ i: Int) -> (offset: UInt64, size: UInt64, block: UInt64) {
             let at = 0x8 + 0x10 + i * 0x18
             return (fs.le64(at), fs.le64(at + 8), UInt64(1) << UInt64(fs.le32(at + 16)))
         }
-        let data = level(dataLevel)
-        let hashes = level(dataLevel - 1)
-        guard data.block >= 0x200, data.block <= 0x100000 else {
-            if !mustVerify.isEmpty { throw failure }
-            return
-        }
-        // Blöcke mit geratenen (Null-)Bereichen: müssen bestätigt werden
-        var required = IndexSet()
-        for piece in mustVerify where piece.length > 0 && piece.virtual >= data.offset {
-            let first = (piece.virtual - data.offset) / data.block
-            let last = (piece.virtual + piece.length - 1 - data.offset) / data.block
-            required.insert(integersIn: Int(first)...Int(last))
-        }
+        data = level(dataLevel)
+        hashes = level(dataLevel - 1)
+        guard data.block >= 0x200, data.block <= 0x100000 else { return nil }
+        self.patched = patched
+        self.fds = fds
+        buffer = UnsafeMutableRawPointer.allocate(byteCount: Int(data.block), alignment: 64)
+    }
 
-        // Blöcke mit Basis-Anteil
-        var blocks = IndexSet()
-        for piece in patched.fragments(at: data.offset, count: data.size) where !piece.fromPatch {
-            let first = (piece.virtual - data.offset) / data.block
-            let last = (piece.virtual + piece.length - 1 - data.offset) / data.block
-            blocks.insert(integersIn: Int(first)...Int(last))
-        }
-        let total = UInt64(blocks.count)
-        var checked: UInt64 = 0, verified = 0
-        let buffer = UnsafeMutableRawPointer.allocate(byteCount: Int(data.block), alignment: 64)
-        defer { buffer.deallocate() }
+    deinit { buffer.deallocate() }
 
-        for k in blocks {
-            if cancel.isCancelled { throw PackageError.cancelled }
-            checked += 1
-            if checked % 64 == 0 { progress(checked, total, L("Checking game data …", "Prüfe Spieldaten …")) }
-            let hashAt = hashes.offset + UInt64(k) * 32
-            guard hashAt + 32 <= hashes.offset + hashes.size,
-                  patched.fragments(at: hashAt, count: 32).allSatisfy(\.fromPatch) else {   // Prüfsumme unverändert: liegt nicht im Update
-                if required.contains(k) { throw failure }
-                continue
-            }
-            let expected = try patched.read(fds: fds, at: hashAt, count: 32)
-            let blockStart = data.offset + UInt64(k) * data.block
-            let length = Int(min(data.block, data.offset + data.size - blockStart))
-            try patched.read(fds: fds, at: blockStart, into: buffer, count: length)
-            let exact = Data(SHA256.hash(data: UnsafeRawBufferPointer(start: buffer, count: length)))
-            var ok = exact == expected
-            if !ok, length < Int(data.block) {
-                memset(buffer + length, 0, Int(data.block) - length)
-                ok = Data(SHA256.hash(data: UnsafeRawBufferPointer(start: buffer, count: Int(data.block)))) == expected
-            }
-            guard ok else {
-                if required.contains(k) { throw failure }
-                throw NCAError.updateNeedsBase(L("check failed at block \(k)", "Prüfung bei Block \(k) fehlgeschlagen"))
-            }
-            verified += 1
+    func blocks(of pieces: [(virtual: UInt64, length: UInt64)]) -> IndexSet {
+        var set = IndexSet()
+        for piece in pieces where piece.length > 0 && piece.virtual >= data.offset && piece.virtual < data.offset + data.size {
+            let first = (piece.virtual - data.offset) / data.block
+            let last = (min(piece.virtual + piece.length, data.offset + data.size) - 1 - data.offset) / data.block
+            set.insert(integersIn: Int(first)...Int(last))
         }
-        NSLog("NSPiOS: update on installed game: \(verified) of \(blocks.count) blocks checked against the update's hashes")
+        return set
+    }
+
+    /// Alle Blöcke mit Basis-Anteil.
+    func baseBlocks() -> IndexSet {
+        blocks(of: patched.fragments(at: data.offset, count: data.size).filter { !$0.fromPatch }.map { ($0.virtual, $0.length) })
+    }
+
+    /// true/false: Prüfsumme stimmt/stimmt nicht; nil: nicht prüfbar (Prüfsumme nicht im Update oder Daten unbekannt).
+    func check(_ k: Int) -> Bool? {
+        let hashAt = hashes.offset + UInt64(k) * 32
+        guard hashAt + 32 <= hashes.offset + hashes.size,
+              patched.fragments(at: hashAt, count: 32).allSatisfy(\.fromPatch),
+              let expected = try? patched.read(fds: fds, at: hashAt, count: 32) else { return nil }
+        let blockStart = data.offset + UInt64(k) * data.block
+        let length = Int(min(data.block, data.offset + data.size - blockStart))
+        do { try patched.read(fds: fds, at: blockStart, into: buffer, count: length) } catch { return nil }
+        if Data(SHA256.hash(data: UnsafeRawBufferPointer(start: buffer, count: length))) == expected { return true }
+        if length < Int(data.block) {
+            memset(buffer + length, 0, Int(data.block) - length)
+            return Data(SHA256.hash(data: UnsafeRawBufferPointer(start: buffer, count: Int(data.block)))) == expected
+        }
+        return false
+    }
+
+    /// Prüft bis zu `limit` prüfbare Blöcke (über die Menge verteilt), bricht beim ersten Fehler ab.
+    func sample(_ blocks: IndexSet, limit: Int) -> (passed: Int, failed: Int) {
+        let all = Array(blocks)
+        guard !all.isEmpty else { return (0, 0) }
+        var order: [Int] = []
+        let step = max(1, all.count / (limit * 4))
+        var i = 0
+        while i < all.count { order.append(all[i]); i += step }
+        if let last = all.last, order.last != last { order.append(last) }
+        var passed = 0
+        for k in order {
+            switch check(k) {
+            case true?: passed += 1
+            case false?: return (passed, 1)
+            case nil: break
+            }
+            if passed >= limit { break }
+        }
+        return (passed, 0)
     }
 }
 
